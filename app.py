@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy, QHeaderView,
-    QFileDialog, QProgressDialog
+    QFileDialog, QProgressDialog, QHBoxLayout
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -38,6 +38,10 @@ class MainWindow(QMainWindow):
 
         self.kecamatan_login = kecamatan.upper()
         self.desa_login = desa.upper()
+        self.all_data = []      # semua data hasil import CSV
+        self.current_page = 1   # halaman aktif
+        self.rows_per_page = 100
+        self.total_pages = 1
 
         # ===== Table =====
         self.table = QTableWidget()
@@ -72,7 +76,7 @@ class MainWindow(QMainWindow):
 
         # ==== Dictionary lebar kolom ====
         col_widths = {
-            " ": 20,
+            " ": 30,
             "KECAMATAN": 120,
             "DESA": 150,
             "DPID": 100,
@@ -97,16 +101,42 @@ class MainWindow(QMainWindow):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        self.table.setWordWrap(True)
-        self.table.resizeRowsToContents()
-        self.setCentralWidget(self.table)
+        # === Central widget (table + pagination di bawah) ===
+        self.pagination_container = QWidget()
+        self.pagination_layout = QHBoxLayout(self.pagination_container)
+        self.pagination_layout.setContentsMargins(0, 2, 0, 2)
+        self.pagination_layout.setSpacing(4)
+        self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # ketika ada perubahan ceklis -> warnai baris
-        self.table.itemChanged.connect(self.highlight_checked_row)
+        central_box = QWidget()
+        v = QVBoxLayout(central_box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self.table)
+        v.addWidget(self.pagination_container)
+        self.setCentralWidget(central_box)
+
+        # connect itemChanged untuk hitung selected realtime + highlight
+        self.table.itemChanged.connect(self.on_item_changed)
 
         # ===== Menu Bar =====
         menubar = self.menuBar()
-        menubar.setStyleSheet("font-family: Calibri; font-size: 12px;")
+        menubar.setStyleSheet("""
+            QMenuBar {
+                font-family: Calibri;
+                font-size: 12px;
+                padding: 0px;
+                margin-bottom: -6px;   /* geser garis ke atas */
+            }
+            QMenuBar::item {
+                padding: 2px 8px;      /* jarak kiri-kanan biar proporsional */
+                spacing: 4px;
+            }
+            QMenuBar::item:selected {
+                background: rgba(255, 255, 255, 40);
+                border-radius: 3px;
+            }
+        """)
+
         file_menu = menubar.addMenu("File")
 
         action_dashboard = QAction("Dashboard", self)
@@ -167,7 +197,7 @@ class MainWindow(QMainWindow):
         btn_baru = QPushButton("Baru")
         btn_baru.setStyleSheet("""
             font-family: Calibri;
-            font-size: 12px;
+            font-size: 13px;
             text-align: center;
             qproperty-alignment: AlignCenter;
             background-color: green;
@@ -176,7 +206,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(btn_baru)
 
         btn_rekap = QPushButton("Rekap")
-        btn_rekap.setStyleSheet("font-family: Calibri; font-size: 12px;")
+        btn_rekap.setStyleSheet("font-family: Calibri; font-size: 13px;")
         toolbar.addWidget(btn_rekap)
 
         spacer_left = QWidget()
@@ -193,38 +223,174 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer_right)
 
         btn_tools = QPushButton("Tools")
-        btn_tools.setStyleSheet("font-family: Calibri; font-size: 12px;")
+        btn_tools.setStyleSheet("font-family: Calibri; font-size: 13px;")
         toolbar.addWidget(btn_tools)
 
         btn_filter = QPushButton("Filter")
         btn_filter.setStyleSheet("""
             font-family: Calibri;
-            font-size: 12px;
+            font-size: 13px;
             background-color: orange;
             font-weight: bold;
         """)
         toolbar.addWidget(btn_filter)
+        for btn in [btn_baru, btn_rekap, btn_tools, btn_filter]:
+            btn.setFixedHeight(30)   # sesuaikan tinggi, misalnya 28–32px
 
-        self.setStatusBar(QStatusBar())
+
+        # ===== Status Bar =====
+        self.status = QStatusBar()
+        self.setStatusBar(self.status)
+        self.lbl_selected = QLabel("0 selected")
+        self.lbl_total = QLabel("0 total")
+        self.lbl_version = QLabel("NexVo v1.0")
+        self.status.addWidget(self.lbl_selected)
+        self.status.addWidget(self.lbl_total)
+        self.status.addPermanentWidget(self.lbl_version)
+
+        # Pertama kali: render pagination kosong
+        self.update_pagination()
 
     # =================================================
-    # Highlight row kalau ceklis
+    # Update status bar selected & total
     # =================================================
-    def highlight_checked_row(self, item):
+    def update_statusbar(self):
+        total = len(self.all_data)
+        selected = 0
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                selected += 1
+        self.lbl_selected.setText(f"{selected} selected")
+        self.lbl_total.setText(f"{total} total")
+
+    def on_item_changed(self, item):
         if item.column() == 0:  # kolom checkbox
+            # highlight baris on/off
             row = item.row()
-            if item.checkState() == Qt.CheckState.Checked:
-                for c in range(self.table.columnCount()):
-                    cell = self.table.item(row, c)
-                    if not cell:
-                        cell = QTableWidgetItem()
-                        self.table.setItem(row, c, cell)
-                    cell.setBackground(Qt.GlobalColor.darkGray)
-            else:
-                for c in range(self.table.columnCount()):
-                    cell = self.table.item(row, c)
-                    if cell:
-                        cell.setBackground(Qt.GlobalColor.transparent)
+            checked = (item.checkState() == Qt.CheckState.Checked)
+            for c in range(self.table.columnCount()):
+                cell = self.table.item(row, c)
+                if not cell:
+                    cell = QTableWidgetItem("")
+                    self.table.setItem(row, c, cell)
+                cell.setBackground(Qt.GlobalColor.darkGray if checked else Qt.GlobalColor.transparent)
+            self.update_statusbar()
+
+    # =================================================
+    # Show page data
+    # =================================================
+    def show_page(self, page):
+        if page < 1 or page > self.total_pages:
+            return
+        self.current_page = page
+        self.table.blockSignals(True)  # hindari itemChanged saat setup
+        self.table.setRowCount(0)
+
+        start = (page - 1) * self.rows_per_page
+        end = start + self.rows_per_page
+        data_rows = self.all_data[start:end]
+
+        self.table.setRowCount(len(data_rows))
+        app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+        center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
+
+        for i, d in enumerate(data_rows):
+            # checkbox centered
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk.setCheckState(Qt.CheckState.Unchecked)
+            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i, 0, chk)
+
+            # isi kolom lain
+            for j, col in enumerate(app_columns[1:], start=1):
+                val = d.get(col, "")
+                if col == "KET":
+                    val = "0"   # paksa jadi 0
+                item = QTableWidgetItem(val)
+                if col in center_cols:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                # buat readonly
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(i, j, item)
+        self.table.blockSignals(False)
+        self.update_statusbar()
+        self.update_pagination()
+
+    # =================================================
+    # Pagination UI (sliding window seperti contoh)
+    # =================================================
+    def make_page_button(self, text, handler, checked=False, enabled=True):
+        btn = QPushButton(text)
+        btn.setEnabled(enabled)
+        btn.setCheckable(True)
+        btn.setChecked(checked)
+        btn.clicked.connect(handler)
+        btn.setStyleSheet("""
+            QPushButton {
+                padding: 2px 6px;
+                border: 1px solid rgba(255,255,255,80);
+                border-radius: 6px;
+            }
+            QPushButton:checked {
+                border: 1px solid #ffa047;
+                font-weight: reguler;
+            }
+        """)
+        return btn
+
+    def update_pagination(self):
+        # bersihkan tombol lama
+        for i in reversed(range(self.pagination_layout.count())):
+            w = self.pagination_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        # jika belum ada data, tampilkan kosong
+        if self.total_pages <= 1:
+            # tetap render tombol 1 disabled agar container terlihat rapi
+            self.pagination_layout.addWidget(self.make_page_button("1", lambda: None, checked=True, enabled=False))
+            return
+
+        # Tombol Prev
+        prev_btn = self.make_page_button("<", lambda: self.show_page(self.current_page - 1),
+                                         checked=False, enabled=(self.current_page > 1))
+        self.pagination_layout.addWidget(prev_btn)
+
+        # Window nomor (maks 5 angka)
+        window = 5
+        half = window // 2
+        start = max(1, self.current_page - half)
+        end = min(self.total_pages, start + window - 1)
+        # adjust jika di ujung kanan
+        start = max(1, end - window + 1)
+
+        # Halaman pertama + ellipsis jika perlu
+        if start > 1:
+            self.pagination_layout.addWidget(self.make_page_button("1", lambda: self.show_page(1)))
+            if start > 2:
+                self.pagination_layout.addWidget(QLabel("..."))
+
+        # Nomor halaman dalam window
+        for p in range(start, end + 1):
+            self.pagination_layout.addWidget(
+                self.make_page_button(str(p), lambda _, x=p: self.show_page(x),
+                                      checked=(p == self.current_page))
+            )
+
+        # Ellipsis + halaman terakhir jika perlu
+        if end < self.total_pages:
+            if end < self.total_pages - 1:
+                self.pagination_layout.addWidget(QLabel("..."))
+            self.pagination_layout.addWidget(
+                self.make_page_button(str(self.total_pages), lambda: self.show_page(self.total_pages))
+            )
+
+        # Tombol Next
+        next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
+                                         checked=False, enabled=(self.current_page < self.total_pages))
+        self.pagination_layout.addWidget(next_btn)
 
     # =================================================
     # Import CSV Function
@@ -243,6 +409,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
                     return
 
+                # Verifikasi baris-15 kolom-2 & kolom-4 (index 14, [1] & [3])
                 kecamatan_csv = reader[14][1].strip().upper()
                 desa_csv = reader[14][3].strip().upper()
                 if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
@@ -277,7 +444,8 @@ class MainWindow(QMainWindow):
                 }
 
                 idx_status = header.index("STATUS")
-                data_rows = []
+                # refresh all_data
+                self.all_data = []
                 for row in reader[1:]:
                     status_val = row[idx_status].strip().upper()
                     if status_val not in ("AKTIF", "UBAH", "BARU"):
@@ -287,32 +455,12 @@ class MainWindow(QMainWindow):
                         if csv_col in header:
                             col_idx = header.index(csv_col)
                             data_dict[app_col] = row[col_idx].strip()
-                    data_rows.append(data_dict)
+                    data_dict["KET"] = "0"  # paksa isi 0
+                    self.all_data.append(data_dict)
 
-                # Kosongkan tabel sebelum isi data baru
-                self.table.setRowCount(0)
-                self.table.setRowCount(len(data_rows))
-                app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
-
-                # Kolom yang teksnya harus center
-                center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
-
-                for i, d in enumerate(data_rows):
-                    # Checkbox di kolom pertama
-                    chk = QTableWidgetItem()
-                    chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-                    chk.setCheckState(Qt.CheckState.Unchecked)
-                    chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)  # center checkbox
-                    self.table.setItem(i, 0, chk)
-
-                    # Isi kolom lain
-                    for j, col in enumerate(app_columns[1:], start=1):
-                        val = d.get(col, "")
-                        item = QTableWidgetItem(val)
-                        if col in center_cols:
-                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                        self.table.setItem(i, j, item)
-
+                # hitung total pages & tampilkan halaman 1
+                self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
+                self.show_page(1)
                 QMessageBox.information(self, "Sukses", "Import CSV selesai!")
 
         except Exception as e:
