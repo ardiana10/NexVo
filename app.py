@@ -295,7 +295,7 @@ class MainWindow(QMainWindow):
                 app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
 
                 # Kolom yang teksnya harus center
-                center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KET","TPS"}
+                center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
 
                 for i, d in enumerate(data_rows):
                     # Checkbox di kolom pertama
