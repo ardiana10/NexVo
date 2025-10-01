@@ -1,8 +1,9 @@
-import sys, sqlite3
+import sys, sqlite3, csv
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
-    QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy, QHeaderView
+    QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy, QHeaderView,
+    QFileDialog, QProgressDialog
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -30,31 +31,38 @@ def get_desa(kecamatan):
 # Main Window (Setelah login)
 # =====================================================
 class MainWindow(QMainWindow):
-    def __init__(self, username):
+    def __init__(self, username, kecamatan, desa):
         super().__init__()
         self.setWindowTitle("Sidalih Pilkada 2024 Desktop v2.2.29 - Pemutakhiran Data")
         self.resize(900, 550)
 
+        self.kecamatan_login = kecamatan.upper()
+        self.desa_login = desa.upper()
+
         # ===== Table =====
         self.table = QTableWidget()
         columns = [
-            "KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
+            " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
             "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
 
-        # Style tabel
+        # Style tabel dengan border putih tipis
         self.table.setStyleSheet("""
             QTableWidget {
                 font-family: Calibri;
                 font-size: 12px;
+                gridline-color: rgba(255,255,255,80);
+                border: 1px solid rgba(255,255,255,80);
             }
             QHeaderView::section {
                 font-family: Calibri;
                 font-size: 12px;
                 font-weight: bold;
+                border: 1px solid rgba(255,255,255,80);
             }
         """)
 
@@ -64,6 +72,7 @@ class MainWindow(QMainWindow):
 
         # ==== Dictionary lebar kolom ====
         col_widths = {
+            " ": 20,
             "KECAMATAN": 120,
             "DESA": 150,
             "DPID": 100,
@@ -84,52 +93,46 @@ class MainWindow(QMainWindow):
             "TPS": 80,
             "LastUpdate": 100
         }
-
-        # Terapkan lebar kolom dari dictionary
         for idx, col in enumerate(columns):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        # Aktifkan word wrap
         self.table.setWordWrap(True)
         self.table.resizeRowsToContents()
-
         self.setCentralWidget(self.table)
+
+        # ketika ada perubahan ceklis -> warnai baris
+        self.table.itemChanged.connect(self.highlight_checked_row)
 
         # ===== Menu Bar =====
         menubar = self.menuBar()
         menubar.setStyleSheet("font-family: Calibri; font-size: 12px;")
         file_menu = menubar.addMenu("File")
 
-        # Submenu Dashboard
         action_dashboard = QAction("Dashboard", self)
         action_dashboard.setShortcut("Alt+H")
         file_menu.addAction(action_dashboard)
 
-        # Submenu Pemutakhiran Data
         action_pemutakhiran = QAction("Pemutakhiran Data", self)
         action_pemutakhiran.setShortcut("Alt+C")
         file_menu.addAction(action_pemutakhiran)
 
-        # Submenu Unggah Webgrid TPS Reguler
         action_unggah_reguler = QAction("Unggah Webgrid TPS Reguler", self)
         action_unggah_reguler.setShortcut("Alt+I")
         file_menu.addAction(action_unggah_reguler)
 
-        # Submenu Rekapitulasi
         action_rekap = QAction("Rekapitulasi", self)
         action_rekap.setShortcut("Alt+R")
         file_menu.addAction(action_rekap)
 
-        # Submenu Import Data
-        action_import = QAction("Import Data", self)
+        # Import CSV
+        action_import = QAction("Import CSV", self)
         action_import.setShortcut("Alt+M")
+        action_import.triggered.connect(self.import_csv)
         file_menu.addAction(action_import)
 
-        # Separator
         file_menu.addSeparator()
 
-        # Submenu Keluar
         action_keluar = QAction("Keluar", self)
         action_keluar.setShortcut("Ctrl+W")
         action_keluar.triggered.connect(self.close)
@@ -138,41 +141,21 @@ class MainWindow(QMainWindow):
         generate_menu = menubar.addMenu("Generate")
 
         view_menu = menubar.addMenu("View")
-        action_reload = QAction("Reload", self)
-        action_reload.setShortcut("Ctrl+R")
-        view_menu.addAction(action_reload)
-        action_force_reload = QAction("Force Reload", self)
-        action_force_reload.setShortcut("Ctrl+Shift+R")
-        view_menu.addAction(action_force_reload)
-        action_actual_size = QAction("Actual Size", self)
-        action_actual_size.setShortcut("Ctrl+0")
-        view_menu.addAction(action_actual_size)
-        action_zoom_in = QAction("Zoom In", self)
-        action_zoom_in.setShortcut("Ctrl+Shift+=")
-        view_menu.addAction(action_zoom_in)
-        action_zoom_out = QAction("Zoom Out", self)
-        action_zoom_out.setShortcut("Ctrl+-")
-        view_menu.addAction(action_zoom_out)
+        view_menu.addAction(QAction("Reload", self, shortcut="Ctrl+R"))
+        view_menu.addAction(QAction("Force Reload", self, shortcut="Ctrl+Shift+R"))
+        view_menu.addAction(QAction("Actual Size", self, shortcut="Ctrl+0"))
+        view_menu.addAction(QAction("Zoom In", self, shortcut="Ctrl+Shift+="))
+        view_menu.addAction(QAction("Zoom Out", self, shortcut="Ctrl+-"))
         view_menu.addSeparator()
-        action_fullscreen = QAction("Toggle Full Screen", self)
-        action_fullscreen.setShortcut("F11")
-        view_menu.addAction(action_fullscreen)
+        view_menu.addAction(QAction("Toggle Full Screen", self, shortcut="F11"))
 
         help_menu = menubar.addMenu("Help")
-        action_shortcut = QAction("Shortcut", self)
-        action_shortcut.setShortcut("Alt+Z")
-        help_menu.addAction(action_shortcut)
-        action_setting = QAction("Setting Aplikasi", self)
-        action_setting.setShortcut("Alt+T")
-        help_menu.addAction(action_setting)
-        action_hapus = QAction("Hapus Data Pemilih", self)
-        help_menu.addAction(action_hapus)
-        action_backup = QAction("Backup", self)
-        help_menu.addAction(action_backup)
-        action_restore = QAction("Restore", self)
-        help_menu.addAction(action_restore)
-        action_cekdpt = QAction("cekdptonline.kpu.go.id", self)
-        help_menu.addAction(action_cekdpt)
+        help_menu.addAction(QAction("Shortcut", self, shortcut="Alt+Z"))
+        help_menu.addAction(QAction("Setting Aplikasi", self, shortcut="Alt+T"))
+        help_menu.addAction(QAction("Hapus Data Pemilih", self))
+        help_menu.addAction(QAction("Backup", self))
+        help_menu.addAction(QAction("Restore", self))
+        help_menu.addAction(QAction("cekdptonline.kpu.go.id", self))
 
         # ===== Toolbar =====
         toolbar = QToolBar("Toolbar")
@@ -181,7 +164,6 @@ class MainWindow(QMainWindow):
         toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        # Tombol kiri
         btn_baru = QPushButton("Baru")
         btn_baru.setStyleSheet("""
             font-family: Calibri;
@@ -189,7 +171,7 @@ class MainWindow(QMainWindow):
             text-align: center;
             qproperty-alignment: AlignCenter;
             background-color: green;
-            color: white;             /* biar teks terlihat jelas */
+            color: white;
         """)
         toolbar.addWidget(btn_baru)
 
@@ -197,23 +179,19 @@ class MainWindow(QMainWindow):
         btn_rekap.setStyleSheet("font-family: Calibri; font-size: 12px;")
         toolbar.addWidget(btn_rekap)
 
-        # Spacer kiri
         spacer_left = QWidget()
         spacer_left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_left)
 
-        # Label user di tengah toolbar
         self.user_label = QLabel(username)
         self.user_label.setStyleSheet("font-family: Calibri; font-weight: bold; font-size: 14px;")
         self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         toolbar.addWidget(self.user_label)
 
-        # Spacer kanan
         spacer_right = QWidget()
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_right)
 
-        # Tombol kanan
         btn_tools = QPushButton("Tools")
         btn_tools.setStyleSheet("font-family: Calibri; font-size: 12px;")
         toolbar.addWidget(btn_tools)
@@ -227,8 +205,118 @@ class MainWindow(QMainWindow):
         """)
         toolbar.addWidget(btn_filter)
 
-        # Status bar
         self.setStatusBar(QStatusBar())
+
+    # =================================================
+    # Highlight row kalau ceklis
+    # =================================================
+    def highlight_checked_row(self, item):
+        if item.column() == 0:  # kolom checkbox
+            row = item.row()
+            if item.checkState() == Qt.CheckState.Checked:
+                for c in range(self.table.columnCount()):
+                    cell = self.table.item(row, c)
+                    if not cell:
+                        cell = QTableWidgetItem()
+                        self.table.setItem(row, c, cell)
+                    cell.setBackground(Qt.GlobalColor.darkGray)
+            else:
+                for c in range(self.table.columnCount()):
+                    cell = self.table.item(row, c)
+                    if cell:
+                        cell.setBackground(Qt.GlobalColor.transparent)
+
+    # =================================================
+    # Import CSV Function
+    # =================================================
+    def import_csv(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Pilih File CSV", "", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = list(csv.reader(csvfile, delimiter="#"))
+                if len(reader) < 15:
+                    QMessageBox.warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
+                    return
+
+                kecamatan_csv = reader[14][1].strip().upper()
+                desa_csv = reader[14][3].strip().upper()
+                if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
+                    QMessageBox.warning(
+                        self, "Error",
+                        f"Verifikasi gagal!\nCSV Kecamatan='{kecamatan_csv}', Desa='{desa_csv}'\n"
+                        f"Login Kecamatan='{self.kecamatan_login}', Desa='{self.desa_login}'"
+                    )
+                    return
+
+                header = [h.strip().upper() for h in reader[0]]
+                mapping = {
+                    "KECAMATAN": "KECAMATAN",
+                    "KELURAHAN": "DESA",
+                    "DPID": "DPID",
+                    "NKK": "NKK",
+                    "NIK": "NIK",
+                    "NAMA": "NAMA",
+                    "TEMPAT LAHIR": "TMPT_LHR",
+                    "TANGGAL LAHIR": "TGL_LHR",
+                    "STS KAWIN": "STS",
+                    "KELAMIN": "JK",
+                    "ALAMAT": "ALAMAT",
+                    "RT": "RT",
+                    "RW": "RW",
+                    "DISABILITAS": "DIS",
+                    "EKTP": "KTPel",
+                    "KETERANGAN": "KET",
+                    "SUMBER": "SUMBER",
+                    "TPS": "TPS",
+                    "UPDATED_AT": "LastUpdate"
+                }
+
+                idx_status = header.index("STATUS")
+                data_rows = []
+                for row in reader[1:]:
+                    status_val = row[idx_status].strip().upper()
+                    if status_val not in ("AKTIF", "UBAH", "BARU"):
+                        continue
+                    data_dict = {}
+                    for csv_col, app_col in mapping.items():
+                        if csv_col in header:
+                            col_idx = header.index(csv_col)
+                            data_dict[app_col] = row[col_idx].strip()
+                    data_rows.append(data_dict)
+
+                # Kosongkan tabel sebelum isi data baru
+                self.table.setRowCount(0)
+                self.table.setRowCount(len(data_rows))
+                app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+
+                # Kolom yang teksnya harus center
+                center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KET","TPS"}
+
+                for i, d in enumerate(data_rows):
+                    # Checkbox di kolom pertama
+                    chk = QTableWidgetItem()
+                    chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                    chk.setCheckState(Qt.CheckState.Unchecked)
+                    chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)  # center checkbox
+                    self.table.setItem(i, 0, chk)
+
+                    # Isi kolom lain
+                    for j, col in enumerate(app_columns[1:], start=1):
+                        val = d.get(col, "")
+                        item = QTableWidgetItem(val)
+                        if col in center_cols:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.table.setItem(i, j, item)
+
+                QMessageBox.information(self, "Sukses", "Import CSV selesai!")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Gagal import CSV: {e}")
 
 
 # =====================================================
@@ -238,7 +326,7 @@ class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Login")
-        self.showMaximized()  # fullscreen
+        self.showMaximized()
 
         outer_layout = QVBoxLayout()
         outer_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -246,19 +334,16 @@ class LoginWindow(QWidget):
         form_layout = QVBoxLayout()
         form_layout.setSpacing(10)
 
-        # Username
         self.user_label = QLabel("Nama Pengguna:")
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("Ketik Username...")
         form_layout.addWidget(self.user_label)
         form_layout.addWidget(self.user_input)
 
-        # Kapital otomatis
         self.user_input.textChanged.connect(
             lambda text: self.user_input.setText(text.upper()) if text != text.upper() else None
         )
 
-        # Kecamatan
         self.kec_label = QLabel("Kecamatan:")
         form_layout.addWidget(self.kec_label)
 
@@ -275,18 +360,15 @@ class LoginWindow(QWidget):
         popup = completer.popup()
         popup.setStyleSheet("QListView { font-size: 10px; }")
 
-        # Kapital otomatis
         self.kec_input.textChanged.connect(
             lambda text: self.kec_input.setText(text.upper()) if text != text.upper() else None
         )
 
         form_layout.addWidget(self.kec_input)
 
-        # Update desa saat selesai pilih/ketik
         self.kec_input.editingFinished.connect(self.update_desa)
         completer.activated.connect(self.update_desa)
 
-        # Desa
         self.desa_label = QLabel("Desa:")
         self.desa_combo = QComboBox()
         self.desa_combo.setView(QListView())
@@ -294,12 +376,10 @@ class LoginWindow(QWidget):
         form_layout.addWidget(self.desa_label)
         form_layout.addWidget(self.desa_combo)
 
-        # Tombol login
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self.check_login)
         form_layout.addWidget(self.login_button)
 
-        # Bungkus form
         center_box = QWidget()
         center_box.setLayout(form_layout)
         center_box.setFixedWidth(300)
@@ -307,7 +387,6 @@ class LoginWindow(QWidget):
 
         self.setLayout(outer_layout)
 
-        # Style global
         self.setStyleSheet("""
             QWidget { font-size: 11px; }
             QLineEdit, QComboBox, QPushButton { min-height: 28px; font-size: 11px; }
@@ -354,12 +433,13 @@ class LoginWindow(QWidget):
             msg.exec()
             return
 
-        self.accept_login(user)
+        self.accept_login(user, kecamatan, desa)
 
-    def accept_login(self, user):
-        self.main_window = MainWindow(user.upper())
+    def accept_login(self, user, kecamatan, desa):
+        self.main_window = MainWindow(user.upper(), kecamatan, desa)
         self.main_window.show()
         self.close()
+
 
 # =====================================================
 # Main
