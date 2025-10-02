@@ -1,4 +1,4 @@
-import sys, sqlite3, csv
+import sys, sqlite3, csv, os, atexit, base64
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
@@ -7,6 +7,40 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
+
+# === Enkripsi (cryptography - Fernet) ===
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+# ====== KONFIGURASI KUNCI ENKRIPSI ======
+# GANTI passphrase ini dengan milik kamu (jangan kosong).
+APP_PASSPHRASE = "9@%RM79hiQt%^@7BneHFtRS&9k9*fJ"   # <<< WAJIB kamu ubah
+# Salt tetap agar konsisten. Boleh kamu ganti juga.
+APP_SALT = b"698z*#$&moK&g6^c43WFkS4#3@Ks%&"
+
+_kdf = PBKDF2HMAC(
+    algorithm=hashes.SHA256(),
+    length=32,
+    salt=APP_SALT,
+    iterations=390000,
+)
+_KEY = base64.urlsafe_b64encode(_kdf.derive(APP_PASSPHRASE.encode("utf-8")))
+_fernet = Fernet(_KEY)
+
+def _encrypt_file(plain_path: str, enc_path: str):
+    with open(plain_path, "rb") as f:
+        data = f.read()
+    token = _fernet.encrypt(data)
+    with open(enc_path, "wb") as f:
+        f.write(token)
+
+def _decrypt_file(enc_path: str, plain_path: str):
+    with open(enc_path, "rb") as f:
+        token = f.read()
+    data = _fernet.decrypt(token)
+    with open(plain_path, "wb") as f:
+        f.write(data)
 
 DB_NAME = "app.db"
 
@@ -31,15 +65,44 @@ def get_desa(kecamatan):
 # Main Window (Setelah login)
 # =====================================================
 class MainWindow(QMainWindow):
-    def __init__(self, username, kecamatan, desa):
+    def __init__(self, username, kecamatan, desa, db_name):
         super().__init__()
         self.setWindowTitle("Sidalih Pilkada 2024 Desktop v2.2.29 - Pemutakhiran Data")
         self.resize(900, 550)
 
+        # login info
         self.kecamatan_login = kecamatan.upper()
         self.desa_login = desa.upper()
-        self.all_data = []      # semua data hasil import CSV
-        self.current_page = 1   # halaman aktif
+        self.username = username
+        self.db_name = db_name   # <<<<< ini tambahan penting (nama .db "logis" dari login)
+
+        # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
+        base = os.path.basename(self.db_name)              # mis. dphp.db
+        self.enc_path = self.db_name + ".enc"              # mis. dphp.db.enc
+        self.plain_db_path = f"temp_{base}"                # mis. temp_dphp.db
+
+        # Jika file .enc ada → decrypt ke temp; jika belum ada → buat temp kosong
+        if os.path.exists(self.enc_path):
+            try:
+                _decrypt_file(self.enc_path, self.plain_db_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Gagal dekripsi database:\n{e}")
+                # fallback: buat DB kosong agar app tetap buka
+                conn = sqlite3.connect(self.plain_db_path)
+                conn.close()
+        else:
+            # baru pertama kali: buat DB kosong; nanti saat tutup akan dienkripsi
+            conn = sqlite3.connect(self.plain_db_path)
+            conn.close()
+
+        # SEKARANG: seluruh operasi SQLite diarahkan ke self.plain_db_path
+        # agar kode kamu di bawah tetap berjalan tanpa perubahan besar,
+        # kita set self.db_name = self.plain_db_path
+        self.db_name = self.plain_db_path
+
+        # data & pagination
+        self.all_data = []
+        self.current_page = 1
         self.rows_per_page = 100
         self.total_pages = 1
 
@@ -158,7 +221,7 @@ class MainWindow(QMainWindow):
         # Import CSV
         action_import = QAction("Import CSV", self)
         action_import.setShortcut("Alt+M")
-        action_import.triggered.connect(self.import_csv)
+        action_import.triggered.connect(self.import_csv)  # ✅ sekarang ada method-nya
         file_menu.addAction(action_import)
 
         file_menu.addSeparator()
@@ -199,7 +262,6 @@ class MainWindow(QMainWindow):
             font-family: Calibri;
             font-size: 13px;
             text-align: center;
-            qproperty-alignment: AlignCenter;
             background-color: green;
             color: white;
         """)
@@ -235,8 +297,7 @@ class MainWindow(QMainWindow):
         """)
         toolbar.addWidget(btn_filter)
         for btn in [btn_baru, btn_rekap, btn_tools, btn_filter]:
-            btn.setFixedHeight(30)   # sesuaikan tinggi, misalnya 28–32px
-
+            btn.setFixedHeight(30)
 
         # ===== Status Bar =====
         self.status = QStatusBar()
@@ -251,149 +312,30 @@ class MainWindow(QMainWindow):
         # Pertama kali: render pagination kosong
         self.update_pagination()
 
-    # =================================================
-    # Update status bar selected & total
-    # =================================================
-    def update_statusbar(self):
-        total = len(self.all_data)
-        selected = 0
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                selected += 1
-        self.lbl_selected.setText(f"{selected} selected")
-        self.lbl_total.setText(f"{total} total")
+        # ✅ Tambahkan ini agar data dari DB ditampilkan langsung setelah login
+        self.load_data_from_db()
 
-    def on_item_changed(self, item):
-        if item.column() == 0:  # kolom checkbox
-            # highlight baris on/off
-            row = item.row()
-            checked = (item.checkState() == Qt.CheckState.Checked)
-            for c in range(self.table.columnCount()):
-                cell = self.table.item(row, c)
-                if not cell:
-                    cell = QTableWidgetItem("")
-                    self.table.setItem(row, c, cell)
-                cell.setBackground(Qt.GlobalColor.darkGray if checked else Qt.GlobalColor.transparent)
-            self.update_statusbar()
+        # Registrasi atexit sebagai jaring pengaman (kalau app exit tanpa closeEvent)
+        atexit.register(self._encrypt_and_cleanup)
+
+    # Saat jendela ditutup → encrypt & hapus temp
+    def closeEvent(self, event):
+        self._encrypt_and_cleanup()
+        super().closeEvent(event)
+
+    def _encrypt_and_cleanup(self):
+        try:
+            if os.path.exists(self.plain_db_path):
+                # Tulis ulang ke .enc
+                _encrypt_file(self.plain_db_path, self.enc_path)
+                # Hapus plaintext
+                os.remove(self.plain_db_path)
+        except Exception as e:
+            # Jangan crash saat exit; hanya info ke console.
+            print(f"[WARN] Gagal encrypt/cleanup: {e}")
 
     # =================================================
-    # Show page data
-    # =================================================
-    def show_page(self, page):
-        if page < 1 or page > self.total_pages:
-            return
-        self.current_page = page
-        self.table.blockSignals(True)  # hindari itemChanged saat setup
-        self.table.setRowCount(0)
-
-        start = (page - 1) * self.rows_per_page
-        end = start + self.rows_per_page
-        data_rows = self.all_data[start:end]
-
-        self.table.setRowCount(len(data_rows))
-        app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
-        center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
-
-        for i, d in enumerate(data_rows):
-            # checkbox centered
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk.setCheckState(Qt.CheckState.Unchecked)
-            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i, 0, chk)
-
-            # isi kolom lain
-            for j, col in enumerate(app_columns[1:], start=1):
-                val = d.get(col, "")
-                if col == "KET":
-                    val = "0"   # paksa jadi 0
-                item = QTableWidgetItem(val)
-                if col in center_cols:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # buat readonly
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(i, j, item)
-        self.table.blockSignals(False)
-        self.update_statusbar()
-        self.update_pagination()
-
-    # =================================================
-    # Pagination UI (sliding window seperti contoh)
-    # =================================================
-    def make_page_button(self, text, handler, checked=False, enabled=True):
-        btn = QPushButton(text)
-        btn.setEnabled(enabled)
-        btn.setCheckable(True)
-        btn.setChecked(checked)
-        btn.clicked.connect(handler)
-        btn.setStyleSheet("""
-            QPushButton {
-                padding: 2px 6px;
-                border: 1px solid rgba(255,255,255,80);
-                border-radius: 6px;
-            }
-            QPushButton:checked {
-                border: 1px solid #ffa047;
-                font-weight: reguler;
-            }
-        """)
-        return btn
-
-    def update_pagination(self):
-        # bersihkan tombol lama
-        for i in reversed(range(self.pagination_layout.count())):
-            w = self.pagination_layout.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-
-        # jika belum ada data, tampilkan kosong
-        if self.total_pages <= 1:
-            # tetap render tombol 1 disabled agar container terlihat rapi
-            self.pagination_layout.addWidget(self.make_page_button("1", lambda: None, checked=True, enabled=False))
-            return
-
-        # Tombol Prev
-        prev_btn = self.make_page_button("<", lambda: self.show_page(self.current_page - 1),
-                                         checked=False, enabled=(self.current_page > 1))
-        self.pagination_layout.addWidget(prev_btn)
-
-        # Window nomor (maks 5 angka)
-        window = 5
-        half = window // 2
-        start = max(1, self.current_page - half)
-        end = min(self.total_pages, start + window - 1)
-        # adjust jika di ujung kanan
-        start = max(1, end - window + 1)
-
-        # Halaman pertama + ellipsis jika perlu
-        if start > 1:
-            self.pagination_layout.addWidget(self.make_page_button("1", lambda: self.show_page(1)))
-            if start > 2:
-                self.pagination_layout.addWidget(QLabel("..."))
-
-        # Nomor halaman dalam window
-        for p in range(start, end + 1):
-            self.pagination_layout.addWidget(
-                self.make_page_button(str(p), lambda _, x=p: self.show_page(x),
-                                      checked=(p == self.current_page))
-            )
-
-        # Ellipsis + halaman terakhir jika perlu
-        if end < self.total_pages:
-            if end < self.total_pages - 1:
-                self.pagination_layout.addWidget(QLabel("..."))
-            self.pagination_layout.addWidget(
-                self.make_page_button(str(self.total_pages), lambda: self.show_page(self.total_pages))
-            )
-
-        # Tombol Next
-        next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
-                                         checked=False, enabled=(self.current_page < self.total_pages))
-        self.pagination_layout.addWidget(next_btn)
-
-    # =================================================
-    # Import CSV Function
+    # Import CSV Function (sekarang benar jadi method)
     # =================================================
     def import_csv(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -409,7 +351,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
                     return
 
-                # Verifikasi baris-15 kolom-2 & kolom-4 (index 14, [1] & [3])
+                # Verifikasi baris-15 kolom-2 & kolom-4
                 kecamatan_csv = reader[14][1].strip().upper()
                 desa_csv = reader[14][3].strip().upper()
                 if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
@@ -444,31 +386,241 @@ class MainWindow(QMainWindow):
                 }
 
                 idx_status = header.index("STATUS")
-                # refresh all_data
+
+                conn = sqlite3.connect(self.db_name)
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS data_pemilih (
+                        KECAMATAN TEXT,
+                        DESA TEXT,
+                        DPID TEXT,
+                        NKK TEXT,
+                        NIK TEXT,
+                        NAMA TEXT,
+                        TMPT_LHR TEXT,
+                        TGL_LHR TEXT,
+                        STS TEXT,
+                        JK TEXT,
+                        ALAMAT TEXT,
+                        RT TEXT,
+                        RW TEXT,
+                        DIS TEXT,
+                        KTPel TEXT,
+                        KET TEXT,
+                        SUMBER TEXT,
+                        TPS TEXT,
+                        LastUpdate TEXT
+                    )
+                """)
+                cur.execute("DELETE FROM data_pemilih")
+
                 self.all_data = []
                 for row in reader[1:]:
                     status_val = row[idx_status].strip().upper()
                     if status_val not in ("AKTIF", "UBAH", "BARU"):
                         continue
-                    data_dict = {}
+                    data_dict, values = {}, []
                     for csv_col, app_col in mapping.items():
                         if csv_col in header:
                             col_idx = header.index(csv_col)
-                            data_dict[app_col] = row[col_idx].strip()
-                    data_dict["KET"] = "0"  # paksa isi 0
+                            val = row[col_idx].strip()
+                            if app_col == "KET":
+                                val = "0"
+                            data_dict[app_col] = val
+                            values.append(val)
                     self.all_data.append(data_dict)
 
-                # hitung total pages & tampilkan halaman 1
+                    placeholders = ",".join(["?"] * len(mapping))
+                    cur.execute(
+                        f"INSERT INTO data_pemilih ({','.join(mapping.values())}) VALUES ({placeholders})",
+                        values
+                    )
+
+                conn.commit()
+                conn.close()
+
                 self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
                 self.show_page(1)
-                QMessageBox.information(self, "Sukses", "Import CSV selesai!")
+                QMessageBox.information(self, "Sukses", f"Import CSV selesai! Data tersimpan di {self.plain_db_path}")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Gagal import CSV: {e}")
 
+    # =================================================
+    # Load data dari database saat login ulang
+    # =================================================
+    def load_data_from_db(self):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        # ✅ Buat tabel jika belum ada
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS data_pemilih (
+                KECAMATAN TEXT,
+                DESA TEXT,
+                DPID TEXT,
+                NKK TEXT,
+                NIK TEXT,
+                NAMA TEXT,
+                TMPT_LHR TEXT,
+                TGL_LHR TEXT,
+                STS TEXT,
+                JK TEXT,
+                ALAMAT TEXT,
+                RT TEXT,
+                RW TEXT,
+                DIS TEXT,
+                KTPel TEXT,
+                KET TEXT,
+                SUMBER TEXT,
+                TPS TEXT,
+                LastUpdate TEXT
+            )
+        """)
+        cur.execute("SELECT * FROM data_pemilih")
+        rows = cur.fetchall()
+        conn.close()
+
+        self.all_data = []
+        columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+
+        for row in rows:
+            data_dict = {col: str(val) if val is not None else "" for col, val in zip(columns[1:], row)}
+            self.all_data.append(data_dict)
+
+        self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
+        self.show_page(1)
+
+
+    # =================================================
+    # Update status bar selected & total
+    # =================================================
+    def update_statusbar(self):
+        total = len(self.all_data)
+        selected = 0
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                selected += 1
+        self.lbl_selected.setText(f"{selected} selected")
+        self.lbl_total.setText(f"{total} total")
+
+    def on_item_changed(self, item):
+        if item.column() == 0:  # kolom checkbox
+            row = item.row()
+            checked = (item.checkState() == Qt.CheckState.Checked)
+            for c in range(self.table.columnCount()):
+                cell = self.table.item(row, c)
+                if not cell:
+                    cell = QTableWidgetItem("")
+                    self.table.setItem(row, c, cell)
+                cell.setBackground(Qt.GlobalColor.darkGray if checked else Qt.GlobalColor.transparent)
+            self.update_statusbar()
+
+    # =================================================
+    # Show page data
+    # =================================================
+    def show_page(self, page):
+        if page < 1 or page > self.total_pages:
+            return
+        self.current_page = page
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+
+        start = (page - 1) * self.rows_per_page
+        end = start + self.rows_per_page
+        data_rows = self.all_data[start:end]
+
+        self.table.setRowCount(len(data_rows))
+        app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+        center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
+
+        for i, d in enumerate(data_rows):
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            chk.setCheckState(Qt.CheckState.Unchecked)
+            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i, 0, chk)
+
+            for j, col in enumerate(app_columns[1:], start=1):
+                val = d.get(col, "")
+                if col == "KET":
+                    val = "0"
+                item = QTableWidgetItem(val)
+                if col in center_cols:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(i, j, item)
+
+        self.table.blockSignals(False)
+        self.update_statusbar()
+        self.update_pagination()
+
+    # =================================================
+    # Pagination UI
+    # =================================================
+    def make_page_button(self, text, handler, checked=False, enabled=True):
+        btn = QPushButton(text)
+        btn.setEnabled(enabled)
+        btn.setCheckable(True)
+        btn.setChecked(checked)
+        btn.clicked.connect(handler)
+        btn.setStyleSheet("""
+            QPushButton {
+                padding: 2px 6px;
+                border: 1px solid rgba(255,255,255,80);
+                border-radius: 6px;
+            }
+            QPushButton:checked {
+                border: 1px solid #ffa047;
+                font-weight: reguler;
+            }
+        """)
+        return btn
+
+    def update_pagination(self):
+        for i in reversed(range(self.pagination_layout.count())):
+            w = self.pagination_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        if self.total_pages <= 1:
+            self.pagination_layout.addWidget(self.make_page_button("1", lambda: None, checked=True, enabled=False))
+            return
+
+        prev_btn = self.make_page_button("<", lambda: self.show_page(self.current_page - 1),
+                                         checked=False, enabled=(self.current_page > 1))
+        self.pagination_layout.addWidget(prev_btn)
+
+        window = 5
+        half = window // 2
+        start = max(1, self.current_page - half)
+        end = min(self.total_pages, start + window - 1)
+        start = max(1, end - window + 1)
+
+        if start > 1:
+            self.pagination_layout.addWidget(self.make_page_button("1", lambda: self.show_page(1)))
+            if start > 2:
+                self.pagination_layout.addWidget(QLabel("..."))
+
+        for p in range(start, end + 1):
+            self.pagination_layout.addWidget(
+                self.make_page_button(str(p), lambda _, x=p: self.show_page(x),
+                                      checked=(p == self.current_page))
+            )
+
+        if end < self.total_pages:
+            if end < self.total_pages - 1:
+                self.pagination_layout.addWidget(QLabel("..."))
+            self.pagination_layout.addWidget(
+                self.make_page_button(str(self.total_pages), lambda: self.show_page(self.total_pages))
+            )
+
+        next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
+                                         checked=False, enabled=(self.current_page < self.total_pages))
+        self.pagination_layout.addWidget(next_btn)
 
 # =====================================================
-# Login Window (seperti semula)
+# Login Window (dengan tambahan pilihan Tahapan)
 # =====================================================
 class LoginWindow(QWidget):
     def __init__(self):
@@ -482,6 +634,7 @@ class LoginWindow(QWidget):
         form_layout = QVBoxLayout()
         form_layout.setSpacing(10)
 
+        # --- Username ---
         self.user_label = QLabel("Nama Pengguna:")
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("Ketik Username...")
@@ -492,6 +645,7 @@ class LoginWindow(QWidget):
             lambda text: self.user_input.setText(text.upper()) if text != text.upper() else None
         )
 
+        # --- Kecamatan ---
         self.kec_label = QLabel("Kecamatan:")
         form_layout.addWidget(self.kec_label)
 
@@ -517,6 +671,7 @@ class LoginWindow(QWidget):
         self.kec_input.editingFinished.connect(self.update_desa)
         completer.activated.connect(self.update_desa)
 
+        # --- Desa ---
         self.desa_label = QLabel("Desa:")
         self.desa_combo = QComboBox()
         self.desa_combo.setView(QListView())
@@ -524,6 +679,14 @@ class LoginWindow(QWidget):
         form_layout.addWidget(self.desa_label)
         form_layout.addWidget(self.desa_combo)
 
+        # --- Tahapan ---
+        self.tahapan_label = QLabel("Tahapan:")
+        self.tahapan_combo = QComboBox()
+        self.tahapan_combo.addItems(["-- Pilih Tahapan --", "dphp", "dpshp", "dpshpa"])
+        form_layout.addWidget(self.tahapan_label)
+        form_layout.addWidget(self.tahapan_combo)
+
+        # --- Tombol Login ---
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self.check_login)
         form_layout.addWidget(self.login_button)
@@ -555,8 +718,9 @@ class LoginWindow(QWidget):
         user = self.user_input.text().strip()
         kecamatan = self.kec_input.text().strip()
         desa = self.desa_combo.currentText()
+        tahapan = self.tahapan_combo.currentText()
 
-        if not user or not kecamatan or desa == "-- Pilih Desa --":
+        if not user or not kecamatan or desa == "-- Pilih Desa --" or tahapan == "-- Pilih Tahapan --":
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Warning)
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -581,13 +745,26 @@ class LoginWindow(QWidget):
             msg.exec()
             return
 
-        self.accept_login(user, kecamatan, desa)
+        self.accept_login(user, kecamatan, desa, tahapan)
 
-    def accept_login(self, user, kecamatan, desa):
-        self.main_window = MainWindow(user.upper(), kecamatan, desa)
+    def accept_login(self, user, kecamatan, desa, tahapan):
+        db_map = {
+            "dphp": "dphp.db",
+            "dpshp": "dpshp.db",
+            "dpshpa": "dpshpa.db"
+        }
+        db_name = db_map.get(tahapan.lower(), "dphp.db")
+
+        import os
+        if not os.path.exists(db_name + ".enc"):
+            # jika encrypted belum ada, buat dulu plaintext kosong, biarkan MainWindow yang mengurus encrypt saat tutup
+            conn = sqlite3.connect(f"temp_{db_name}")
+            conn.close()
+            # tidak langsung dienkripsi agar sesi pertama bisa langsung pakai; saat tutup akan dienkripsi otomatis
+
+        self.main_window = MainWindow(user.upper(), kecamatan, desa, db_name)
         self.main_window.show()
         self.close()
-
 
 # =====================================================
 # Main
