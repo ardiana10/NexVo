@@ -441,7 +441,7 @@ class MainWindow(QMainWindow):
 
                 self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
                 self.show_page(1)
-                QMessageBox.information(self, "Sukses", f"Import CSV selesai! Data tersimpan di {self.plain_db_path}")
+                QMessageBox.information(self, "Sukses", f"Import CSV selesai!")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Gagal import CSV: {e}")
