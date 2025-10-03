@@ -2,11 +2,15 @@ import sys, sqlite3, csv, os, atexit, base64
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
-    QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy, QHeaderView,
-    QFileDialog, QProgressDialog, QHBoxLayout
+    QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy,
+    QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea
 )
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer  # tambahkan QTimer
+from PyQt6.QtWidgets import QHeaderView
+from datetime import datetime
+
 
 # === Enkripsi (cryptography - Fernet) ===
 from cryptography.fernet import Fernet
@@ -62,6 +66,89 @@ def get_desa(kecamatan):
     return data
 
 # =====================================================
+# Dialog Setting Aplikasi
+# =====================================================
+class SettingDialog(QDialog):
+    def __init__(self, parent=None, db_name="app.db"):
+        super().__init__(parent)
+        self.setWindowTitle("Tampilan Pemutakhiran")
+        self.setFixedSize(280, 380)   # 🔹 lebih kecil, tapi bisa discroll
+        self.db_name = db_name
+
+        layout = QVBoxLayout(self)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
+        inner = QWidget()
+        vbox = QVBoxLayout(inner)
+
+        self.columns = [
+            ("DPID", "DPID"),
+            ("KECAMATAN", "Kecamatan"),
+            ("DESA", "Kelurahan/Desa"),
+            ("JK", "Jenis Kelamin"),
+            ("TMPT_LHR", "Tempat Lahir"),
+            ("ALAMAT", "Alamat"),
+            ("DIS", "Disabilitas"),
+            ("KTPel", "KTP Elektronik"),
+            ("SUMBER", "Sumber"),
+            ("KET", "Saringan"),
+            ("LastUpdate", "LastUpdate"),
+        ]
+
+        self.checks = {}
+        for col, label in self.columns:
+            cb = QCheckBox(label)
+            cb.setStyleSheet("font-size: 10pt; color: white;")
+            vbox.addWidget(cb)
+            self.checks[col] = cb
+
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        # Tombol
+        btn_layout = QHBoxLayout()
+        btn_tutup = QPushButton("Tutup")
+        btn_simpan = QPushButton("Simpan")
+
+        btn_tutup.setStyleSheet("background:#444; color:white; min-width:100px; min-height:30px; border-radius:6px;")
+        btn_simpan.setStyleSheet("background:#ff6600; color:white; font-weight:bold; min-width:100px; min-height:30px; border-radius:6px;")
+
+        btn_tutup.clicked.connect(self.reject)
+        btn_simpan.clicked.connect(self.save_settings)
+
+        btn_layout.addWidget(btn_tutup)
+        btn_layout.addWidget(btn_simpan)
+        layout.addLayout(btn_layout)
+
+        self.load_settings()
+
+    def load_settings(self):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS setting_aplikasi (nama_kolom TEXT PRIMARY KEY, tampil INTEGER)")
+        cur.execute("SELECT nama_kolom, tampil FROM setting_aplikasi")
+        rows = dict(cur.fetchall())
+        conn.close()
+
+        for col, _ in self.columns:
+            if col in rows:
+                self.checks[col].setChecked(bool(rows[col]))
+            else:
+                self.checks[col].setChecked(True)  # default ON
+
+    def save_settings(self):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        for col, _ in self.columns:
+            val = 1 if self.checks[col].isChecked() else 0
+            cur.execute("INSERT OR REPLACE INTO setting_aplikasi (nama_kolom, tampil) VALUES (?, ?)", (col, val))
+        conn.commit()
+        conn.close()
+        self.accept()   # close dialog dengan "OK"
+
+# =====================================================
 # Main Window (Setelah login)
 # =====================================================
 class MainWindow(QMainWindow):
@@ -74,50 +161,41 @@ class MainWindow(QMainWindow):
         self.kecamatan_login = kecamatan.upper()
         self.desa_login = desa.upper()
         self.username = username
-        self.db_name = db_name   # <<<<< ini tambahan penting (nama .db "logis" dari login)
+        self.db_name = db_name
 
         # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
-        base = os.path.basename(self.db_name)              # mis. dphp.db
-        self.enc_path = self.db_name + ".enc"              # mis. dphp.db.enc
-        self.plain_db_path = f"temp_{base}"                # mis. temp_dphp.db
+        base = os.path.basename(self.db_name)
+        self.enc_path = self.db_name + ".enc"
+        self.plain_db_path = f"temp_{base}"
 
-        # Jika file .enc ada → decrypt ke temp; jika belum ada → buat temp kosong
         if os.path.exists(self.enc_path):
             try:
                 _decrypt_file(self.enc_path, self.plain_db_path)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Gagal dekripsi database:\n{e}")
-                # fallback: buat DB kosong agar app tetap buka
                 conn = sqlite3.connect(self.plain_db_path)
                 conn.close()
         else:
-            # baru pertama kali: buat DB kosong; nanti saat tutup akan dienkripsi
             conn = sqlite3.connect(self.plain_db_path)
             conn.close()
 
-        # SEKARANG: seluruh operasi SQLite diarahkan ke self.plain_db_path
-        # agar kode kamu di bawah tetap berjalan tanpa perubahan besar,
-        # kita set self.db_name = self.plain_db_path
         self.db_name = self.plain_db_path
 
-        # data & pagination
         self.all_data = []
         self.current_page = 1
         self.rows_per_page = 100
         self.total_pages = 1
 
-        # ===== Table =====
         self.table = QTableWidget()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate"
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","PROGRES"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
 
-        # Style tabel dengan border putih tipis
         self.table.setStyleSheet("""
             QTableWidget {
                 font-family: Calibri;
@@ -133,11 +211,9 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # Tinggi baris & header
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.horizontalHeader().setFixedHeight(24)
 
-        # ==== Dictionary lebar kolom ====
         col_widths = {
             " ": 30,
             "KECAMATAN": 120,
@@ -158,13 +234,18 @@ class MainWindow(QMainWindow):
             "SUMBER": 100,
             "KET": 100,
             "TPS": 80,
-            "LastUpdate": 100
+            "LastUpdate": 100,
+            "PROGRES": 100
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
-
-        # === Central widget (table + pagination di bawah) ===
+        
+        # === Auto resize kolom sesuai isi, tapi tetap bisa manual resize ===
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 30)
+        header.setStretchLastSection(True)
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
         self.pagination_layout.setContentsMargins(0, 2, 0, 2)
@@ -178,20 +259,18 @@ class MainWindow(QMainWindow):
         v.addWidget(self.pagination_container)
         self.setCentralWidget(central_box)
 
-        # connect itemChanged untuk hitung selected realtime + highlight
         self.table.itemChanged.connect(self.on_item_changed)
 
-        # ===== Menu Bar =====
         menubar = self.menuBar()
         menubar.setStyleSheet("""
             QMenuBar {
                 font-family: Calibri;
                 font-size: 12px;
                 padding: 0px;
-                margin-bottom: -6px;   /* geser garis ke atas */
+                margin-bottom: -6px;
             }
             QMenuBar::item {
-                padding: 2px 8px;      /* jarak kiri-kanan biar proporsional */
+                padding: 2px 8px;
                 spacing: 4px;
             }
             QMenuBar::item:selected {
@@ -201,38 +280,29 @@ class MainWindow(QMainWindow):
         """)
 
         file_menu = menubar.addMenu("File")
-
         action_dashboard = QAction("Dashboard", self)
         action_dashboard.setShortcut("Alt+H")
         file_menu.addAction(action_dashboard)
-
         action_pemutakhiran = QAction("Pemutakhiran Data", self)
         action_pemutakhiran.setShortcut("Alt+C")
         file_menu.addAction(action_pemutakhiran)
-
         action_unggah_reguler = QAction("Unggah Webgrid TPS Reguler", self)
         action_unggah_reguler.setShortcut("Alt+I")
         file_menu.addAction(action_unggah_reguler)
-
         action_rekap = QAction("Rekapitulasi", self)
         action_rekap.setShortcut("Alt+R")
         file_menu.addAction(action_rekap)
-
-        # Import CSV
         action_import = QAction("Import CSV", self)
         action_import.setShortcut("Alt+M")
-        action_import.triggered.connect(self.import_csv)  # ✅ sekarang ada method-nya
+        action_import.triggered.connect(self.import_csv)
         file_menu.addAction(action_import)
-
         file_menu.addSeparator()
-
         action_keluar = QAction("Keluar", self)
         action_keluar.setShortcut("Ctrl+W")
         action_keluar.triggered.connect(self.close)
         file_menu.addAction(action_keluar)
 
         generate_menu = menubar.addMenu("Generate")
-
         view_menu = menubar.addMenu("View")
         view_menu.addAction(QAction("Reload", self, shortcut="Ctrl+R"))
         view_menu.addAction(QAction("Force Reload", self, shortcut="Ctrl+Shift+R"))
@@ -244,62 +314,45 @@ class MainWindow(QMainWindow):
 
         help_menu = menubar.addMenu("Help")
         help_menu.addAction(QAction("Shortcut", self, shortcut="Alt+Z"))
-        help_menu.addAction(QAction("Setting Aplikasi", self, shortcut="Alt+T"))
+        action_setting = QAction("Setting Aplikasi", self)
+        action_setting.setShortcut("Alt+T")
+        action_setting.triggered.connect(self.show_setting_dialog)
+        help_menu.addAction(action_setting)
         help_menu.addAction(QAction("Hapus Data Pemilih", self))
         help_menu.addAction(QAction("Backup", self))
         help_menu.addAction(QAction("Restore", self))
         help_menu.addAction(QAction("cekdptonline.kpu.go.id", self))
 
-        # ===== Toolbar =====
         toolbar = QToolBar("Toolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
-
         btn_baru = QPushButton("Baru")
-        btn_baru.setStyleSheet("""
-            font-family: Calibri;
-            font-size: 13px;
-            text-align: center;
-            background-color: green;
-            color: white;
-        """)
+        btn_baru.setStyleSheet("font-family: Calibri; font-size: 13px; text-align: center; background-color: green; color: white;")
         toolbar.addWidget(btn_baru)
-
         btn_rekap = QPushButton("Rekap")
         btn_rekap.setStyleSheet("font-family: Calibri; font-size: 13px;")
         toolbar.addWidget(btn_rekap)
-
         spacer_left = QWidget()
         spacer_left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_left)
-
         self.user_label = QLabel(username)
         self.user_label.setStyleSheet("font-family: Calibri; font-weight: bold; font-size: 14px;")
         self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         toolbar.addWidget(self.user_label)
-
         spacer_right = QWidget()
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_right)
-
         btn_tools = QPushButton("Tools")
         btn_tools.setStyleSheet("font-family: Calibri; font-size: 13px;")
         toolbar.addWidget(btn_tools)
-
         btn_filter = QPushButton("Filter")
-        btn_filter.setStyleSheet("""
-            font-family: Calibri;
-            font-size: 13px;
-            background-color: orange;
-            font-weight: bold;
-        """)
+        btn_filter.setStyleSheet("font-family: Calibri; font-size: 13px; background-color: orange; font-weight: bold;")
         toolbar.addWidget(btn_filter)
         for btn in [btn_baru, btn_rekap, btn_tools, btn_filter]:
             btn.setFixedHeight(30)
 
-        # ===== Status Bar =====
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.lbl_selected = QLabel("0 selected")
@@ -309,16 +362,31 @@ class MainWindow(QMainWindow):
         self.status.addWidget(self.lbl_total)
         self.status.addPermanentWidget(self.lbl_version)
 
-        # Pertama kali: render pagination kosong
         self.update_pagination()
-
-        # ✅ Tambahkan ini agar data dari DB ditampilkan langsung setelah login
         self.load_data_from_db()
+        self.apply_column_visibility()
 
-        # Registrasi atexit sebagai jaring pengaman (kalau app exit tanpa closeEvent)
         atexit.register(self._encrypt_and_cleanup)
 
-    # Saat jendela ditutup → encrypt & hapus temp
+    def show_setting_dialog(self):
+        dlg = SettingDialog(self, self.db_name)
+        if dlg.exec():
+            self.apply_column_visibility()
+            self.auto_fit_columns()
+
+    def apply_column_visibility(self):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS setting_aplikasi (nama_kolom TEXT PRIMARY KEY, tampil INTEGER)")
+        cur.execute("SELECT nama_kolom, tampil FROM setting_aplikasi")
+        settings = dict(cur.fetchall())
+        conn.close()
+
+        for i in range(self.table.columnCount()):
+            col_name = self.table.horizontalHeaderItem(i).text()
+            if col_name in settings:
+                self.table.setColumnHidden(i, settings[col_name] == 0)
+
     def closeEvent(self, event):
         self._encrypt_and_cleanup()
         super().closeEvent(event)
@@ -326,13 +394,30 @@ class MainWindow(QMainWindow):
     def _encrypt_and_cleanup(self):
         try:
             if os.path.exists(self.plain_db_path):
-                # Tulis ulang ke .enc
                 _encrypt_file(self.plain_db_path, self.enc_path)
-                # Hapus plaintext
                 os.remove(self.plain_db_path)
         except Exception as e:
-            # Jangan crash saat exit; hanya info ke console.
             print(f"[WARN] Gagal encrypt/cleanup: {e}")
+
+    def auto_fit_columns(self):
+        header = self.table.horizontalHeader()
+        self.table.resizeColumnsToContents()
+
+        max_widths = {
+            "LastUpdate": 100,   # cukup untuk yyyy-mm-dd
+        }
+
+        for i in range(self.table.columnCount()):
+            col_name = self.table.horizontalHeaderItem(i).text()
+            if col_name in max_widths:
+                current = self.table.columnWidth(i)
+                if current > max_widths[col_name]:
+                    self.table.setColumnWidth(i, max_widths[col_name])
+
+        # Jangan stretch kolom terakhir, tapi stretch kolom tertentu saja
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(self.table.columnCount()-1, QHeaderView.ResizeMode.Interactive)
+
 
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
@@ -370,10 +455,10 @@ class MainWindow(QMainWindow):
                     "NKK": "NKK",
                     "NIK": "NIK",
                     "NAMA": "NAMA",
+                    "KELAMIN": "JK",
                     "TEMPAT LAHIR": "TMPT_LHR",
                     "TANGGAL LAHIR": "TGL_LHR",
                     "STS KAWIN": "STS",
-                    "KELAMIN": "JK",
                     "ALAMAT": "ALAMAT",
                     "RT": "RT",
                     "RW": "RW",
@@ -397,10 +482,10 @@ class MainWindow(QMainWindow):
                         NKK TEXT,
                         NIK TEXT,
                         NAMA TEXT,
+                        JK TEXT,
                         TMPT_LHR TEXT,
                         TGL_LHR TEXT,
                         STS TEXT,
-                        JK TEXT,
                         ALAMAT TEXT,
                         RT TEXT,
                         RW TEXT,
@@ -409,7 +494,8 @@ class MainWindow(QMainWindow):
                         KET TEXT,
                         SUMBER TEXT,
                         TPS TEXT,
-                        LastUpdate TEXT
+                        LastUpdate DATETIME,
+                        PROGRES TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -461,10 +547,10 @@ class MainWindow(QMainWindow):
                 NKK TEXT,
                 NIK TEXT,
                 NAMA TEXT,
+                JK TEXT,
                 TMPT_LHR TEXT,
                 TGL_LHR TEXT,
                 STS TEXT,
-                JK TEXT,
                 ALAMAT TEXT,
                 RT TEXT,
                 RW TEXT,
@@ -473,7 +559,8 @@ class MainWindow(QMainWindow):
                 KET TEXT,
                 SUMBER TEXT,
                 TPS TEXT,
-                LastUpdate TEXT
+                LastUpdate DATETIME,
+                PROGRES TEXT
             )
         """)
         cur.execute("SELECT * FROM data_pemilih")
@@ -484,7 +571,21 @@ class MainWindow(QMainWindow):
         columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
 
         for row in rows:
-            data_dict = {col: str(val) if val is not None else "" for col, val in zip(columns[1:], row)}
+            data_dict = {}
+            for col, val in zip(columns[1:], row):
+                if col == "LastUpdate" and val:
+                    try:
+                        # kalau format ISO penuh
+                        dt = datetime.fromisoformat(str(val))
+                        val = dt.strftime("%d/%m/%Y")
+                    except Exception:
+                        # fallback kalau sudah string DD/MM/YYYY
+                        try:
+                            dt = datetime.strptime(str(val), "%Y-%m-%d")
+                            val = dt.strftime("%d/%m/%Y")
+                        except:
+                            pass
+                data_dict[col] = str(val) if val is not None else ""
             self.all_data.append(data_dict)
 
         self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
@@ -532,19 +633,35 @@ class MainWindow(QMainWindow):
 
         self.table.setRowCount(len(data_rows))
         app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
-        center_cols = {"DPID","JK","STS","TGL_LHR","RT","RW","DIS","KTPel","KET","TPS"}
+        center_cols = {"DPID", "JK", "STS", "TGL_LHR", "RT", "RW", "DIS", "KTPel", "KET", "TPS"}
 
         for i, d in enumerate(data_rows):
+            # Kolom checkbox
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             chk.setCheckState(Qt.CheckState.Unchecked)
             chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(i, 0, chk)
 
+            # Isi data
             for j, col in enumerate(app_columns[1:], start=1):
                 val = d.get(col, "")
+
                 if col == "KET":
                     val = "0"
+
+                if col == "LastUpdate" and val:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(val)
+                        val = dt.strftime("%d/%m/%Y")
+                    except:
+                        try:
+                            dt = datetime.strptime(val, "%Y-%m-%d")
+                            val = dt.strftime("%d/%m/%Y")
+                        except:
+                            pass
+
                 item = QTableWidgetItem(val)
                 if col in center_cols:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -554,6 +671,10 @@ class MainWindow(QMainWindow):
         self.table.blockSignals(False)
         self.update_statusbar()
         self.update_pagination()
+
+
+        # jadwalkan setelah layout selesai, supaya ukuran benar2 final
+        QTimer.singleShot(0, self.auto_fit_columns)
 
     # =================================================
     # Pagination UI
@@ -571,8 +692,8 @@ class MainWindow(QMainWindow):
                 border-radius: 6px;
             }
             QPushButton:checked {
-                border: 1px solid #ffa047;
-                font-weight: reguler;
+                border: 2px solid #ffa047;
+                font-weight: bold;
             }
         """)
         return btn
