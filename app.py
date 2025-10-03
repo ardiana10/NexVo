@@ -191,7 +191,7 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","PROGRES"
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK DATA"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
             "KET": 100,
             "TPS": 80,
             "LastUpdate": 100,
-            "PROGRES": 100
+            "CEK DATA": 200
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
@@ -368,6 +368,9 @@ class MainWindow(QMainWindow):
         self.load_data_from_db()
         self.apply_column_visibility()
 
+        # ✅ Tambahkan ini biar auto resize kolom jalan setelah login
+        QTimer.singleShot(0, self.auto_fit_columns)
+
         atexit.register(self._encrypt_and_cleanup)
 
     def show_setting_dialog(self):
@@ -406,7 +409,7 @@ class MainWindow(QMainWindow):
         self.table.resizeColumnsToContents()
 
         max_widths = {
-            "LastUpdate": 100,   # cukup untuk yyyy-mm-dd
+            "CEK DATA": 200,   # cukup untuk yyyy-mm-dd
         }
 
         for i in range(self.table.columnCount()):
@@ -497,7 +500,7 @@ class MainWindow(QMainWindow):
                         SUMBER TEXT,
                         TPS TEXT,
                         LastUpdate DATETIME,
-                        PROGRES TEXT
+                        CEK DATA TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -562,7 +565,7 @@ class MainWindow(QMainWindow):
                 SUMBER TEXT,
                 TPS TEXT,
                 LastUpdate DATETIME,
-                PROGRES TEXT
+                CEK DATA TEXT
             )
         """)
         cur.execute("SELECT * FROM data_pemilih")
