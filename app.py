@@ -6,11 +6,9 @@ from PyQt6.QtWidgets import (
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea
 )
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
-from PyQt6.QtCore import Qt, QTimer  # tambahkan QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHeaderView
 from datetime import datetime
-
 
 # === Enkripsi (cryptography - Fernet) ===
 from cryptography.fernet import Fernet
@@ -18,9 +16,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
 # ====== KONFIGURASI KUNCI ENKRIPSI ======
-# GANTI passphrase ini dengan milik kamu (jangan kosong).
 APP_PASSPHRASE = "9@%RM79hiQt%^@7BneHFtRS&9k9*fJ"   # <<< WAJIB kamu ubah
-# Salt tetap agar konsisten. Boleh kamu ganti juga.
 APP_SALT = b"698z*#$&moK&g6^c43WFkS4#3@Ks%&"
 
 _kdf = PBKDF2HMAC(
@@ -31,6 +27,9 @@ _kdf = PBKDF2HMAC(
 )
 _KEY = base64.urlsafe_b64encode(_kdf.derive(APP_PASSPHRASE.encode("utf-8")))
 _fernet = Fernet(_KEY)
+
+# === Lokasi folder NexVo (tempat app.py) ===
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _encrypt_file(plain_path: str, enc_path: str):
     with open(plain_path, "rb") as f:
@@ -46,7 +45,8 @@ def _decrypt_file(enc_path: str, plain_path: str):
     with open(plain_path, "wb") as f:
         f.write(data)
 
-DB_NAME = "app.db"
+# === DB utama ===
+DB_NAME = os.path.join(BASE_DIR, "app.db")
 
 def get_kecamatan():
     conn = sqlite3.connect(DB_NAME)
@@ -69,10 +69,10 @@ def get_desa(kecamatan):
 # Dialog Setting Aplikasi
 # =====================================================
 class SettingDialog(QDialog):
-    def __init__(self, parent=None, db_name="app.db"):
+    def __init__(self, parent=None, db_name=DB_NAME):
         super().__init__(parent)
         self.setWindowTitle("Tampilan Pemutakhiran")
-        self.setFixedSize(280, 380)   # 🔹 lebih kecil, tapi bisa discroll
+        self.setFixedSize(280, 380)
         self.db_name = db_name
 
         layout = QVBoxLayout(self)
@@ -157,16 +157,18 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Sidalih Pilkada 2024 Desktop v2.2.29 - Pemutakhiran Data")
         self.resize(900, 550)
 
-        # login info
+        # ✅ simpan info login (wajib ada agar import_csv tidak error)
         self.kecamatan_login = kecamatan.upper()
         self.desa_login = desa.upper()
         self.username = username
+
+        # Path database absolut
         self.db_name = db_name
 
         # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
         base = os.path.basename(self.db_name)
         self.enc_path = self.db_name + ".enc"
-        self.plain_db_path = f"temp_{base}"
+        self.plain_db_path = os.path.join(BASE_DIR, f"temp_{base}")
 
         if os.path.exists(self.enc_path):
             try:
@@ -870,18 +872,16 @@ class LoginWindow(QWidget):
 
     def accept_login(self, user, kecamatan, desa, tahapan):
         db_map = {
-            "dphp": "dphp.db",
-            "dpshp": "dpshp.db",
-            "dpshpa": "dpshpa.db"
+            "dphp": os.path.join(BASE_DIR, "dphp.db"),
+            "dpshp": os.path.join(BASE_DIR, "dpshp.db"),
+            "dpshpa": os.path.join(BASE_DIR, "dpshpa.db")
         }
-        db_name = db_map.get(tahapan.lower(), "dphp.db")
+        db_name = db_map.get(tahapan.lower(), os.path.join(BASE_DIR, "dphp.db"))
 
-        import os
         if not os.path.exists(db_name + ".enc"):
-            # jika encrypted belum ada, buat dulu plaintext kosong, biarkan MainWindow yang mengurus encrypt saat tutup
-            conn = sqlite3.connect(f"temp_{db_name}")
+            # buat file temp kosong biar bisa dipakai pertama kali
+            conn = sqlite3.connect(os.path.join(BASE_DIR, f"temp_{os.path.basename(db_name)}"))
             conn.close()
-            # tidak langsung dienkripsi agar sesi pertama bisa langsung pakai; saat tutup akan dienkripsi otomatis
 
         self.main_window = MainWindow(user.upper(), kecamatan, desa, db_name)
         self.main_window.show()
