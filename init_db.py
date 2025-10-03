@@ -1,6 +1,8 @@
-import sqlite3
+import sqlite3, os
 
-DB_NAME = "app.db"
+# Tentukan path db di folder yang sama dengan app.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_NAME = os.path.join(BASE_DIR, "app.db")
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -17,7 +19,7 @@ def init_db():
     # Bersihkan isi tabel supaya tidak dobel
     cur.execute("DELETE FROM kecamatan")
 
-    # Masukkan data kecamatan-desa
+    # Tambahkan data desa...
     data = [
         ("CIPATUJAH","CIHERAS"),
         ("CIPATUJAH","CIPATUJAH"),
@@ -375,7 +377,7 @@ def init_db():
     cur.executemany("INSERT INTO kecamatan (nama_kecamatan, nama_desa) VALUES (?, ?)", data)
     conn.commit()
     conn.close()
-    print("Database berhasil diinisialisasi dengan struktur yang sesuai (nama_kecamatan, nama_desa).")
+    print(f"Database berhasil dibuat di: {DB_NAME}")
 
 if __name__ == "__main__":
     init_db()
