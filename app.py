@@ -5,10 +5,73 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea
 )
-from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHeaderView
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen
+from PyQt6.QtCore import Qt, QTimer, QRect
+from PyQt6.QtWidgets import QHeaderView, QStyledItemDelegate, QStyleOptionButton, QStyle
 from datetime import datetime
+
+class CheckboxDelegate(QStyledItemDelegate):
+    def __init__(self, theme="dark", parent=None):
+        super().__init__(parent)
+        self.theme = theme
+
+    def setTheme(self, theme):
+        self.theme = theme
+
+    def paint(self, painter, option, index):
+        value = index.data(Qt.ItemDataRole.CheckStateRole)
+        if value is not None:
+            rect = self.get_checkbox_rect(option)
+
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            if value == Qt.CheckState.Checked:
+                # kotak oranye saat dicentang
+                painter.setBrush(QColor("#ff9900"))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(rect, 4, 4)
+
+                # centang putih
+                painter.setPen(QPen(QColor("white"), 2))  # biar garis centang lebih jelas
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawLine(rect.left() + 4, rect.center().y(),
+                                 rect.center().x(), rect.bottom() - 4)
+                painter.drawLine(rect.center().x(), rect.bottom() - 4,
+                                 rect.right() - 4, rect.top() + 4)
+            else:
+                if self.theme == "dark":
+                    # dark mode → transparan + border putih tipis
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(QColor("white"), 1))
+                    painter.drawRoundedRect(rect, 4, 4)
+                else:
+                    # light mode → abu-abu dengan border tipis
+                    painter.setBrush(QColor("#e0e0e0"))
+                    painter.setPen(QPen(QColor("#555"), 1))
+                    painter.drawRoundedRect(rect, 4, 4)
+
+            painter.restore()
+            return
+
+        super().paint(painter, option, index)
+
+    def editorEvent(self, event, model, option, index):
+        if not index.flags() & Qt.ItemFlag.ItemIsUserCheckable or not index.flags() & Qt.ItemFlag.ItemIsEnabled:
+            return False
+
+        if event.type() == event.Type.MouseButtonRelease:
+            current = index.data(Qt.ItemDataRole.CheckStateRole)
+            new_state = Qt.CheckState.Unchecked if current == Qt.CheckState.Checked else Qt.CheckState.Checked
+            model.setData(index, new_state, Qt.ItemDataRole.CheckStateRole)
+            return True
+        return False
+
+    def get_checkbox_rect(self, option):
+        size = 14
+        x = option.rect.x() + (option.rect.width() - size) // 2
+        y = option.rect.y() + (option.rect.height() - size) // 2
+        return QRect(x, y, size, size)
 
 # === Enkripsi (cryptography - Fernet) ===
 from cryptography.fernet import Fernet
@@ -72,10 +135,29 @@ class SettingDialog(QDialog):
     def __init__(self, parent=None, db_name=DB_NAME):
         super().__init__(parent)
         self.setWindowTitle("Tampilan Pemutakhiran")
-        self.setFixedSize(280, 380)
+        self.setFixedSize(280, 400)
         self.db_name = db_name
 
         layout = QVBoxLayout(self)
+
+        self.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background: transparent;
+            }
+            QCheckBox::indicator:unchecked {
+                background: transparent;
+                border: 1px solid #888;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #ff9900;   /* oranye */
+                border: 1px solid #ff9900;
+                image: url(:/qt-project.org/styles/commonstyle/images/checkmark.png);
+            }
+        """)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -100,7 +182,7 @@ class SettingDialog(QDialog):
         self.checks = {}
         for col, label in self.columns:
             cb = QCheckBox(label)
-            cb.setStyleSheet("font-size: 10pt; color: white;")
+            cb.setStyleSheet("font-size: 10pt;")
             vbox.addWidget(cb)
             self.checks[col] = cb
 
@@ -197,24 +279,11 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(columns)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-
-        self.table.setStyleSheet("""
-            QTableWidget {
-                font-family: Calibri;
-                font-size: 12px;
-                gridline-color: rgba(255,255,255,80);
-                border: 1px solid rgba(255,255,255,80);
-            }
-            QHeaderView::section {
-                font-family: Calibri;
-                font-size: 12px;
-                font-weight: bold;
-                border: 1px solid rgba(255,255,255,80);
-            }
-        """)
-
+        self.table.setShowGrid(True)
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.horizontalHeader().setFixedHeight(24)
+        self.checkbox_delegate = CheckboxDelegate("dark")  # default dark
+        self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
 
         col_widths = {
             " ": 30,
@@ -242,6 +311,8 @@ class MainWindow(QMainWindow):
         for idx, col in enumerate(columns):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
+
+        
         
         # === Auto resize kolom sesuai isi, tapi tetap bisa manual resize ===
         header = self.table.horizontalHeader()
@@ -306,8 +377,16 @@ class MainWindow(QMainWindow):
 
         generate_menu = menubar.addMenu("Generate")
         view_menu = menubar.addMenu("View")
-        view_menu.addAction(QAction("Reload", self, shortcut="Ctrl+R"))
-        view_menu.addAction(QAction("Force Reload", self, shortcut="Ctrl+Shift+R"))
+
+        # Menambahkan tema Dark & Light
+        action_dark = QAction("Dark", self, shortcut="Ctrl+D")
+        action_dark.triggered.connect(lambda: self.apply_theme("dark"))
+        view_menu.addAction(action_dark)
+
+        action_light = QAction("Light", self, shortcut="Ctrl+L")
+        action_light.triggered.connect(lambda: self.apply_theme("light"))
+        view_menu.addAction(action_light)
+
         view_menu.addAction(QAction("Actual Size", self, shortcut="Ctrl+0"))
         view_menu.addAction(QAction("Zoom In", self, shortcut="Ctrl+Shift+="))
         view_menu.addAction(QAction("Zoom Out", self, shortcut="Ctrl+-"))
@@ -325,35 +404,65 @@ class MainWindow(QMainWindow):
         help_menu.addAction(QAction("Restore", self))
         help_menu.addAction(QAction("cekdptonline.kpu.go.id", self))
 
+       # === Toolbar ===
         toolbar = QToolBar("Toolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        # fungsi bantu untuk bikin jarak antar tombol
+        def add_spacer(width=8):
+            spacer = QWidget()
+            spacer.setFixedWidth(width)
+            toolbar.addWidget(spacer)
+
+        # === Tombol kiri ===
         btn_baru = QPushButton("Baru")
-        btn_baru.setStyleSheet("font-family: Calibri; font-size: 13px; text-align: center; background-color: green; color: white;")
+        self.style_button(btn_baru, bg="green", fg="white", bold=True)
         toolbar.addWidget(btn_baru)
+        add_spacer()
+
         btn_rekap = QPushButton("Rekap")
-        btn_rekap.setStyleSheet("font-family: Calibri; font-size: 13px;")
+        self.style_button(btn_rekap)
         toolbar.addWidget(btn_rekap)
+
+        # === Spacer kiri ke tengah ===
         spacer_left = QWidget()
         spacer_left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_left)
+
+        # === Label User di tengah ===
         self.user_label = QLabel(username)
         self.user_label.setStyleSheet("font-family: Calibri; font-weight: bold; font-size: 14px;")
         self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         toolbar.addWidget(self.user_label)
+
+        # === Spacer tengah ke kanan ===
         spacer_right = QWidget()
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_right)
+
+        # === Tombol kanan ===
+        btn_urutkan = QPushButton("Urutkan")
+        self.style_button(btn_urutkan)
+        btn_urutkan.clicked.connect(self.sort_data)
+        toolbar.addWidget(btn_urutkan)
+        add_spacer()
+
+        btn_cekdata = QPushButton("Cek Data")
+        self.style_button(btn_cekdata)
+        toolbar.addWidget(btn_cekdata)
+        add_spacer()
+
         btn_tools = QPushButton("Tools")
-        btn_tools.setStyleSheet("font-family: Calibri; font-size: 13px;")
+        self.style_button(btn_tools)
         toolbar.addWidget(btn_tools)
+        add_spacer()
+
         btn_filter = QPushButton("Filter")
-        btn_filter.setStyleSheet("font-family: Calibri; font-size: 13px; background-color: orange; font-weight: bold;")
+        self.style_button(btn_filter, bg="orange", fg="black", bold=True)
         toolbar.addWidget(btn_filter)
-        for btn in [btn_baru, btn_rekap, btn_tools, btn_filter]:
-            btn.setFixedHeight(30)
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -367,6 +476,10 @@ class MainWindow(QMainWindow):
         self.update_pagination()
         self.load_data_from_db()
         self.apply_column_visibility()
+
+        # ✅ Load theme terakhir dari database
+        theme = self.load_theme()
+        self.apply_theme(theme)
 
         # ✅ Tambahkan ini biar auto resize kolom jalan setelah login
         QTimer.singleShot(0, self.auto_fit_columns)
@@ -403,6 +516,120 @@ class MainWindow(QMainWindow):
                 os.remove(self.plain_db_path)
         except Exception as e:
             print(f"[WARN] Gagal encrypt/cleanup: {e}")
+
+    def save_theme(self, mode):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS setting_aplikasi_theme (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                theme TEXT
+            )
+        """)
+        cur.execute("DELETE FROM setting_aplikasi_theme")  # hanya simpan 1 row
+        cur.execute("INSERT INTO setting_aplikasi_theme (theme) VALUES (?)", (mode,))
+        conn.commit()
+        conn.close()
+
+    def load_theme(self):
+        conn = sqlite3.connect(self.db_name)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS setting_aplikasi_theme (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                theme TEXT
+            )
+        """)
+        cur.execute("SELECT theme FROM setting_aplikasi_theme ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return row[0]
+        return "dark"  # default pertama kali
+    
+    def style_button(self, btn, width=90, height=28, bg="#2d2d30", fg="white", bold=False):
+        btn.setFixedSize(width, height)
+        style = f"""
+            QPushButton {{
+                font-family: Calibri;
+                font-size: 12px;
+                {"font-weight: bold;" if bold else ""}
+                border: 1px solid #666;
+                border-radius: 4px;
+                padding: 2px 6px;
+                background-color: {bg};
+                color: {fg};
+            }}
+            QPushButton:hover {{
+                background-color: #3e3e42;
+            }}
+        """
+        btn.setStyleSheet(style)
+        return btn
+
+    def apply_theme(self, mode):
+        if mode == "dark":
+            self.setStyleSheet("""
+                QMainWindow, QWidget {
+                    background-color: #1e1e1e;
+                    color: #d4d4d4;
+                    font-family: Segoe UI, Calibri, sans-serif;
+                }
+                QTableWidget {
+                    background-color: #1e1e1e;
+                    alternate-background-color: #252526;
+                    color: #d4d4d4;
+                    gridline-color: #3e3e42;
+                    selection-background-color: #264f78;
+                    selection-color: white;
+                }
+                QHeaderView::section {
+                    background-color: #333333;
+                    color: #dcdcdc;
+                    font-weight: bold;
+                    border: 1px solid #3e3e42;
+                    padding: 4px;
+                }
+                QMenu::item:selected {
+                    background-color: #ff9900;   /* 🔥 hover oranye */
+                    color: black;
+                    border-radius: 4px;
+                }
+            """)
+            self.checkbox_delegate.setTheme("dark")
+
+        elif mode == "light":
+            self.setStyleSheet("""
+                QMainWindow, QWidget {
+                    background-color: #f9f9f9;
+                    color: #333333;
+                    font-family: Segoe UI, Calibri, sans-serif;
+                }
+                QTableWidget {
+                    background-color: #ffffff;
+                    alternate-background-color: #f3f3f3;
+                    color: #333333;
+                    gridline-color: #c0c0c0;
+                    selection-background-color: #bcbcbc;
+                    selection-color: #000000;
+                }
+                QHeaderView::section {
+                    background-color: #f0f0f0;
+                    color: #333333;
+                    font-weight: bold;
+                    border: 1px solid #c0c0c0;
+                    padding: 4px;
+                }
+                QMenu::item:selected {
+                    background-color: #ff9900;   /* 🔥 hover oranye */
+                    color: black;
+                    border-radius: 4px;
+                }
+            """)
+            self.checkbox_delegate.setTheme("light")
+
+        # ✅ Simpan pilihan theme ke DB
+        self.save_theme(mode)
 
     def auto_fit_columns(self):
         header = self.table.horizontalHeader()
@@ -469,8 +696,8 @@ class MainWindow(QMainWindow):
                     "RW": "RW",
                     "DISABILITAS": "DIS",
                     "EKTP": "KTPel",
-                    "KETERANGAN": "KET",
                     "SUMBER": "SUMBER",
+                    "KETERANGAN": "KET",
                     "TPS": "TPS",
                     "UPDATED_AT": "LastUpdate"
                 }
@@ -496,8 +723,8 @@ class MainWindow(QMainWindow):
                         RW TEXT,
                         DIS TEXT,
                         KTPel TEXT,
-                        KET TEXT,
                         SUMBER TEXT,
+                        KET TEXT,
                         TPS TEXT,
                         LastUpdate DATETIME,
                         CEK DATA TEXT
@@ -561,8 +788,8 @@ class MainWindow(QMainWindow):
                 RW TEXT,
                 DIS TEXT,
                 KTPel TEXT,
-                KET TEXT,
                 SUMBER TEXT,
+                KET TEXT,
                 TPS TEXT,
                 LastUpdate DATETIME,
                 CEK DATA TEXT
@@ -623,11 +850,47 @@ class MainWindow(QMainWindow):
             self.update_statusbar()
 
     # =================================================
-    # Show page data
+    # Pengurutan Data
+    # =================================================
+
+    def sort_data(self):
+        # Konfirmasi sebelum mengurutkan
+        reply = QMessageBox.question(
+            self,
+            "Konfirmasi",
+            "Apakah Anda ingin mengurutkan data?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return  # batal, tidak ada perubahan
+
+        # Lakukan pengurutan data
+        self.all_data.sort(
+            key=lambda x: (
+                str(x.get("TPS", "")),
+                str(x.get("RW", "")),
+                str(x.get("RT", "")),
+                str(x.get("NKK", "")),
+                str(x.get("NAMA", ""))
+            )
+        )
+
+        # Refresh tampilan tabel (tampilkan ulang page 1)
+        self.show_page(1)
+
+        # Pemberitahuan selesai
+        QMessageBox.information(self, "Selesai", "Pengurutan data telah selesai!")
+
+
+    # =================================================
+    # Show page data (fix checkbox terlihat)
     # =================================================
     def show_page(self, page):
         if page < 1 or page > self.total_pages:
             return
+
         self.current_page = page
         self.table.blockSignals(True)
         self.table.setRowCount(0)
@@ -641,20 +904,22 @@ class MainWindow(QMainWindow):
         center_cols = {"DPID", "JK", "STS", "TGL_LHR", "RT", "RW", "DIS", "KTPel", "KET", "TPS"}
 
         for i, d in enumerate(data_rows):
-            # Kolom checkbox
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk.setCheckState(Qt.CheckState.Unchecked)
-            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i, 0, chk)
+            # ✅ Kolom pertama: checkbox
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            chk_item.setData(Qt.ItemDataRole.CheckStateRole, Qt.CheckState.Unchecked)
+            chk_item.setText("")  # kosong, biar hanya kotak ceklis
+            self.table.setItem(i, 0, chk_item)
 
-            # Isi data
+            # ✅ Kolom lainnya
             for j, col in enumerate(app_columns[1:], start=1):
                 val = d.get(col, "")
 
+                # Format khusus untuk kolom KET
                 if col == "KET":
                     val = "0"
 
+                # Format khusus untuk kolom LastUpdate
                 if col == "LastUpdate" and val:
                     try:
                         from datetime import datetime
@@ -668,17 +933,23 @@ class MainWindow(QMainWindow):
                             pass
 
                 item = QTableWidgetItem(val)
+
+                # Tengahkan kolom tertentu
                 if col in center_cols:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                # Nonaktifkan edit
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
                 self.table.setItem(i, j, item)
 
         self.table.blockSignals(False)
+        self.lbl_selected.setText("0 selected")
+        self.lbl_total.setText(f"{len(self.all_data)} total")
         self.update_statusbar()
         self.update_pagination()
 
-
-        # jadwalkan setelah layout selesai, supaya ukuran benar2 final
+        # jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
 
     # =================================================
