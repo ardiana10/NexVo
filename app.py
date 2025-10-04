@@ -1,14 +1,101 @@
-import sys, sqlite3, csv, os, atexit, base64
+import sys, sqlite3, csv, os, atexit, base64, random, string
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy,
-    QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea
+    QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
+    QStyledItemDelegate, QInputDialog
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect
-from PyQt6.QtWidgets import QHeaderView, QStyledItemDelegate, QStyleOptionButton, QStyle
-from datetime import datetime
+
+class ModernMessage(QDialog):
+    def __init__(self, title, message, icon_type="info", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(320, 180)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                border-radius: 12px;
+            }
+            QLabel {
+                color: white;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff8533;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # === Ikon modern ===
+        icon_label = QLabel()
+        pix = self._create_icon(icon_type)
+        icon_label.setPixmap(pix)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+
+        # === Pesan ===
+        msg = QLabel(message)
+        msg.setWordWrap(True)
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setStyleSheet("font-size: 11pt; margin: 4px;")
+        layout.addWidget(msg)
+
+        # === Tombol OK ===
+        btn = QPushButton("OK")
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def _create_icon(self, icon_type):
+        """Gambar ikon modern (success, warning, error, info)."""
+        pix = QPixmap(64, 64)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Warna dasar lingkaran
+        colors = {
+            "success": "#28a745",   # hijau
+            "warning": "#ffc107",   # kuning
+            "error":   "#dc3545",   # merah
+            "info":    "#17a2b8",   # biru muda
+        }
+        color = QColor(colors.get(icon_type, "#17a2b8"))
+        painter.setBrush(color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(0, 0, 64, 64)
+
+        painter.setPen(QPen(QColor("white"), 6))
+        if icon_type == "success":
+            painter.drawLine(16, 34, 28, 46)
+            painter.drawLine(28, 46, 48, 20)
+        elif icon_type == "warning":
+            painter.drawLine(32, 14, 32, 38)
+            painter.drawPoint(32, 50)
+        elif icon_type == "error":
+            painter.drawLine(20, 20, 44, 44)
+            painter.drawLine(44, 20, 20, 44)
+        else:  # info
+            painter.drawLine(32, 20, 32, 28)
+            painter.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
+            painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "i")
+
+        painter.end()
+        return pix
 
 class CheckboxDelegate(QStyledItemDelegate):
     def __init__(self, theme="dark", parent=None):
@@ -234,8 +321,10 @@ class SettingDialog(QDialog):
 # Main Window (Setelah login)
 # =====================================================
 class MainWindow(QMainWindow):
-    def __init__(self, username, kecamatan, desa, db_name):
+    def __init__(self, username, kecamatan, desa, db_name, tahapan):
         super().__init__()
+        self.tahapan = tahapan.upper()   # ✅ simpan jenis tahapan (DPHP/DPSHP/DPSHPA)
+
         self.setWindowTitle("Sidalih Pilkada 2024 Desktop v2.2.29 - Pemutakhiran Data")
         self.resize(900, 550)
 
@@ -266,6 +355,9 @@ class MainWindow(QMainWindow):
         self.db_name = self.plain_db_path
 
         self.all_data = []
+
+        self.sort_lastupdate_asc = True  # ✅ toggle: True = dari terbaru ke lama, False = sebaliknya
+
         self.current_page = 1
         self.rows_per_page = 100
         self.total_pages = 1
@@ -312,13 +404,23 @@ class MainWindow(QMainWindow):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        
-        
         # === Auto resize kolom sesuai isi, tapi tetap bisa manual resize ===
+        # === Header dan sorting klik ===
         header = self.table.horizontalHeader()
+        try:
+            header.sectionClicked.disconnect()  # pastikan tidak dobel koneksi
+        except Exception:
+            pass
+        header.sectionClicked.connect(self.header_clicked)
+
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(0, 30)
         header.setStretchLastSection(True)
+
+        # ✅ Tambahkan di sini:
+        self.connect_header_events()   # memastikan event klik header LastUpdate aktif
+
+
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
         self.pagination_layout.setContentsMargins(0, 2, 0, 2)
@@ -408,6 +510,25 @@ class MainWindow(QMainWindow):
         help_menu.addAction(QAction("  Backup", self))
         help_menu.addAction(QAction("  Restore", self))
         help_menu.addAction(QAction("  cekdptonline.kpu.go.id", self))
+
+        # ==========================================================
+        # ✅ Tampilkan menu "Import Ecoklit" hanya jika tahapan = DPHP
+        # ==========================================================
+        if self.tahapan == "DPHP":
+            import_ecoklit_menu = menubar.addMenu("Import Ecoklit")
+
+            action_import_baru = QAction("  Import Pemilih Baru", self)
+            action_import_tms = QAction("  Import Pemilih TMS", self)
+            action_import_ubah = QAction("  Import Pemilih Ubah Data", self)
+
+            # Placeholder fungsi (bisa diisi nanti)
+            action_import_baru.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih Baru diklik"))
+            action_import_tms.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih TMS diklik"))
+            action_import_ubah.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih Ubah Data diklik"))
+
+            import_ecoklit_menu.addAction(action_import_baru)
+            import_ecoklit_menu.addAction(action_import_tms)
+            import_ecoklit_menu.addAction(action_import_ubah)
 
        # === Toolbar ===
         toolbar = QToolBar("Toolbar")
@@ -732,7 +853,7 @@ class MainWindow(QMainWindow):
                         KET TEXT,
                         TPS TEXT,
                         LastUpdate DATETIME,
-                        CEK DATA TEXT
+                        "CEK DATA" TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -747,10 +868,29 @@ class MainWindow(QMainWindow):
                         if csv_col in header:
                             col_idx = header.index(csv_col)
                             val = row[col_idx].strip()
+
+                            # Pastikan kolom KET selalu "0"
                             if app_col == "KET":
                                 val = "0"
+
+                            # ✅ Normalisasi kolom LastUpdate (format jadi DD/MM/YYYY)
+                            if app_col == "LastUpdate" and val:
+                                try:
+                                    from datetime import datetime
+                                    # coba berbagai format ISO umum
+                                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                                        try:
+                                            dt = datetime.strptime(val, fmt)
+                                            val = dt.strftime("%d/%m/%Y")
+                                            break
+                                        except Exception:
+                                            continue
+                                except Exception:
+                                    pass
+
                             data_dict[app_col] = val
                             values.append(val)
+
                     self.all_data.append(data_dict)
 
                     placeholders = ",".join(["?"] * len(mapping))
@@ -764,7 +904,11 @@ class MainWindow(QMainWindow):
 
                 self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
                 self.show_page(1)
-                QMessageBox.information(self, "Sukses", f"Import CSV selesai!")
+
+                # ✅ Pastikan klik header aktif setelah render
+                self.connect_header_events()
+
+                QMessageBox.information(self, "Sukses", "Import CSV selesai!")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Gagal import CSV: {e}")
@@ -887,6 +1031,52 @@ class MainWindow(QMainWindow):
 
         # Pemberitahuan selesai
         QMessageBox.information(self, "Selesai", "Pengurutan data telah selesai!")
+
+    # =================================================
+    # Klik Header Kolom "LastUpdate" untuk sorting toggle
+    # =================================================
+    def header_clicked(self, logicalIndex):
+        header_item = self.table.horizontalHeaderItem(logicalIndex)
+        if not header_item:
+            return
+
+        header_text = header_item.text().strip().upper()
+        if header_text != "LASTUPDATE":
+            return
+
+        try:
+            def parse_tgl(val):
+                if not val:
+                    return datetime.min
+                val = val.strip()
+                # ✅ Dukung semua format umum
+                for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return datetime.strptime(val, fmt)
+                    except Exception:
+                        continue
+                return datetime.min
+
+            # ✅ Sort data berdasarkan kolom LastUpdate
+            self.all_data.sort(
+                key=lambda x: parse_tgl(x.get("LastUpdate", x.get("LASTUPDATE", ""))),
+                reverse=not self.sort_lastupdate_asc
+            )
+
+            self.sort_lastupdate_asc = not self.sort_lastupdate_asc
+            self.show_page(1)
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Gagal mengurutkan kolom LastUpdate:\n{e}")
+
+    def connect_header_events(self):
+        """Pastikan koneksi klik header aktif setelah tabel diperbarui."""
+        header = self.table.horizontalHeader()
+        try:
+            header.sectionClicked.disconnect()
+        except Exception:
+            pass
+        header.sectionClicked.connect(self.header_clicked)
 
         # =================================================
     # Hapus Seluruh Data Pemilih (sub-menu Help)
@@ -1023,6 +1213,7 @@ class MainWindow(QMainWindow):
         self.lbl_total.setText(f"{len(self.all_data)} total")
         self.update_statusbar()
         self.update_pagination()
+        self.table.horizontalHeader().setSortIndicatorShown(False)
 
         # jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
@@ -1094,10 +1285,13 @@ class MainWindow(QMainWindow):
 # =====================================================
 # Login Window (dengan tambahan pilihan Tahapan)
 # =====================================================
+# =====================================================
+# LOGIN WINDOW (Versi Final: Email, Password, Tahapan)
+# =====================================================
 class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Login")
+        self.setWindowTitle("Login Akun")
         self.showMaximized()
 
         outer_layout = QVBoxLayout()
@@ -1106,135 +1300,494 @@ class LoginWindow(QWidget):
         form_layout = QVBoxLayout()
         form_layout.setSpacing(10)
 
-        # --- Username ---
-        self.user_label = QLabel("Nama Pengguna:")
-        self.user_input = QLineEdit()
-        self.user_input.setPlaceholderText("Ketik Username...")
-        form_layout.addWidget(self.user_label)
-        form_layout.addWidget(self.user_input)
+        # === Email ===
+        self.email_label = QLabel("Email:")
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("Masukkan Email Aktif...")
+        form_layout.addWidget(self.email_label)
+        form_layout.addWidget(self.email_input)
 
-        self.user_input.textChanged.connect(
-            lambda text: self.user_input.setText(text.upper()) if text != text.upper() else None
+        # === Password + tombol lihat ===
+        self.pass_label = QLabel("Kata Sandi:")
+        pw_layout = QHBoxLayout()
+        self.pass_input = QLineEdit()
+        self.pass_input.setPlaceholderText("Masukkan Password...")
+        self.pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.toggle_pw = QPushButton("👁")
+        self.toggle_pw.setFixedWidth(40)
+        self.toggle_pw.clicked.connect(lambda: self.toggle_password(self.pass_input))
+        pw_layout.addWidget(self.pass_input)
+        pw_layout.addWidget(self.toggle_pw)
+        form_layout.addWidget(self.pass_label)
+        form_layout.addLayout(pw_layout)
+
+        # === Tahapan ===
+        self.tahapan_label = QLabel("Tahapan:")
+        self.tahapan_combo = QComboBox()
+        self.tahapan_combo.addItems(["-- Pilih Tahapan --", "DPHP", "DPSHP", "DPSHPA"])
+        form_layout.addWidget(self.tahapan_label)
+        form_layout.addWidget(self.tahapan_combo)
+
+        # === Tombol Login ===
+        self.login_button = QPushButton("Login")
+        self.login_button.clicked.connect(self.check_login)
+        self.login_button.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #ff8533;
+            }
+        """)
+        form_layout.addWidget(self.login_button)
+
+        # === Tombol Buat Akun ===
+        self.buat_akun = QPushButton("Buat Akun")
+        self.buat_akun.setStyleSheet("""
+            color:#ff6600;
+            font-weight:bold;
+            text-decoration:underline;
+            background:transparent;
+            border:none;
+        """)
+        self.buat_akun.clicked.connect(self.konfirmasi_buat_akun)
+        form_layout.addWidget(self.buat_akun, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # === Tata letak utama ===
+        center_box = QWidget()
+        center_box.setLayout(form_layout)
+        center_box.setFixedWidth(300)
+        outer_layout.addWidget(center_box, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.setLayout(outer_layout)
+
+        self.setStyleSheet("""
+            QWidget { font-size: 11pt; color: white; background-color: #1e1e1e; }
+            QLineEdit, QComboBox {
+                min-height: 28px;
+                font-size: 11pt;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding-left: 6px;
+                background-color: #2d2d30;
+                color: white;
+            }
+        """)
+
+    # === Toggle tampil/sembunyikan password ===
+    def toggle_password(self, field):
+        if field.echoMode() == QLineEdit.EchoMode.Password:
+            field.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+
+    # === Proses login ===
+    def check_login(self):
+        email = self.email_input.text().strip()
+        pw = self.pass_input.text().strip()
+        tahapan = self.tahapan_combo.currentText()
+
+        if not email or not pw or tahapan == "-- Pilih Tahapan --":
+            QMessageBox.warning(self, "Error", "Semua field harus diisi!")
+            return
+
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nama TEXT,
+                email TEXT,
+                kecamatan TEXT,
+                desa TEXT,
+                password TEXT,
+                otp_secret TEXT
+            )
+        """)
+        cur.execute("SELECT nama, kecamatan, desa FROM users WHERE email=? AND password=?", (email, pw))
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            QMessageBox.warning(self, "Login Gagal", "Email atau password salah!")
+            return
+
+        nama, kecamatan, desa = row
+        self.accept_login(nama, kecamatan, desa, tahapan)
+
+    # === Konfirmasi Buat Akun ===
+    def konfirmasi_buat_akun(self):
+        reply = QMessageBox.question(
+            self,
+            "Konfirmasi",
+            "Apakah Anda yakin ingin membuat akun baru?\nSeluruh data lama akan dihapus!",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
+        if reply == QMessageBox.StandardButton.No:
+            return
 
-        # --- Kecamatan ---
-        self.kec_label = QLabel("Kecamatan:")
-        form_layout.addWidget(self.kec_label)
+        kode, ok = QInputDialog.getText(self, "Kode Konfirmasi", "Masukkan kode konfirmasi:")
+        if not ok:
+            return
+        if kode.strip() != "KabTasik3206":
+            QMessageBox.warning(self, "Salah", "Kode konfirmasi salah. Proses dibatalkan.")
+            return
 
-        self.kec_input = QLineEdit()
-        self.kec_input.setPlaceholderText("Ketik nama kecamatan...")
+        # ✅ Kode benar → hapus semua data lama
+        hapus_semua_data()
 
+        # ✅ Tampilkan form RegisterWindow sebagai window utama
+        self.register_window = RegisterWindow(None)
+        self.register_window.show()
+
+        # Tutup login window setelah register window muncul
+        self.close()
+
+    # === Masuk ke MainWindow ===
+    def accept_login(self, nama, kecamatan, desa, tahapan):
+        tahapan = tahapan.upper()
+        db_map = {
+            "DPHP": os.path.join(BASE_DIR, "DPHP.db"),
+            "DPSHP": os.path.join(BASE_DIR, "DPSHP.db"),
+            "DPSHPA": os.path.join(BASE_DIR, "DPSHPA.db")
+        }
+        db_name = db_map.get(tahapan, os.path.join(BASE_DIR, "DPHP.db"))
+
+        # === Pastikan DB terenkripsi siap ===
+        plain_temp = os.path.join(BASE_DIR, f"temp_{os.path.basename(db_name)}")
+        enc_file = db_name + ".enc"
+
+        if not os.path.exists(enc_file):
+            conn = sqlite3.connect(plain_temp)
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_pemilih (
+                    KECAMATAN TEXT,
+                    DESA TEXT,
+                    DPID TEXT,
+                    NKK TEXT,
+                    NIK TEXT,
+                    NAMA TEXT,
+                    JK TEXT,
+                    TMPT_LHR TEXT,
+                    TGL_LHR TEXT,
+                    STS TEXT,
+                    ALAMAT TEXT,
+                    RT TEXT,
+                    RW TEXT,
+                    DIS TEXT,
+                    KTPel TEXT,
+                    SUMBER TEXT,
+                    KET TEXT,
+                    TPS TEXT,
+                    LastUpdate DATETIME,
+                    CEK DATA TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+
+            try:
+                _encrypt_file(plain_temp, enc_file)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Gagal membuat database terenkripsi:\n{e}")
+            finally:
+                if os.path.exists(plain_temp):
+                    os.remove(plain_temp)
+
+        # === Masuk ke MainWindow ===
+        self.main_window = MainWindow(nama.upper(), kecamatan, desa, db_name, tahapan)
+        self.main_window.show()
+        self.close()
+
+# =====================================================
+# FORM BUAT AKUN BARU (REGISTER)
+# =====================================================
+class RegisterWindow(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Buat Akun Baru")
+        self.setFixedSize(360, 520)
+        self.setStyleSheet("""
+            QWidget { font-family: Calibri; font-size: 11pt; }
+            QLineEdit, QComboBox { 
+                min-height: 28px; 
+                border-radius: 4px; 
+                border: 1px solid #aaa; 
+                padding-left: 6px; 
+            }
+            QPushButton { min-height: 30px; border-radius: 5px; }
+            QPushButton:hover { background-color: #f0f0f0; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # === Nama ===
+        self.nama = QLineEdit()
+        self.nama.setPlaceholderText("Nama Lengkap")
+        self.nama.textChanged.connect(lambda t: self.nama.setText(t.upper()) if t != t.upper() else None)
+        layout.addWidget(self.nama)
+
+        # === Email ===
+        self.email = QLineEdit()
+        self.email.setPlaceholderText("Email Aktif")
+        layout.addWidget(self.email)
+
+        # === Kecamatan ===
+        self.kecamatan = QLineEdit()
+        self.kecamatan.setPlaceholderText("Ketik Kecamatan...")
         kec_list = get_kecamatan()
         completer = QCompleter(kec_list, self)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.kec_input.setCompleter(completer)
+        self.kecamatan.setCompleter(completer)
+        self.kecamatan.textChanged.connect(self.update_desa)
+        layout.addWidget(self.kecamatan)
 
-        popup = completer.popup()
-        popup.setStyleSheet("QListView { font-size: 10px; }")
+        # === Desa ===
+        self.desa = QComboBox()
+        self.desa.addItem("-- Pilih Desa --")
+        layout.addWidget(self.desa)
 
-        self.kec_input.textChanged.connect(
-            lambda text: self.kec_input.setText(text.upper()) if text != text.upper() else None
-        )
+        # === Password + toggle ===
+        pw_layout = QHBoxLayout()
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("Password")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.toggle_pw = QPushButton("👁")
+        self.toggle_pw.setFixedWidth(40)
+        self.toggle_pw.clicked.connect(lambda: self.toggle_password(self.password))
+        pw_layout.addWidget(self.password)
+        pw_layout.addWidget(self.toggle_pw)
+        layout.addLayout(pw_layout)
 
-        form_layout.addWidget(self.kec_input)
+        # === Ulangi password + toggle ===
+        pw2_layout = QHBoxLayout()
+        self.password2 = QLineEdit()
+        self.password2.setPlaceholderText("Tulis Ulang Password")
+        self.password2.setEchoMode(QLineEdit.EchoMode.Password)
+        self.toggle_pw2 = QPushButton("👁")
+        self.toggle_pw2.setFixedWidth(40)
+        self.toggle_pw2.clicked.connect(lambda: self.toggle_password(self.password2))
+        pw2_layout.addWidget(self.password2)
+        pw2_layout.addWidget(self.toggle_pw2)
+        layout.addLayout(pw2_layout)
 
-        self.kec_input.editingFinished.connect(self.update_desa)
-        completer.activated.connect(self.update_desa)
+        # === Captcha modern (gambar) ===
+        self.captcha_code = self.generate_captcha()
+        self.captcha_label = QLabel()
+        self.captcha_label.setFixedHeight(60)
+        self.captcha_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.refresh_captcha_image()
 
-        # --- Desa ---
-        self.desa_label = QLabel("Desa:")
-        self.desa_combo = QComboBox()
-        self.desa_combo.setView(QListView())
-        self.desa_combo.addItem("-- Pilih Desa --")
-        form_layout.addWidget(self.desa_label)
-        form_layout.addWidget(self.desa_combo)
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setFixedWidth(40)
+        self.refresh_btn.clicked.connect(self.refresh_captcha_image)
 
-        # --- Tahapan ---
-        self.tahapan_label = QLabel("Tahapan:")
-        self.tahapan_combo = QComboBox()
-        self.tahapan_combo.addItems(["-- Pilih Tahapan --", "dphp", "dpshp", "dpshpa"])
-        form_layout.addWidget(self.tahapan_label)
-        form_layout.addWidget(self.tahapan_combo)
+        captcha_layout = QHBoxLayout()
+        captcha_layout.addWidget(self.captcha_label)
+        captcha_layout.addWidget(self.refresh_btn)
+        layout.addLayout(captcha_layout)
 
-        # --- Tombol Login ---
-        self.login_button = QPushButton("Login")
-        self.login_button.clicked.connect(self.check_login)
-        form_layout.addWidget(self.login_button)
+        self.captcha_input = QLineEdit()
+        self.captcha_input.setPlaceholderText("Tulis ulang captcha di atas")
+        layout.addWidget(self.captcha_input)
 
-        center_box = QWidget()
-        center_box.setLayout(form_layout)
-        center_box.setFixedWidth(300)
-        outer_layout.addWidget(center_box, alignment=Qt.AlignmentFlag.AlignCenter)
+        # === Tombol Buat Akun ===
+        self.btn_buat = QPushButton("Buat Akun")
+        self.btn_buat.setStyleSheet("background-color:#ff6600; color:white; font-weight:bold;")
+        self.btn_buat.clicked.connect(self.create_account)
+        layout.addWidget(self.btn_buat)
 
-        self.setLayout(outer_layout)
-
-        self.setStyleSheet("""
-            QWidget { font-size: 11px; }
-            QLineEdit, QComboBox, QPushButton { min-height: 28px; font-size: 11px; }
-            QComboBox QAbstractItemView { font-size: 11px; }
-        """)
+    # ===================================================
+    # 🔹 Helper untuk captcha dan interaksi UI
+    # ===================================================
+    def toggle_password(self, field):
+        if field.echoMode() == QLineEdit.EchoMode.Password:
+            field.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            field.setEchoMode(QLineEdit.EchoMode.Password)
 
     def update_desa(self):
-        kecamatan = self.kec_input.text().strip()
-        self.desa_combo.clear()
+        kecamatan = self.kecamatan.text().strip()
+        self.desa.clear()
         if kecamatan:
             desa_list = get_desa(kecamatan)
-            self.desa_combo.addItem("-- Pilih Desa --")
-            self.desa_combo.addItems(desa_list)
+            self.desa.addItem("-- Pilih Desa --")
+            self.desa.addItems(desa_list)
         else:
-            self.desa_combo.addItem("-- Pilih Desa --")
+            self.desa.addItem("-- Pilih Desa --")
 
-    def check_login(self):
-        user = self.user_input.text().strip()
-        kecamatan = self.kec_input.text().strip()
-        desa = self.desa_combo.currentText()
-        tahapan = self.tahapan_combo.currentText()
+    # ===================================================
+    # 🔹 Captcha generator
+    # ===================================================
+    def generate_captcha(self, length=5):
+        """Generate random captcha string (A-Z + 0-9)."""
+        chars = string.ascii_uppercase + string.digits
+        return ''.join(random.choices(chars, k=length))
 
-        if not user or not kecamatan or desa == "-- Pilih Desa --" or tahapan == "-- Pilih Tahapan --":
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Icon.Warning)
-            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            msg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-            msg.setText("Semua field harus diisi!")
-            msg.setStyleSheet("""
-                QMessageBox {
-                    background-color: white;
-                    border: 2px solid black;
-                    border-radius: 6px;
-                }
-                QMessageBox QLabel {
-                    color: black;
-                    qproperty-alignment: AlignLeft;
-                    font-size: 10pt;
-                }
-                QMessageBox QPushButton {
-                    min-width: 80px;
-                    min-height: 25px;
-                }
-            """)
-            msg.exec()
+    def generate_captcha_image(self, text):
+        """Buat gambar captcha berwarna acak dengan noise."""
+        width, height = 160, 50
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor("#f5f5f5"))
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont("Calibri", 22, QFont.Weight.Bold)
+        painter.setFont(font)
+
+        spacing = width // (len(text) + 1)
+        for i, ch in enumerate(text):
+            painter.setPen(QColor(random.randint(20, 150), random.randint(20, 150), random.randint(20, 150)))
+            angle = random.randint(-25, 25)
+            painter.save()
+            painter.translate((i + 1) * spacing, random.randint(25, 40))
+            painter.rotate(angle)
+            painter.drawText(0, 0, ch)
+            painter.restore()
+
+        # Tambahkan noise berupa garis acak
+        for _ in range(6):
+            pen = QColor(random.randint(120, 200), random.randint(120, 200), random.randint(120, 200))
+            painter.setPen(pen)
+            x1, y1, x2, y2 = [random.randint(0, width) for _ in range(4)]
+            painter.drawLine(x1, y1, x2, y2)
+
+        painter.end()
+        return pixmap
+
+    def refresh_captcha_image(self):
+        """Refresh captcha dengan gambar baru."""
+        self.captcha_code = self.generate_captcha()
+        pixmap = self.generate_captcha_image(self.captcha_code)
+        self.captcha_label.setPixmap(pixmap)
+
+    # ===================================================
+    # 🔹 Validasi dan Simpan Akun
+    # ===================================================
+    def create_account(self):
+        nama = self.nama.text().strip()
+        email = self.email.text().strip()
+        kecamatan = self.kecamatan.text().strip()
+        desa = self.desa.currentText().strip()
+        pw = self.password.text().strip()
+        pw2 = self.password2.text().strip()
+        captcha = self.captcha_input.text().strip()
+
+        if not all([nama, email, kecamatan, desa, pw, pw2, captcha]):
+            QMessageBox.warning(self, "Error", "Semua kolom harus diisi!")
             return
 
-        self.accept_login(user, kecamatan, desa, tahapan)
+        if "@" not in email or "." not in email:
+            QMessageBox.warning(self, "Error", "Format email tidak valid!")
+            return
 
-    def accept_login(self, user, kecamatan, desa, tahapan):
-        db_map = {
-            "dphp": os.path.join(BASE_DIR, "dphp.db"),
-            "dpshp": os.path.join(BASE_DIR, "dpshp.db"),
-            "dpshpa": os.path.join(BASE_DIR, "dpshpa.db")
-        }
-        db_name = db_map.get(tahapan.lower(), os.path.join(BASE_DIR, "dphp.db"))
+        if pw != pw2:
+            QMessageBox.warning(self, "Error", "Password tidak sama!")
+            return
 
-        if not os.path.exists(db_name + ".enc"):
-            # buat file temp kosong biar bisa dipakai pertama kali
-            conn = sqlite3.connect(os.path.join(BASE_DIR, f"temp_{os.path.basename(db_name)}"))
-            conn.close()
+        import re
+        if len(pw) < 8 or not re.search(r"[A-Z]", pw) or not re.search(r"[0-9]", pw) or not re.search(r"[^A-Za-z0-9]", pw):
+            QMessageBox.warning(
+                self,
+                "Error",
+                "Password harus minimal 8 karakter dan memuat minimal:\n"
+                "- 1 huruf kapital\n- 1 angka\n- 1 karakter khusus (!@#$%^&*)"
+            )
+            return
 
-        self.main_window = MainWindow(user.upper(), kecamatan, desa, db_name)
-        self.main_window.show()
+        if captcha != self.captcha_code:
+            QMessageBox.warning(self, "Error", "Captcha salah! Coba lagi.")
+            self.refresh_captcha_image()
+            return
+
+        # Simpan akun baru ke DB
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nama TEXT,
+                email TEXT,
+                kecamatan TEXT,
+                desa TEXT,
+                password TEXT,
+                otp_secret TEXT
+            )
+        """)
+        cur.execute("DELETE FROM users")  # hanya 1 akun aktif
+        cur.execute("INSERT INTO users (nama, email, kecamatan, desa, password, otp_secret) VALUES (?, ?, ?, ?, ?, ?)",
+                    (nama, email, kecamatan, desa, pw, None))
+        conn.commit()
+        conn.close()
+
+        dlg = ModernMessage("Sukses", "Akun berhasil dibuat!\nSilakan login kembali.")
+        dlg.exec()
         self.close()
+        self.login_window = LoginWindow()
+        self.login_window.show()
+
+# =====================================================
+# Fungsi Hapus Semua Data Akun & Database
+# =====================================================
+def hapus_semua_data():
+    db_files = ["DPHP.db", "DPSHP.db", "DPSHPA.db"]
+    for dbfile in db_files:
+        plain_tmp = os.path.join(BASE_DIR, f"temp_{dbfile}")
+        enc_path  = os.path.join(BASE_DIR, dbfile + ".enc")
+
+        # Jika ada file terenkripsi, buka, kosongkan, lalu enkripsi ulang
+        if os.path.exists(enc_path):
+            try:
+                _decrypt_file(enc_path, plain_tmp)
+                conn = sqlite3.connect(plain_tmp)
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS data_pemilih (
+                        KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
+                        JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
+                        RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
+                        TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                    )
+                """)
+                cur.execute("DELETE FROM data_pemilih")
+                conn.commit()
+                conn.close()
+
+                _encrypt_file(plain_tmp, enc_path)
+            finally:
+                if os.path.exists(plain_tmp):
+                    os.remove(plain_tmp)
+        else:
+            # Jika belum ada .enc, siapkan kosong dari awal
+            conn = sqlite3.connect(plain_tmp)
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_pemilih (
+                    KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
+                    JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
+                    RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
+                    TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+            _encrypt_file(plain_tmp, enc_path)
+            os.remove(plain_tmp)
+
+    # Hapus user lama
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DROP TABLE IF EXISTS users")
+    conn.commit()
+    conn.close()
 
 # =====================================================
 # Main
