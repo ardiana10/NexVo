@@ -1,4 +1,4 @@
-import sys, sqlite3, csv, os, atexit, base64, random, string
+import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect
+from io import BytesIO
 
 class ModernMessage(QDialog):
     def __init__(self, title, message, icon_type="info", parent=None):
@@ -1407,16 +1408,153 @@ class LoginWindow(QWidget):
                 otp_secret TEXT
             )
         """)
-        cur.execute("SELECT nama, kecamatan, desa FROM users WHERE email=? AND password=?", (email, pw))
+        cur.execute("SELECT id, nama, kecamatan, desa, otp_secret FROM users WHERE email=? AND password=?", (email, pw))
         row = cur.fetchone()
-        conn.close()
 
         if not row:
+            conn.close()
             QMessageBox.warning(self, "Login Gagal", "Email atau password salah!")
             return
 
-        nama, kecamatan, desa = row
-        self.accept_login(nama, kecamatan, desa, tahapan)
+        user_id, nama, kecamatan, desa, otp_secret = row
+
+        # ============================================================
+        # 1️⃣ Jika OTP belum dibuat (login pertama)
+        # ============================================================
+        if not otp_secret:
+            import pyotp, qrcode
+            from io import BytesIO
+
+            otp_secret = pyotp.random_base32()
+
+            # Simpan secret baru
+            cur.execute("UPDATE users SET otp_secret=? WHERE id=?", (otp_secret, user_id))
+            conn.commit()
+            conn.close()
+
+            # Buat QR Code OTP
+            totp_uri = pyotp.totp.TOTP(otp_secret).provisioning_uri(name=email, issuer_name="NexVo Sidalih Pilkada 2024")
+            qr = qrcode.make(totp_uri)
+            buffer = BytesIO()
+            qr.save(buffer, format="PNG")
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue())
+
+            # Tampilkan QR code untuk aktivasi OTP
+            qr_dialog = QDialog(self)
+            qr_dialog.setWindowTitle("Aktivasi OTP Pertama")
+            qr_dialog.setFixedSize(340, 420)
+            qr_dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #1e1e1e;
+                    color: white;
+                    border-radius: 10px;
+                }
+                QLabel { color: white; font-size: 11pt; }
+                QPushButton {
+                    background-color: #ff6600;
+                    color: white;
+                    font-weight: bold;
+                    border-radius: 6px;
+                    padding: 6px;
+                }
+                QPushButton:hover { background-color: #ff8533; }
+            """)
+
+            vbox = QVBoxLayout(qr_dialog)
+            lbl = QLabel("Scan QR berikut di aplikasi Authenticator Anda:")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
+            vbox.addWidget(lbl)
+
+            img = QLabel()
+            img.setPixmap(pixmap.scaled(260, 260, Qt.AspectRatioMode.KeepAspectRatio))
+            img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            vbox.addWidget(img)
+
+            lbl2 = QLabel(f"Atau masukkan kode manual:\n<b>{otp_secret}</b>")
+            lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl2.setStyleSheet("color:#ff9900; font-size:10pt;")
+            vbox.addWidget(lbl2)
+
+            ok_btn = QPushButton("Sudah Saya Scan")
+            ok_btn.clicked.connect(qr_dialog.accept)
+            vbox.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+            qr_dialog.exec()
+
+        else:
+            conn.close()
+
+        # ============================================================
+        # 2️⃣ Verifikasi OTP Modern
+        # ============================================================
+        otp_dialog = QDialog(self)
+        otp_dialog.setWindowTitle("Verifikasi OTP")
+        otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setStyleSheet("""
+            QDialog {
+                background-color: #1e1e1e;
+                color: white;
+                border-radius: 10px;
+            }
+            QLabel { color: white; font-size: 12pt; }
+            QLineEdit {
+                border: 2px solid #555;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 16pt;
+                letter-spacing: 4px;
+                background-color: #2b2b2b;
+                color: #00ff99;
+                qproperty-alignment: AlignCenter;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #ff8533; }
+        """)
+
+        layout = QVBoxLayout(otp_dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 25, 25, 25)
+
+        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        otp_input = QLineEdit()
+        otp_input.setMaxLength(6)
+        otp_input.setPlaceholderText("••••••")
+        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        layout.addWidget(otp_input)
+
+        btn_verify = QPushButton("Verifikasi")
+        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_verify)
+
+        def do_verify():
+            import pyotp
+            code = otp_input.text().strip()
+            if not code:
+                QMessageBox.warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                return
+            totp = pyotp.TOTP(otp_secret)
+            if not totp.verify(code):
+                QMessageBox.critical(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                return
+            otp_dialog.accept()
+
+        btn_verify.clicked.connect(do_verify)
+
+        if otp_dialog.exec() == QDialog.DialogCode.Accepted:
+            self.accept_login(nama, kecamatan, desa, tahapan)
 
     # === Konfirmasi Buat Akun ===
     def konfirmasi_buat_akun(self):
@@ -1722,11 +1860,52 @@ class RegisterWindow(QWidget):
                 otp_secret TEXT
             )
         """)
+        
+        # === Buat secret OTP unik ===
+        otp_secret = pyotp.random_base32()
         cur.execute("DELETE FROM users")  # hanya 1 akun aktif
         cur.execute("INSERT INTO users (nama, email, kecamatan, desa, password, otp_secret) VALUES (?, ?, ?, ?, ?, ?)",
-                    (nama, email, kecamatan, desa, pw, None))
+                    (nama, email, kecamatan, desa, pw, otp_secret))
+
         conn.commit()
         conn.close()
+
+        # === Generate QR Code ===
+        totp_uri = pyotp.totp.TOTP(otp_secret).provisioning_uri(name=email, issuer_name="NexVo Sidalih Pilkada 2024")
+        qr = qrcode.make(totp_uri)
+        buffer = BytesIO()
+        qr.save(buffer, format="PNG")
+        pixmap = QPixmap()
+        pixmap.loadFromData(buffer.getvalue())
+
+        # === Tampilkan QR Code dalam popup ===
+        qr_dialog = QDialog(self)
+        qr_dialog.setWindowTitle("Aktivasi OTP")
+        qr_dialog.setFixedSize(340, 420)
+        qr_dialog.setStyleSheet("background-color:#1e1e1e; color:white;")
+        vbox = QVBoxLayout(qr_dialog)
+
+        lbl = QLabel("Scan QR berikut di aplikasi Authenticator Anda:")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setStyleSheet("color:white; font-size:11pt;")
+        vbox.addWidget(lbl)
+
+        img = QLabel()
+        img.setPixmap(pixmap.scaled(260, 260, Qt.AspectRatioMode.KeepAspectRatio))
+        img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(img)
+
+        lbl2 = QLabel(f"Atau masukkan kode manual:\n<b>{otp_secret}</b>")
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color:#ff9900; font-size:10pt;")
+        vbox.addWidget(lbl2)
+
+        ok_btn = QPushButton("Selesai")
+        ok_btn.setStyleSheet("background:#ff6600; color:white; font-weight:bold; border-radius:6px;")
+        ok_btn.clicked.connect(qr_dialog.accept)
+        vbox.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        qr_dialog.exec()
 
         dlg = ModernMessage("Sukses", "Akun berhasil dibuat!\nSilakan login kembali.")
         dlg.exec()
