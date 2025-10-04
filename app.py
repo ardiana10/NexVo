@@ -353,24 +353,24 @@ class MainWindow(QMainWindow):
         """)
 
         file_menu = menubar.addMenu("File")
-        action_dashboard = QAction("Dashboard", self)
+        action_dashboard = QAction("  Dashboard", self)
         action_dashboard.setShortcut("Alt+H")
         file_menu.addAction(action_dashboard)
-        action_pemutakhiran = QAction("Pemutakhiran Data", self)
+        action_pemutakhiran = QAction("  Pemutakhiran Data", self)
         action_pemutakhiran.setShortcut("Alt+C")
         file_menu.addAction(action_pemutakhiran)
-        action_unggah_reguler = QAction("Unggah Webgrid TPS Reguler", self)
+        action_unggah_reguler = QAction("  Unggah Webgrid TPS Reguler", self)
         action_unggah_reguler.setShortcut("Alt+I")
         file_menu.addAction(action_unggah_reguler)
-        action_rekap = QAction("Rekapitulasi", self)
+        action_rekap = QAction("  Rekapitulasi", self)
         action_rekap.setShortcut("Alt+R")
         file_menu.addAction(action_rekap)
-        action_import = QAction("Import CSV", self)
+        action_import = QAction("  Import CSV", self)
         action_import.setShortcut("Alt+M")
         action_import.triggered.connect(self.import_csv)
         file_menu.addAction(action_import)
         file_menu.addSeparator()
-        action_keluar = QAction("Keluar", self)
+        action_keluar = QAction("  Keluar", self)
         action_keluar.setShortcut("Ctrl+W")
         action_keluar.triggered.connect(self.close)
         file_menu.addAction(action_keluar)
@@ -379,30 +379,35 @@ class MainWindow(QMainWindow):
         view_menu = menubar.addMenu("View")
 
         # Menambahkan tema Dark & Light
-        action_dark = QAction("Dark", self, shortcut="Ctrl+D")
+        action_dark = QAction("  Dark", self, shortcut="Ctrl+D")
         action_dark.triggered.connect(lambda: self.apply_theme("dark"))
         view_menu.addAction(action_dark)
 
-        action_light = QAction("Light", self, shortcut="Ctrl+L")
+        action_light = QAction("  Light", self, shortcut="Ctrl+L")
         action_light.triggered.connect(lambda: self.apply_theme("light"))
         view_menu.addAction(action_light)
 
-        view_menu.addAction(QAction("Actual Size", self, shortcut="Ctrl+0"))
-        view_menu.addAction(QAction("Zoom In", self, shortcut="Ctrl+Shift+="))
-        view_menu.addAction(QAction("Zoom Out", self, shortcut="Ctrl+-"))
+        view_menu.addAction(QAction("  Actual Size", self, shortcut="Ctrl+0"))
+        view_menu.addAction(QAction("  Zoom In", self, shortcut="Ctrl+Shift+="))
+        view_menu.addAction(QAction("  Zoom Out", self, shortcut="Ctrl+-"))
         view_menu.addSeparator()
-        view_menu.addAction(QAction("Toggle Full Screen", self, shortcut="F11"))
+        view_menu.addAction(QAction("  Toggle Full Screen", self, shortcut="F11"))
 
         help_menu = menubar.addMenu("Help")
-        help_menu.addAction(QAction("Shortcut", self, shortcut="Alt+Z"))
-        action_setting = QAction("Setting Aplikasi", self)
+        help_menu.addAction(QAction("  Shortcut", self, shortcut="Alt+Z"))
+
+        action_setting = QAction("  Setting Aplikasi", self)
         action_setting.setShortcut("Alt+T")
         action_setting.triggered.connect(self.show_setting_dialog)
         help_menu.addAction(action_setting)
-        help_menu.addAction(QAction("Hapus Data Pemilih", self))
-        help_menu.addAction(QAction("Backup", self))
-        help_menu.addAction(QAction("Restore", self))
-        help_menu.addAction(QAction("cekdptonline.kpu.go.id", self))
+
+        action_hapus_data = QAction("  Hapus Data Pemilih", self)
+        action_hapus_data.triggered.connect(self.hapus_data_pemilih)
+        help_menu.addAction(action_hapus_data)
+
+        help_menu.addAction(QAction("  Backup", self))
+        help_menu.addAction(QAction("  Restore", self))
+        help_menu.addAction(QAction("  cekdptonline.kpu.go.id", self))
 
        # === Toolbar ===
         toolbar = QToolBar("Toolbar")
@@ -883,6 +888,76 @@ class MainWindow(QMainWindow):
         # Pemberitahuan selesai
         QMessageBox.information(self, "Selesai", "Pengurutan data telah selesai!")
 
+        # =================================================
+    # Hapus Seluruh Data Pemilih (sub-menu Help)
+    # =================================================
+    def hapus_data_pemilih(self):
+        reply = QMessageBox.question(
+            self,
+            "Konfirmasi",
+            "Apakah Anda yakin ingin menghapus SELURUH data di database ini?\nTindakan ini tidak dapat dibatalkan.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            # Batalkan penghapusan
+            QMessageBox.information(self, "Dibatalkan", "Proses penghapusan data dibatalkan.")
+            return
+
+        try:
+            # Hapus seluruh data dari tabel data_pemilih
+            conn = sqlite3.connect(self.db_name)
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_pemilih (
+                    KECAMATAN TEXT,
+                    DESA TEXT,
+                    DPID TEXT,
+                    NKK TEXT,
+                    NIK TEXT,
+                    NAMA TEXT,
+                    JK TEXT,
+                    TMPT_LHR TEXT,
+                    TGL_LHR TEXT,
+                    STS TEXT,
+                    ALAMAT TEXT,
+                    RT TEXT,
+                    RW TEXT,
+                    DIS TEXT,
+                    KTPel TEXT,
+                    SUMBER TEXT,
+                    KET TEXT,
+                    TPS TEXT,
+                    LastUpdate DATETIME,
+                    CEK DATA TEXT
+                )
+            """)
+            cur.execute("DELETE FROM data_pemilih")
+            conn.commit()
+            conn.close()
+
+            # Kosongkan data di tabel tampilan
+            self.all_data.clear()
+            self.table.setRowCount(0)
+            self.lbl_total.setText("0 total")
+            self.lbl_selected.setText("0 selected")
+
+            # ✅ Reset pagination dan refresh tampilan
+            self.total_pages = 1
+            self.current_page = 1
+            self.update_pagination()
+            self.show_page(1)
+
+            # ✅ Popup sukses
+            QMessageBox.information(
+                self,
+                "Selesai",
+                "Seluruh data pemilih telah berhasil dihapus dari database!"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Gagal menghapus data:\n{e}")
 
     # =================================================
     # Show page data (fix checkbox terlihat)
