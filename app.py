@@ -89,46 +89,6 @@ def show_modern_question(parent, title, text):
     result = msg.exec()
     return result == QMessageBox.StandardButton.Yes
 
-    # 🎨 Gaya seragam
-    msg.setStyleSheet("""
-    QMessageBox {
-        background-color: #2b2b2b;
-        color: white;
-        font-family: 'Segoe UI';
-        font-size: 11pt;
-        border-radius: 12px;
-    }
-    QLabel {
-        background: transparent;     /* ✅ hilangkan kotak hitam */
-        color: white;
-        font-size: 11pt;
-        padding: 4px 2px;
-    }
-    QPushButton {
-        background-color: #cc6a00;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        padding: 8px 20px;
-        font-weight: bold;
-        font-size: 10.5pt;
-        min-width: 120px;
-    }
-    QPushButton:hover {
-        background-color: #ff8c1a;
-    }
-""")
-
-    yes_button = msg.button(QMessageBox.StandardButton.Yes)
-    no_button = msg.button(QMessageBox.StandardButton.No)
-
-    msg.button(QMessageBox.StandardButton.Yes).setText("Ya")
-    msg.button(QMessageBox.StandardButton.No).setText("Tidak")
-
-    result = msg.exec()
-    return result == QMessageBox.StandardButton.Yes
-
-
 # ===================================================
 # 🎨 Gaya Universal Modern QMessageBox
 # ===================================================
@@ -1299,20 +1259,11 @@ class MainWindow(QMainWindow):
     # =================================================
 
     def sort_data(self):
-        # 🔹 Konfirmasi sebelum mengurutkan (versi modern)
+    # 🔹 Konfirmasi sebelum mengurutkan (versi modern)
         if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
             return
 
-        # 🔹 Lanjut proses sorting jika user pilih "Ya"
-        self.all_data.sort(key=lambda x: x.get("LastUpdate", ""))
-        self.show_page(1)
-        show_modern_info(self, "Sukses", "Data berhasil diurutkan.")
-
-
-        if reply == QMessageBox.StandardButton.No:
-            return  # batal, tidak ada perubahan
-
-        # Lakukan pengurutan data
+        # 🔹 Urutkan data
         self.all_data.sort(
             key=lambda x: (
                 str(x.get("TPS", "")),
@@ -1323,10 +1274,8 @@ class MainWindow(QMainWindow):
             )
         )
 
-        # Refresh tampilan tabel (tampilkan ulang page 1)
+        # 🔹 Refresh tampilan
         self.show_page(1)
-
-        # Pemberitahuan selesai
         show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
 
     # =================================================
