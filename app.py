@@ -3,23 +3,187 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
-    QToolBar, QStatusBar, QListView, QCompleter, QSizePolicy,
+    QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
-    QStyledItemDelegate, QInputDialog
+    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
-from PyQt6.QtCore import Qt, QTimer, QRect
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont
+from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
 from io import BytesIO
+
+def show_modern_warning(parent, title, text):
+    """Tampilkan pesan peringatan (kuning)."""
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    _apply_modern_style(msg, accent="#ffc107")  # kuning lembut
+    msg.exec()
+
+
+def show_modern_info(parent, title, text):
+    """Tampilkan pesan informasi (biru)."""
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Information)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    _apply_modern_style(msg, accent="#17a2b8")  # biru toska
+    msg.exec()
+
+
+def show_modern_error(parent, title, text):
+    """Tampilkan pesan error (merah)."""
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Critical)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+    _apply_modern_style(msg, accent="#dc3545")  # merah elegan
+    msg.exec()
+
+
+def show_modern_question(parent, title, text):
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Question)
+    msg.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    msg.setDefaultButton(QMessageBox.StandardButton.No)
+
+    msg.setStyleSheet("""
+        QMessageBox {
+            background-color: #2b2b2b;
+            color: white;
+            font-family: 'Segoe UI';
+            font-size: 11pt;
+            border-radius: 12px;
+        }
+        QLabel {
+            background: transparent;     /* ✅ Hilangkan background hitam */
+            color: white;
+            font-size: 11pt;
+            padding: 4px 2px;
+        }
+        QPushButton {
+            background-color: #cc6a00;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-weight: bold;
+            font-size: 10.5pt;
+            min-width: 120px;
+        }
+        QPushButton:hover {
+            background-color: #ff8c1a;
+        }
+    """)
+
+    msg.button(QMessageBox.StandardButton.Yes).setText("Ya")
+    msg.button(QMessageBox.StandardButton.No).setText("Tidak")
+
+    result = msg.exec()
+    return result == QMessageBox.StandardButton.Yes
+
+    # 🎨 Gaya seragam
+    msg.setStyleSheet("""
+    QMessageBox {
+        background-color: #2b2b2b;
+        color: white;
+        font-family: 'Segoe UI';
+        font-size: 11pt;
+        border-radius: 12px;
+    }
+    QLabel {
+        background: transparent;     /* ✅ hilangkan kotak hitam */
+        color: white;
+        font-size: 11pt;
+        padding: 4px 2px;
+    }
+    QPushButton {
+        background-color: #cc6a00;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 20px;
+        font-weight: bold;
+        font-size: 10.5pt;
+        min-width: 120px;
+    }
+    QPushButton:hover {
+        background-color: #ff8c1a;
+    }
+""")
+
+    yes_button = msg.button(QMessageBox.StandardButton.Yes)
+    no_button = msg.button(QMessageBox.StandardButton.No)
+
+    msg.button(QMessageBox.StandardButton.Yes).setText("Ya")
+    msg.button(QMessageBox.StandardButton.No).setText("Tidak")
+
+    result = msg.exec()
+    return result == QMessageBox.StandardButton.Yes
+
+
+# ===================================================
+# 🎨 Gaya Universal Modern QMessageBox
+# ===================================================
+def _apply_modern_style(msg, accent="#ff6600"):
+    lighter = _lighten_color(accent)
+    msg.setStyleSheet(f"""
+        QMessageBox {{
+            background-color: #2b2b2b;
+            color: white;
+            font-family: 'Segoe UI';
+            font-size: 11pt;
+            border-radius: 12px;
+            border: 1px solid #444;
+        }}
+        QLabel {{
+            background: transparent;     /* ✅ Hilangkan background hitam */
+            color: white;
+            font-size: 11pt;
+            margin: 6px;
+        }}
+        QPushButton {{
+            background-color: {accent};
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-weight: bold;
+            font-size: 10.5pt;
+            min-width: 120px;
+        }}
+        QPushButton:hover {{
+            background-color: {lighter};
+        }}
+    """)
+
+
+def _lighten_color(hex_color):
+    """Buat warna tombol lebih terang (untuk efek hover)."""
+    color = QColor(hex_color)
+    h, s, v, a = color.getHsv()
+    v = min(255, int(v * 1.25))
+    lighter = QColor.fromHsv(h, s, v, a)
+    return lighter.name()
 
 class ModernMessage(QDialog):
     def __init__(self, title, message, icon_type="info", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedSize(320, 180)
+        self.setFixedSize(340, 200)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet("""
             QDialog {
-                background-color: #2b2b2b;
+                background-color: #1e1e1e;
                 border-radius: 12px;
+                border: 1px solid #444;
             }
             QLabel {
                 color: white;
@@ -31,13 +195,19 @@ class ModernMessage(QDialog):
                 color: white;
                 border: none;
                 border-radius: 6px;
-                padding: 6px 16px;
+                padding: 6px 18px;
                 font-weight: bold;
             }
             QPushButton:hover {
                 background-color: #ff8533;
             }
         """)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setOffset(0, 0)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        self.setGraphicsEffect(shadow)
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -53,13 +223,49 @@ class ModernMessage(QDialog):
         msg = QLabel(message)
         msg.setWordWrap(True)
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        msg.setStyleSheet("font-size: 11pt; margin: 4px;")
+        msg.setStyleSheet("font-size: 11pt; margin: 6px;")
         layout.addWidget(msg)
 
         # === Tombol OK ===
         btn = QPushButton("OK")
+        btn.setFixedWidth(100)  # 🔹 Tambah lebar
+        btn.setFixedHeight(36)  # 🔹 Tinggi lebih proporsional
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-weight: bold;
+                font-size: 10.5pt;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #ff8533;
+            }
+        """)
         btn.clicked.connect(self.accept)
         layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # === Efek Fade-In ===
+        opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(opacity_effect)
+        self.fade_anim = QPropertyAnimation(opacity_effect, b"opacity")
+        self.fade_anim.setDuration(350)
+        self.fade_anim.setStartValue(0)
+        self.fade_anim.setEndValue(1)
+        self.fade_anim.start()
+
+        # === Posisikan di tengah layar ===
+        QTimer.singleShot(0, self.center_on_screen)
+
+    def center_on_screen(self):
+        """Tampilkan dialog tepat di tengah layar utama."""
+        screen = QApplication.primaryScreen().geometry()
+        self.move(
+            screen.center() - self.rect().center()
+        )
 
     def _create_icon(self, icon_type):
         """Gambar ikon modern (success, warning, error, info)."""
@@ -80,7 +286,8 @@ class ModernMessage(QDialog):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(0, 0, 64, 64)
 
-        painter.setPen(QPen(QColor("white"), 6))
+        # Gambar simbol di tengah
+        painter.setPen(QPen(QColor("white"), 5))
         if icon_type == "success":
             painter.drawLine(16, 34, 28, 46)
             painter.drawLine(28, 46, 48, 20)
@@ -97,6 +304,94 @@ class ModernMessage(QDialog):
 
         painter.end()
         return pix
+    
+class ModernInputDialog(QDialog):
+    def __init__(self, title, prompt, parent=None, is_password=False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(360, 200)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                border-radius: 12px;
+                border: 1px solid #444;
+            }
+            QLabel {
+                color: white;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+            }
+            QLineEdit {
+                background-color: #3a3a3a;
+                color: white;
+                border: 1px solid #666;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 11pt;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 18px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff8533;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(30, 20, 30, 20)
+
+        # === Pesan ===
+        label = QLabel(prompt)
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+
+        # === Input Field ===
+        self.line_edit = QLineEdit()
+        if is_password:
+            self.line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.line_edit)
+
+        # === Tombol OK dan Cancel ===
+        btn_layout = QHBoxLayout()
+        btn_ok = QPushButton("OK")
+        btn_cancel = QPushButton("Batal")
+        btn_layout.addWidget(btn_ok)
+        btn_layout.addWidget(btn_cancel)
+        layout.addLayout(btn_layout)
+
+        # === Event handler ===
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+
+        # === Efek fade in ===
+        opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(opacity_effect)
+        self.fade_anim = QPropertyAnimation(opacity_effect, b"opacity")
+        self.fade_anim.setDuration(350)
+        self.fade_anim.setStartValue(0)
+        self.fade_anim.setEndValue(1)
+        self.fade_anim.start()
+
+        QTimer.singleShot(0, self.center_on_screen)
+
+    def center_on_screen(self):
+        screen = QApplication.primaryScreen().geometry()
+        self.move(screen.center() - self.rect().center())
+
+    def getText(self):
+        """Kembalikan teks input jika OK ditekan."""
+        if self.exec() == QDialog.DialogCode.Accepted:
+            return self.line_edit.text(), True
+        return "", False
+
 
 class CheckboxDelegate(QStyledItemDelegate):
     def __init__(self, theme="dark", parent=None):
@@ -346,7 +641,7 @@ class MainWindow(QMainWindow):
             try:
                 _decrypt_file(self.enc_path, self.plain_db_path)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Gagal dekripsi database:\n{e}")
+                show_modern_error(self, "Error", f"Gagal dekripsi database:\n{e}")
                 conn = sqlite3.connect(self.plain_db_path)
                 conn.close()
         else:
@@ -523,9 +818,9 @@ class MainWindow(QMainWindow):
             action_import_ubah = QAction("  Import Pemilih Ubah Data", self)
 
             # Placeholder fungsi (bisa diisi nanti)
-            action_import_baru.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih Baru diklik"))
-            action_import_tms.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih TMS diklik"))
-            action_import_ubah.triggered.connect(lambda: QMessageBox.information(self, "Info", "Import Pemilih Ubah Data diklik"))
+            action_import_baru.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih Baru diklik"))
+            action_import_tms.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih TMS diklik"))
+            action_import_ubah.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih Ubah Data diklik"))
 
             import_ecoklit_menu.addAction(action_import_baru)
             import_ecoklit_menu.addAction(action_import_tms)
@@ -792,14 +1087,14 @@ class MainWindow(QMainWindow):
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
                 if len(reader) < 15:
-                    QMessageBox.warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
+                    show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
                     return
 
                 # Verifikasi baris-15 kolom-2 & kolom-4
                 kecamatan_csv = reader[14][1].strip().upper()
                 desa_csv = reader[14][3].strip().upper()
                 if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
-                    QMessageBox.warning(
+                    show_modern_warning(
                         self, "Error",
                         f"Verifikasi gagal!\nCSV Kecamatan='{kecamatan_csv}', Desa='{desa_csv}'\n"
                         f"Login Kecamatan='{self.kecamatan_login}', Desa='{self.desa_login}'"
@@ -909,10 +1204,10 @@ class MainWindow(QMainWindow):
                 # ✅ Pastikan klik header aktif setelah render
                 self.connect_header_events()
 
-                QMessageBox.information(self, "Sukses", "Import CSV selesai!")
+                show_modern_info(self, "Sukses", "Import CSV selesai!")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Gagal import CSV: {e}")
+            show_modern_error(self, "Error", f"Gagal import CSV: {e}")
 
     # =================================================
     # Load data dari database saat login ulang
@@ -1004,14 +1299,15 @@ class MainWindow(QMainWindow):
     # =================================================
 
     def sort_data(self):
-        # Konfirmasi sebelum mengurutkan
-        reply = QMessageBox.question(
-            self,
-            "Konfirmasi",
-            "Apakah Anda ingin mengurutkan data?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
+        # 🔹 Konfirmasi sebelum mengurutkan (versi modern)
+        if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
+            return
+
+        # 🔹 Lanjut proses sorting jika user pilih "Ya"
+        self.all_data.sort(key=lambda x: x.get("LastUpdate", ""))
+        self.show_page(1)
+        show_modern_info(self, "Sukses", "Data berhasil diurutkan.")
+
 
         if reply == QMessageBox.StandardButton.No:
             return  # batal, tidak ada perubahan
@@ -1031,7 +1327,7 @@ class MainWindow(QMainWindow):
         self.show_page(1)
 
         # Pemberitahuan selesai
-        QMessageBox.information(self, "Selesai", "Pengurutan data telah selesai!")
+        show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
 
     # =================================================
     # Klik Header Kolom "LastUpdate" untuk sorting toggle
@@ -1068,7 +1364,7 @@ class MainWindow(QMainWindow):
             self.show_page(1)
 
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Gagal mengurutkan kolom LastUpdate:\n{e}")
+            show_modern_warning(self, "Error", f"Gagal mengurutkan kolom LastUpdate:\n{e}")
 
     def connect_header_events(self):
         """Pastikan koneksi klik header aktif setelah tabel diperbarui."""
@@ -1083,21 +1379,18 @@ class MainWindow(QMainWindow):
     # Hapus Seluruh Data Pemilih (sub-menu Help)
     # =================================================
     def hapus_data_pemilih(self):
-        reply = QMessageBox.question(
+        # 🔸 Dialog konfirmasi modern
+        if not show_modern_question(
             self,
             "Konfirmasi",
-            "Apakah Anda yakin ingin menghapus SELURUH data di database ini?\nTindakan ini tidak dapat dibatalkan.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.No:
-            # Batalkan penghapusan
-            QMessageBox.information(self, "Dibatalkan", "Proses penghapusan data dibatalkan.")
+            "Apakah Anda yakin ingin menghapus <b>SELURUH data</b> di database ini?<br>"
+            "Tindakan ini <b>tidak dapat dibatalkan!</b>"
+        ):
+            show_modern_info(self, "Dibatalkan", "Proses penghapusan data dibatalkan.")
             return
 
         try:
-            # Hapus seluruh data dari tabel data_pemilih
+            # 🔸 Hapus seluruh data dari tabel data_pemilih
             conn = sqlite3.connect(self.db_name)
             cur = conn.cursor()
             cur.execute("""
@@ -1128,27 +1421,27 @@ class MainWindow(QMainWindow):
             conn.commit()
             conn.close()
 
-            # Kosongkan data di tabel tampilan
+            # 🔸 Kosongkan tabel tampilan
             self.all_data.clear()
             self.table.setRowCount(0)
             self.lbl_total.setText("0 total")
             self.lbl_selected.setText("0 selected")
 
-            # ✅ Reset pagination dan refresh tampilan
+            # 🔸 Reset pagination dan refresh tampilan
             self.total_pages = 1
             self.current_page = 1
             self.update_pagination()
             self.show_page(1)
 
-            # ✅ Popup sukses
-            QMessageBox.information(
+            # 🔸 Popup sukses
+            show_modern_info(
                 self,
                 "Selesai",
                 "Seluruh data pemilih telah berhasil dihapus dari database!"
             )
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Gagal menghapus data:\n{e}")
+            show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
 
     # =================================================
     # Show page data (fix checkbox terlihat)
@@ -1392,7 +1685,7 @@ class LoginWindow(QWidget):
         tahapan = self.tahapan_combo.currentText()
 
         if not email or not pw or tahapan == "-- Pilih Tahapan --":
-            QMessageBox.warning(self, "Error", "Semua field harus diisi!")
+            show_modern_warning(self, "Error", "Semua field harus diisi!")
             return
 
         conn = sqlite3.connect(DB_NAME)
@@ -1413,7 +1706,7 @@ class LoginWindow(QWidget):
 
         if not row:
             conn.close()
-            QMessageBox.warning(self, "Login Gagal", "Email atau password salah!")
+            show_modern_warning(self, "Login Gagal", "Email atau password salah!")
             return
 
         user_id, nama, kecamatan, desa, otp_secret = row
@@ -1543,11 +1836,11 @@ class LoginWindow(QWidget):
             import pyotp
             code = otp_input.text().strip()
             if not code:
-                QMessageBox.warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
                 return
             totp = pyotp.TOTP(otp_secret)
             if not totp.verify(code):
-                QMessageBox.critical(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
                 return
             otp_dialog.accept()
 
@@ -1555,24 +1848,27 @@ class LoginWindow(QWidget):
 
         if otp_dialog.exec() == QDialog.DialogCode.Accepted:
             self.accept_login(nama, kecamatan, desa, tahapan)
-
-    # === Konfirmasi Buat Akun ===
+            
+    # Konfirmasi Pembuatan akun
     def konfirmasi_buat_akun(self):
-        reply = QMessageBox.question(
+        # 🔹 Dialog konfirmasi modern
+        if not show_modern_question(
             self,
             "Konfirmasi",
-            "Apakah Anda yakin ingin membuat akun baru?\nSeluruh data lama akan dihapus!",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.No:
+            "Apakah Anda yakin ingin membuat akun baru?<br>"
+            "Seluruh data lama akan <b>dihapus permanen</b>!"
+        ):
+            show_modern_info(self, "Dibatalkan", "Proses pembuatan akun dibatalkan.")
             return
 
-        kode, ok = QInputDialog.getText(self, "Kode Konfirmasi", "Masukkan kode konfirmasi:")
+        # 🔹 Input kode konfirmasi (password style)
+        dlg = ModernInputDialog("Kode Konfirmasi", "Masukkan kode konfirmasi:", self, is_password=True)
+        kode, ok = dlg.getText()
         if not ok:
             return
+
         if kode.strip() != "KabTasik3206":
-            QMessageBox.warning(self, "Salah", "Kode konfirmasi salah. Proses dibatalkan.")
+            show_modern_warning(self, "Salah", "Kode konfirmasi salah. Proses dibatalkan.")
             return
 
         # ✅ Kode benar → hapus semua data lama
@@ -1582,7 +1878,7 @@ class LoginWindow(QWidget):
         self.register_window = RegisterWindow(None)
         self.register_window.show()
 
-        # Tutup login window setelah register window muncul
+        # ✅ Tutup login window setelah register window muncul
         self.close()
 
     # === Masuk ke MainWindow ===
@@ -1632,7 +1928,7 @@ class LoginWindow(QWidget):
             try:
                 _encrypt_file(plain_temp, enc_file)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Gagal membuat database terenkripsi:\n{e}")
+                show_modern_error(self, "Error", f"Gagal membuat database terenkripsi:\n{e}")
             finally:
                 if os.path.exists(plain_temp):
                     os.remove(plain_temp)
@@ -1642,6 +1938,8 @@ class LoginWindow(QWidget):
         self.main_window.show()
         self.close()
 
+
+
 # =====================================================
 # FORM BUAT AKUN BARU (REGISTER)
 # =====================================================
@@ -1649,34 +1947,62 @@ class RegisterWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Buat Akun Baru")
-        self.setFixedSize(360, 520)
+        self.showFullScreen()  # ✅ Fullscreen
         self.setStyleSheet("""
-            QWidget { font-family: Calibri; font-size: 11pt; }
-            QLineEdit, QComboBox { 
-                min-height: 28px; 
-                border-radius: 4px; 
-                border: 1px solid #aaa; 
-                padding-left: 6px; 
+            QWidget {
+                font-family: Calibri;
+                font-size: 11pt;
+                background-color: #121212;
+                color: white;
             }
-            QPushButton { min-height: 30px; border-radius: 5px; }
-            QPushButton:hover { background-color: #f0f0f0; }
+            QLineEdit, QComboBox {
+                min-height: 32px;
+                border-radius: 6px;
+                border: 1px solid #555;
+                padding-left: 8px;
+                background-color: #1e1e1e;
+            }
+            QPushButton {
+                min-height: 34px;
+                border-radius: 6px;
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff8533;
+            }
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        # ====== MAIN LAYOUT ======
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
 
-        # === Nama ===
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        center_layout.setSpacing(12)
+        center_layout.setContentsMargins(480, 60, 480, 60)  # proporsional tengah
+
+        # ====== ISIAN FORM ======
+        title = QLabel("✨ Buat Akun Baru ✨")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size:20pt; font-weight:bold; color:#ff9900; margin-bottom:20px;")
+        center_layout.addWidget(title)
+
+        # Nama Lengkap
         self.nama = QLineEdit()
         self.nama.setPlaceholderText("Nama Lengkap")
         self.nama.textChanged.connect(lambda t: self.nama.setText(t.upper()) if t != t.upper() else None)
-        layout.addWidget(self.nama)
+        center_layout.addWidget(self.nama)
 
-        # === Email ===
+        # Email
         self.email = QLineEdit()
         self.email.setPlaceholderText("Email Aktif")
-        layout.addWidget(self.email)
+        center_layout.addWidget(self.email)
 
-        # === Kecamatan ===
+        # Kecamatan
         self.kecamatan = QLineEdit()
         self.kecamatan.setPlaceholderText("Ketik Kecamatan...")
         kec_list = get_kecamatan()
@@ -1686,38 +2012,31 @@ class RegisterWindow(QWidget):
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         self.kecamatan.setCompleter(completer)
         self.kecamatan.textChanged.connect(self.update_desa)
-        layout.addWidget(self.kecamatan)
+        center_layout.addWidget(self.kecamatan)
 
-        # === Desa ===
+        # Desa
         self.desa = QComboBox()
         self.desa.addItem("-- Pilih Desa --")
-        layout.addWidget(self.desa)
+        center_layout.addWidget(self.desa)
 
-        # === Password + toggle ===
-        pw_layout = QHBoxLayout()
-        self.password = QLineEdit()
-        self.password.setPlaceholderText("Password")
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.toggle_pw = QPushButton("👁")
-        self.toggle_pw.setFixedWidth(40)
-        self.toggle_pw.clicked.connect(lambda: self.toggle_password(self.password))
-        pw_layout.addWidget(self.password)
-        pw_layout.addWidget(self.toggle_pw)
-        layout.addLayout(pw_layout)
+        # Password dan Konfirmasi
+        for field, placeholder in [(1, "Password"), (2, "Tulis Ulang Password")]:
+            layout = QHBoxLayout()
+            pw = QLineEdit()
+            pw.setPlaceholderText(placeholder)
+            pw.setEchoMode(QLineEdit.EchoMode.Password)
+            toggle = QPushButton("👁")
+            toggle.setFixedWidth(40)
+            toggle.clicked.connect(lambda _, f=pw: self.toggle_password(f))
+            layout.addWidget(pw)
+            layout.addWidget(toggle)
+            center_layout.addLayout(layout)
+            if field == 1:
+                self.password = pw
+            else:
+                self.password2 = pw
 
-        # === Ulangi password + toggle ===
-        pw2_layout = QHBoxLayout()
-        self.password2 = QLineEdit()
-        self.password2.setPlaceholderText("Tulis Ulang Password")
-        self.password2.setEchoMode(QLineEdit.EchoMode.Password)
-        self.toggle_pw2 = QPushButton("👁")
-        self.toggle_pw2.setFixedWidth(40)
-        self.toggle_pw2.clicked.connect(lambda: self.toggle_password(self.password2))
-        pw2_layout.addWidget(self.password2)
-        pw2_layout.addWidget(self.toggle_pw2)
-        layout.addLayout(pw2_layout)
-
-        # === Captcha modern (gambar) ===
+        # Captcha
         self.captcha_code = self.generate_captcha()
         self.captcha_label = QLabel()
         self.captcha_label.setFixedHeight(60)
@@ -1731,17 +2050,18 @@ class RegisterWindow(QWidget):
         captcha_layout = QHBoxLayout()
         captcha_layout.addWidget(self.captcha_label)
         captcha_layout.addWidget(self.refresh_btn)
-        layout.addLayout(captcha_layout)
+        center_layout.addLayout(captcha_layout)
 
         self.captcha_input = QLineEdit()
         self.captcha_input.setPlaceholderText("Tulis ulang captcha di atas")
-        layout.addWidget(self.captcha_input)
+        center_layout.addWidget(self.captcha_input)
 
-        # === Tombol Buat Akun ===
+        # Tombol Buat Akun
         self.btn_buat = QPushButton("Buat Akun")
-        self.btn_buat.setStyleSheet("background-color:#ff6600; color:white; font-weight:bold;")
         self.btn_buat.clicked.connect(self.create_account)
-        layout.addWidget(self.btn_buat)
+        center_layout.addWidget(self.btn_buat)
+
+        outer_layout.addWidget(center_widget, alignment=Qt.AlignmentFlag.AlignCenter)
 
     # ===================================================
     # 🔹 Helper untuk captcha dan interaksi UI
@@ -1820,20 +2140,20 @@ class RegisterWindow(QWidget):
         captcha = self.captcha_input.text().strip()
 
         if not all([nama, email, kecamatan, desa, pw, pw2, captcha]):
-            QMessageBox.warning(self, "Error", "Semua kolom harus diisi!")
+            show_modern_warning(self, "Error", "Semua kolom harus diisi!")
             return
 
         if "@" not in email or "." not in email:
-            QMessageBox.warning(self, "Error", "Format email tidak valid!")
+            show_modern_warning(self, "Error", "Format email tidak valid!")
             return
 
         if pw != pw2:
-            QMessageBox.warning(self, "Error", "Password tidak sama!")
+            show_modern_warning(self, "Error", "Password tidak sama!")
             return
 
         import re
         if len(pw) < 8 or not re.search(r"[A-Z]", pw) or not re.search(r"[0-9]", pw) or not re.search(r"[^A-Za-z0-9]", pw):
-            QMessageBox.warning(
+            show_modern_warning(
                 self,
                 "Error",
                 "Password harus minimal 8 karakter dan memuat minimal:\n"
@@ -1842,7 +2162,7 @@ class RegisterWindow(QWidget):
             return
 
         if captcha != self.captcha_code:
-            QMessageBox.warning(self, "Error", "Captcha salah! Coba lagi.")
+            show_modern_warning(self, "Error", "Captcha salah! Coba lagi.")
             self.refresh_captcha_image()
             return
 
@@ -1878,36 +2198,99 @@ class RegisterWindow(QWidget):
         pixmap = QPixmap()
         pixmap.loadFromData(buffer.getvalue())
 
-        # === Tampilkan QR Code dalam popup ===
+        # === Tampilkan QR Code Modern Adaptif ===
         qr_dialog = QDialog(self)
         qr_dialog.setWindowTitle("Aktivasi OTP")
-        qr_dialog.setFixedSize(340, 420)
-        qr_dialog.setStyleSheet("background-color:#1e1e1e; color:white;")
-        vbox = QVBoxLayout(qr_dialog)
+        qr_dialog.setFixedSize(480, 620)
+        qr_dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
 
-        lbl = QLabel("Scan QR berikut di aplikasi Authenticator Anda:")
+        # Deteksi tema dari latar utama (dark/light)
+        bg_is_dark = True
+        if hasattr(self, "palette"):
+            bg_color = self.palette().color(self.backgroundRole()).lightness()
+            bg_is_dark = bg_color < 128  # nilai <128 dianggap gelap
+
+        bg_color = "#111" if bg_is_dark else "#f7f7f7"
+        text_color = "white" if bg_is_dark else "#222"
+        accent_color = "#ff6600" if bg_is_dark else "#d35400"
+        qr_frame_color = "#000" if bg_is_dark else "#fff"
+
+        qr_dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg_color};
+                color: {text_color};
+                border-radius: 16px;
+                border: 1px solid {'#444' if bg_is_dark else '#ccc'};
+            }}
+            QLabel {{
+                font-family: 'Segoe UI';
+            }}
+            QPushButton {{
+                background-color: {accent_color};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 11pt;
+            }}
+            QPushButton:hover {{
+                background-color: #ff8533;
+            }}
+        """)
+
+        vbox = QVBoxLayout(qr_dialog)
+        vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
+        vbox.setSpacing(18)
+        vbox.setContentsMargins(40, 36, 40, 36)
+
+        # === Header ===
+        title_lbl = QLabel("🔐 <b>Aktivasi Keamanan OTP</b>")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setStyleSheet(f"font-size:15pt; color:{'#ffcc66' if bg_is_dark else '#c47c00'}; margin-bottom:12px;")
+        vbox.addWidget(title_lbl)
+
+        lbl = QLabel("Scan kode QR di bawah menggunakan aplikasi <b>Google Authenticator</b> atau <b>Authy</b>.")
+        lbl.setWordWrap(True)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet("color:white; font-size:11pt;")
+        lbl.setStyleSheet(f"font-size:11pt; color:{'#dddddd' if bg_is_dark else '#333'}; margin-bottom:10px;")
         vbox.addWidget(lbl)
 
+        # === QR Code persegi proporsional ===
         img = QLabel()
-        img.setPixmap(pixmap.scaled(260, 260, Qt.AspectRatioMode.KeepAspectRatio))
+        pixmap_scaled = pixmap.scaled(
+            240, 240,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        img.setPixmap(pixmap_scaled)
         img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img.setStyleSheet(f"background-color: {qr_frame_color}; border-radius: 10px; padding: 10px; margin: 12px;")
         vbox.addWidget(img)
 
-        lbl2 = QLabel(f"Atau masukkan kode manual:\n<b>{otp_secret}</b>")
+        # === Label kode manual (wrap penuh) ===
+        lbl2 = QLabel(
+            f"<i>Atau masukkan kode berikut secara manual di aplikasi Anda:</i><br><b>{otp_secret}</b>"
+        )
+        lbl2.setWordWrap(True)
         lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl2.setStyleSheet("color:#ff9900; font-size:10pt;")
+        lbl2.setStyleSheet(f"color:{'#00ff99' if bg_is_dark else '#008040'}; font-size:11pt; margin-top:16px;")
         vbox.addWidget(lbl2)
 
-        ok_btn = QPushButton("Selesai")
-        ok_btn.setStyleSheet("background:#ff6600; color:white; font-weight:bold; border-radius:6px;")
+        # === Tombol konfirmasi besar ===
+        ok_btn = QPushButton("✅ Saya Sudah Scan")
+        ok_btn.setFixedWidth(260)
+        ok_btn.setFixedHeight(46)
         ok_btn.clicked.connect(qr_dialog.accept)
         vbox.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # === Center di layar ===
+        screen_geo = QApplication.primaryScreen().geometry()
+        qr_dialog.move(screen_geo.center() - qr_dialog.rect().center())
+
         qr_dialog.exec()
 
-        dlg = ModernMessage("Sukses", "Akun berhasil dibuat!\nSilakan login kembali.")
+        dlg = ModernMessage("Sukses", "Akun berhasil dibuat!", "success")
         dlg.exec()
         self.close()
         self.login_window = LoginWindow()
