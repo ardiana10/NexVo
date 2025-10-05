@@ -573,6 +573,46 @@ class SettingDialog(QDialog):
         conn.close()
         self.accept()   # close dialog dengan "OK"
 
+# =========================================================
+# 🔹 FUNGSI GLOBAL: PALET TEMA
+# =========================================================
+from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtWidgets import QApplication
+
+def apply_global_palette(app, mode: str):
+    """Atur palet global (QPalette) agar semua widget ikut tema aktif."""
+    palette = QPalette()
+    if mode == "dark":
+        # 🌑 Tema Gelap
+        palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e1e"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#252526"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d2d30"))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#2b2b2b"))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#333333"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff6600"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#264f78"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    else:
+        # ☀️ Tema Terang
+        palette.setColor(QPalette.ColorRole.Window, QColor("#f9f9f9"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f0f0f0"))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#000000"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#000000"))
+        palette.setColor(QPalette.ColorRole.Button, QColor("#f2f2f2"))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor("#000000"))
+        palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff6600"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#bcbcbc"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+
+    app.setPalette(palette)
+
 # =====================================================
 # Main Window (Setelah login)
 # =====================================================
@@ -870,6 +910,12 @@ class MainWindow(QMainWindow):
         # ✅ Tambahkan ini biar auto resize kolom jalan setelah login
         QTimer.singleShot(0, self.auto_fit_columns)
 
+        # ✅ Tampilkan jendela langsung dalam keadaan maximize
+        self.showMaximized()
+
+        # ✅ Jalankan fungsi urutkan data secara senyap setelah login
+        QTimer.singleShot(200, lambda: self.sort_data(auto=True))
+
         atexit.register(self._encrypt_and_cleanup)
 
     def show_setting_dialog(self):
@@ -954,6 +1000,9 @@ class MainWindow(QMainWindow):
         return btn
 
     def apply_theme(self, mode):
+        app = QApplication.instance()
+        apply_global_palette(app, mode)
+
         if mode == "dark":
             self.setStyleSheet("""
                 QMainWindow, QWidget {
@@ -976,8 +1025,15 @@ class MainWindow(QMainWindow):
                     border: 1px solid #3e3e42;
                     padding: 4px;
                 }
+                QMenu {
+                    background-color: #2d2d30;
+                    color: white;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                    padding: 4px;
+                }
                 QMenu::item:selected {
-                    background-color: #ff9900;   /* 🔥 hover oranye */
+                    background-color: #ff9900;
                     color: black;
                     border-radius: 4px;
                 }
@@ -988,35 +1044,43 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("""
                 QMainWindow, QWidget {
                     background-color: #f9f9f9;
-                    color: #333333;
+                    color: #000000;
                     font-family: Segoe UI, Calibri, sans-serif;
                 }
                 QTableWidget {
                     background-color: #ffffff;
                     alternate-background-color: #f3f3f3;
-                    color: #333333;
+                    color: #000000;
                     gridline-color: #c0c0c0;
                     selection-background-color: #bcbcbc;
                     selection-color: #000000;
                 }
                 QHeaderView::section {
                     background-color: #f0f0f0;
-                    color: #333333;
+                    color: #000000;
                     font-weight: bold;
                     border: 1px solid #c0c0c0;
                     padding: 4px;
                 }
+                QMenu {
+                    background-color: #ffffff;
+                    color: #000000;
+                    border: 1px solid #aaa;
+                    border-radius: 6px;
+                    padding: 4px;
+                }
                 QMenu::item:selected {
-                    background-color: #ff9900;   /* 🔥 hover oranye */
+                    background-color: #ff9900;
                     color: black;
                     border-radius: 4px;
                 }
             """)
             self.checkbox_delegate.setTheme("light")
 
-        # ✅ Simpan pilihan theme ke DB
+        # ✅ Simpan pilihan ke DB
         self.save_theme(mode)
-
+        self.show_page(self.current_page)
+        
     def auto_fit_columns(self):
         header = self.table.horizontalHeader()
         self.table.resizeColumnsToContents()
@@ -1093,6 +1157,7 @@ class MainWindow(QMainWindow):
 
         actions = [
             ("✏️ Lookup", lambda: self._context_action_wrapper(row, self.lookup_pemilih)),
+            ("🔁 Aktifkan Pemilih", lambda: self._context_action_wrapper(row, self.aktifkan_pemilih)),
             ("🔥 Hapus", lambda: self._context_action_wrapper(row, self.hapus_pemilih)),
             ("🚫 Meninggal", lambda: self._context_action_wrapper(row, self.meninggal_pemilih)),
             ("⚠️ Ganda", lambda: self._context_action_wrapper(row, self.ganda_pemilih)),
@@ -1135,6 +1200,177 @@ class MainWindow(QMainWindow):
         self.table.viewport().update()
         self.update_statusbar()
 
+    # =========================================================
+    # 🔹 1. AKTIFKAN PEMILIH
+    # =========================================================
+    def aktifkan_pemilih(self, row):
+        dpid_item = self.table.item(row, self.col_index("DPID"))
+        nama_item = self.table.item(row, self.col_index("NAMA"))
+        ket_item = self.table.item(row, self.col_index("KET"))
+        nama = nama_item.text().strip() if nama_item else ""
+        if not dpid_item or dpid_item.text().strip() in ("", "0"):
+            return  # hanya pemilih dengan DPID valid
+
+        # Set nilai kolom KET jadi "0"
+        ket_item.setText("0")
+        self.update_database_field(row, "KET", "0")
+
+        # Sinkronkan ke data memori
+        gi = self._global_index(row)
+        if 0 <= gi < len(self.all_data):
+            self.all_data[gi]["KET"] = "0"
+
+        # 🌗 Tentukan warna teks normal sesuai tema
+        bg_color = self.table.palette().color(self.table.backgroundRole())
+        brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
+        is_light_theme = brightness > 128
+        warna_normal = QColor("black") if is_light_theme else QColor("white")
+
+        # Ubah warna teks seluruh baris jadi normal
+        for c in range(self.table.columnCount()):
+            it = self.table.item(row, c)
+            if it:
+                it.setForeground(warna_normal)
+
+        show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
+
+
+    # =========================================================
+    # 🔹 2. HAPUS PEMILIH
+    # =========================================================
+    def hapus_pemilih(self, row):
+        """Hapus data hanya jika DPID kosong/0, berdasarkan kombinasi beberapa kolom identitas."""
+        dpid = self.table.item(row, self.col_index("DPID")).text().strip() if self.table.item(row, self.col_index("DPID")) else ""
+        nik  = self.table.item(row, self.col_index("NIK")).text().strip() if self.table.item(row, self.col_index("NIK")) else ""
+        nama = self.table.item(row, self.col_index("NAMA")).text().strip() if self.table.item(row, self.col_index("NAMA")) else ""
+
+        if dpid and dpid != "0":
+            show_modern_warning(
+                self, "Ditolak",
+                f"Data di baris {row+1} tidak dapat dihapus.<br>"
+                f"Hanya Pemilih Baru di tahap ini yang bisa dihapus!"
+            )
+            return
+
+        if not show_modern_question(
+            self, "Konfirmasi Hapus",
+            f"Apakah Anda yakin ingin menghapus data di baris {row+1}?<br>"
+            f"NAMA: <b>{nama}</b><br>NIK: <b>{nik}</b>"
+        ):
+            return
+
+        # ambil identitas unik baris
+        sig = self._row_signature_from_ui(row)
+
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM data_pemilih
+                WHERE (IFNULL(DPID,'')='' OR DPID='0')
+                  AND IFNULL(NIK,'') = ?
+                  AND IFNULL(NAMA,'') = ?
+                  AND IFNULL(TMPT_LHR,'') = ?
+                  AND IFNULL(TGL_LHR,'') = ?
+                  AND IFNULL(TPS,'') = ?
+            """, (sig["NIK"], sig["NAMA"], sig["TMPT_LHR"], sig["TGL_LHR"], sig["TPS"]))
+            conn.commit()
+            conn.close()
+
+            gi = self._global_index(row)
+            if 0 <= gi < len(self.all_data):
+                del self.all_data[gi]
+
+            self.show_page(self.current_page)
+            show_modern_info(self, "Selesai", f"Data baris {row+1} berhasil dihapus!")
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+
+
+    # =========================================================
+    # 🔹 3. STATUS PEMILIH (Meninggal, Ganda, Dll)
+    # =========================================================
+    def set_ket_status(self, row, new_value: str, label: str):
+        dpid_item = self.table.item(row, self.col_index("DPID"))
+        nama_item = self.table.item(row, self.col_index("NAMA"))
+        nama = nama_item.text().strip() if nama_item else ""
+
+        if not dpid_item or dpid_item.text().strip() in ("", "0"):
+            show_modern_warning(self, "Ditolak", "Data Pemilih Baru tidak bisa di TMS-kan.")
+            return
+
+        # ubah nilai di tabel dan database
+        ket_item = self.table.item(row, self.col_index("KET"))
+        if ket_item:
+            ket_item.setText(new_value)
+            self.update_database_field(row, "KET", new_value)
+
+        # sinkronkan memori
+        gi = self._global_index(row)
+        if 0 <= gi < len(self.all_data):
+            self.all_data[gi]["KET"] = new_value
+
+        # ubah warna teks menjadi merah
+        for c in range(self.table.columnCount()):
+            it = self.table.item(row, c)
+            if it:
+                it.setForeground(QColor("red"))
+
+        show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
+
+
+    # =========================================================
+    # 🔹 4. Fungsi status cepat (delegasi ke helper di atas)
+    # =========================================================
+    def meninggal_pemilih(self, row): self.set_ket_status(row, "1", "Meninggal")
+    def ganda_pemilih(self, row): self.set_ket_status(row, "2", "Ganda")
+    def bawah_umur_pemilih(self, row): self.set_ket_status(row, "3", "Di Bawah Umur")
+    def pindah_domisili(self, row): self.set_ket_status(row, "4", "Pindah Domisili")
+    def wna_pemilih(self, row): self.set_ket_status(row, "5", "WNA")
+    def tni_pemilih(self, row): self.set_ket_status(row, "6", "TNI")
+    def polri_pemilih(self, row): self.set_ket_status(row, "7", "Polri")
+    def salah_tps(self, row): self.set_ket_status(row, "8", "Salah TPS")
+
+
+    # =========================================================
+    # 🔹 Helper kolom dan update database
+    # =========================================================
+    def col_index(self, header_name):
+        for i in range(self.table.columnCount()):
+            if self.table.horizontalHeaderItem(i).text().strip().upper() == header_name.upper():
+                return i
+        return -1
+
+    def _global_index(self, row_in_page: int) -> int:
+        """Konversi nomor baris di tampilan jadi index global di all_data."""
+        return (self.current_page - 1) * self.rows_per_page + row_in_page
+
+    def _row_signature_from_ui(self, row: int) -> dict:
+        """Ambil identitas unik baris untuk keperluan penghapusan yang aman."""
+        fields = ["KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR",
+                  "TGL_LHR","STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","TPS","LastUpdate"]
+        sig = {}
+        for f in fields:
+            ci = self.col_index(f)
+            sig[f] = self.table.item(row, ci).text().strip() if ci != -1 and self.table.item(row, ci) else ""
+        return sig
+
+    def update_database_field(self, row, field_name, value):
+        """Update satu kolom di database berdasar NIK."""
+        try:
+            nik_col = self.col_index("NIK")
+            nik = self.table.item(row, nik_col).text().strip() if nik_col != -1 else None
+            if not nik:
+                return
+            conn = sqlite3.connect(self.db_name)
+            cur = conn.cursor()
+            cur.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
+
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
     # =================================================
@@ -1152,13 +1388,13 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
                     return
 
-                # Verifikasi baris-15 kolom-2 & kolom-4
+                # 🔹 Verifikasi baris ke-15 (index 14)
                 kecamatan_csv = reader[14][1].strip().upper()
                 desa_csv = reader[14][3].strip().upper()
                 if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
                     show_modern_warning(
                         self, "Error",
-                        f"Import CSV  gagal!\n"
+                        f"Import CSV gagal!\n"
                         f"Harap Import CSV untuk Desa {self.desa_login.title()} yang bersumber dari Sidalih"
                     )
                     return
@@ -1218,24 +1454,27 @@ class MainWindow(QMainWindow):
 
                 self.all_data = []
                 for row in reader[1:]:
+                    if not row or len(row) < len(header):
+                        continue
+
                     status_val = row[idx_status].strip().upper()
                     if status_val not in ("AKTIF", "UBAH", "BARU"):
                         continue
+
                     data_dict, values = {}, []
                     for csv_col, app_col in mapping.items():
                         if csv_col in header:
                             col_idx = header.index(csv_col)
                             val = row[col_idx].strip()
 
-                            # Pastikan kolom KET selalu "0"
+                            # ⚡ Pastikan kolom KET selalu "0" saat import CSV
                             if app_col == "KET":
                                 val = "0"
 
-                            # ✅ Normalisasi kolom LastUpdate (format jadi DD/MM/YYYY)
+                            # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
                                 try:
                                     from datetime import datetime
-                                    # coba berbagai format ISO umum
                                     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                                         try:
                                             dt = datetime.strptime(val, fmt)
@@ -1260,10 +1499,20 @@ class MainWindow(QMainWindow):
                 conn.commit()
                 conn.close()
 
+                # ✅ Semua data KET diset ke 0 secara paksa juga di database
+                try:
+                    conn = sqlite3.connect(self.db_name)
+                    cur = conn.cursor()
+                    cur.execute("UPDATE data_pemilih SET KET='0'")
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    print(f"[Warning] Gagal set KET=0 massal: {e}")
+
                 self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
                 self.show_page(1)
 
-                # ✅ Pastikan klik header aktif setelah render
+                # Pastikan event header aktif lagi
                 self.connect_header_events()
 
                 show_modern_info(self, "Sukses", "Import CSV selesai!")
@@ -1359,13 +1608,17 @@ class MainWindow(QMainWindow):
     # =================================================
     # Pengurutan Data
     # =================================================
+    def sort_data(self, auto=False):
+        """
+        Urutkan data berdasarkan TPS, RW, RT, NKK, dan NAMA.
+        Jika auto=True maka dijalankan tanpa konfirmasi & popup.
+        """
+        # ✅ Jika bukan mode otomatis, baru minta konfirmasi
+        if not auto:
+            if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
+                return
 
-    def sort_data(self):
-    # 🔹 Konfirmasi sebelum mengurutkan (versi modern)
-        if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
-            return
-
-        # 🔹 Urutkan data
+        # 🔹 Lakukan pengurutan
         self.all_data.sort(
             key=lambda x: (
                 str(x.get("TPS", "")),
@@ -1378,7 +1631,10 @@ class MainWindow(QMainWindow):
 
         # 🔹 Refresh tampilan
         self.show_page(1)
-        show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
+
+        # ✅ Kalau manual, baru tampilkan popup sukses
+        if not auto:
+            show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
 
     # =================================================
     # Klik Header Kolom "LastUpdate" untuk sorting toggle
@@ -1518,18 +1774,14 @@ class MainWindow(QMainWindow):
             chk_item = QTableWidgetItem()
             chk_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
             chk_item.setData(Qt.ItemDataRole.CheckStateRole, Qt.CheckState.Unchecked)
-            chk_item.setText("")  # kosong, biar hanya kotak ceklis
+            chk_item.setText("")
             self.table.setItem(i, 0, chk_item)
 
             # ✅ Kolom lainnya
             for j, col in enumerate(app_columns[1:], start=1):
                 val = d.get(col, "")
 
-                # Format khusus untuk kolom KET
-                if col == "KET":
-                    val = "0"
-
-                # Format khusus untuk kolom LastUpdate
+                # Format tanggal jika perlu
                 if col == "LastUpdate" and val:
                     try:
                         from datetime import datetime
@@ -1552,6 +1804,40 @@ class MainWindow(QMainWindow):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 self.table.setItem(i, j, item)
+
+            # =========================================================
+            # 🔹 Pewarnaan otomatis berdasarkan nilai kolom KET (tema adaptif)
+            # =========================================================
+            ket_index = self.col_index("KET")
+            if ket_index != -1:
+                ket_val = str(self.table.item(i, ket_index).text()).strip().upper()
+
+                # Deteksi warna background table (untuk mode light/dark)
+                bg_color = self.table.palette().color(self.table.backgroundRole())
+                brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
+                is_light_theme = brightness > 128
+
+                # Warna dasar (default teks)
+                if is_light_theme:
+                    warna_default = QColor("black")  # 🌓 Light mode → teks hitam
+                else:
+                    warna_default = QColor("white")  # 🌑 Dark mode → teks putih
+
+                # Warna khusus
+                if ket_val in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    warna = QColor("red")      # ❌ TMS
+                elif ket_val == "B":
+                    warna = QColor("green")    # 🟢 BARU
+                elif ket_val == "U":
+                    warna = QColor("orange")   # 🟡 UBAH
+                else:
+                    warna = warna_default      # ⚪ Normal
+
+                # Terapkan ke seluruh baris
+                for c in range(self.table.columnCount()):
+                    item = self.table.item(i, c)
+                    if item:
+                        item.setForeground(warna)
 
         self.table.blockSignals(False)
         self.lbl_selected.setText("0 selected")
@@ -1626,17 +1912,6 @@ class MainWindow(QMainWindow):
         next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
                                          checked=False, enabled=(self.current_page < self.total_pages))
         self.pagination_layout.addWidget(next_btn)
-
-    def lookup_pemilih(self, row): show_modern_info(self, "Lookup", f"Baris ke-{row+1} dipilih.")
-    def hapus_pemilih(self, row): show_modern_warning(self, "Hapus", f"Data di baris {row+1} akan dihapus.")
-    def meninggal_pemilih(self, row): show_modern_info(self, "Meninggal", f"Baris {row+1} ditandai meninggal.")
-    def ganda_pemilih(self, row): show_modern_info(self, "Ganda", f"Baris {row+1} terindikasi ganda.")
-    def bawah_umur_pemilih(self, row): show_modern_info(self, "Di Bawah Umur", f"Pemilih di baris {row+1} masih di bawah umur.")
-    def pindah_domisili(self, row): show_modern_info(self, "Pindah", f"Pemilih baris {row+1} pindah domisili.")
-    def wna_pemilih(self, row): show_modern_info(self, "WNA", f"Pemilih baris {row+1} terindikasi WNA.")
-    def tni_pemilih(self, row): show_modern_info(self, "TNI", f"Pemilih baris {row+1} anggota TNI.")
-    def polri_pemilih(self, row): show_modern_info(self, "Polri", f"Pemilih baris {row+1} anggota Polri.")
-    def salah_tps(self, row): show_modern_info(self, "Salah TPS", f"Pemilih baris {row+1} salah TPS.")
 
 # =====================================================
 # Login Window (dengan tambahan pilihan Tahapan)
