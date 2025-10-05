@@ -1204,18 +1204,39 @@ class MainWindow(QMainWindow):
     # 🔹 1. AKTIFKAN PEMILIH
     # =========================================================
     def aktifkan_pemilih(self, row):
+        """Aktifkan kembali pemilih hanya jika:
+        1️⃣ DPID tidak kosong / bukan 0, dan
+        2️⃣ Nilai kolom KET adalah salah satu dari 1–8 (TMS).
+        """
         dpid_item = self.table.item(row, self.col_index("DPID"))
-        nama_item = self.table.item(row, self.col_index("NAMA"))
         ket_item = self.table.item(row, self.col_index("KET"))
-        nama = nama_item.text().strip() if nama_item else ""
-        if not dpid_item or dpid_item.text().strip() in ("", "0"):
-            return  # hanya pemilih dengan DPID valid
+        nama_item = self.table.item(row, self.col_index("NAMA"))
 
-        # Set nilai kolom KET jadi "0"
+        dpid = dpid_item.text().strip() if dpid_item else ""
+        ket  = ket_item.text().strip().upper() if ket_item else ""
+        nama = nama_item.text().strip() if nama_item else ""
+
+        # ⚠️ Validasi 1: pastikan DPID valid
+        if not dpid or dpid == "0":
+            show_modern_warning(
+                self, "Ditolak",
+                f"Tindakan ditolak.<br>{nama} adalah Pemilih Aktif."
+            )
+            return
+
+        # ⚠️ Validasi 2: hanya boleh jika KET = 1–8
+        if ket not in ("1","2","3","4","5","6","7","8"):
+            show_modern_warning(
+                self, "Ditolak",
+                f"Tindakan ditolak.<br>{nama} adalah Pemilih Aktif."
+            )
+            return
+
+        # ✅ Set kolom KET jadi 0 (aktif)
         ket_item.setText("0")
         self.update_database_field(row, "KET", "0")
 
-        # Sinkronkan ke data memori
+        # ✅ Sinkronkan di memori
         gi = self._global_index(row)
         if 0 <= gi < len(self.all_data):
             self.all_data[gi]["KET"] = "0"
@@ -1226,7 +1247,7 @@ class MainWindow(QMainWindow):
         is_light_theme = brightness > 128
         warna_normal = QColor("black") if is_light_theme else QColor("white")
 
-        # Ubah warna teks seluruh baris jadi normal
+        # ✅ Ubah warna teks seluruh baris ke normal
         for c in range(self.table.columnCount()):
             it = self.table.item(row, c)
             if it:
@@ -1234,55 +1255,85 @@ class MainWindow(QMainWindow):
 
         show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
-
     # =========================================================
     # 🔹 2. HAPUS PEMILIH
     # =========================================================
     def hapus_pemilih(self, row):
-        """Hapus data hanya jika DPID kosong/0, berdasarkan kombinasi beberapa kolom identitas."""
-        dpid = self.table.item(row, self.col_index("DPID")).text().strip() if self.table.item(row, self.col_index("DPID")) else ""
-        nik  = self.table.item(row, self.col_index("NIK")).text().strip() if self.table.item(row, self.col_index("NIK")) else ""
-        nama = self.table.item(row, self.col_index("NAMA")).text().strip() if self.table.item(row, self.col_index("NAMA")) else ""
+        """Hapus data hanya jika DPID kosong/0, berdasarkan kombinasi ROWID + NIK + NKK + DPID + TGL_LAHIR + LastUpdate."""
+        dpid_item = self.table.item(row, self.col_index("DPID"))
+        nik_item  = self.table.item(row, self.col_index("NIK"))
+        nkk_item  = self.table.item(row, self.col_index("NKK"))
+        nama_item = self.table.item(row, self.col_index("NAMA"))
 
+        dpid = dpid_item.text().strip() if dpid_item else ""
+        nik  = nik_item.text().strip() if nik_item else ""
+        nkk  = nkk_item.text().strip() if nkk_item else ""
+        nama = nama_item.text().strip() if nama_item else ""
+
+        # ⚠️ Hanya boleh hapus jika DPID kosong atau 0
         if dpid and dpid != "0":
             show_modern_warning(
                 self, "Ditolak",
-                f"Data di baris {row+1} tidak dapat dihapus.<br>"
+                f"{nama} tidak dapat dihapus dari Daftar Pemilih.<br>"
                 f"Hanya Pemilih Baru di tahap ini yang bisa dihapus!"
             )
             return
 
+        # 🔸 Konfirmasi sebelum hapus
         if not show_modern_question(
             self, "Konfirmasi Hapus",
-            f"Apakah Anda yakin ingin menghapus data di baris {row+1}?<br>"
-            f"NAMA: <b>{nama}</b><br>NIK: <b>{nik}</b>"
+            f"Apakah Anda yakin ingin menghapus data ini?<br>"
+            f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
         ):
             return
 
-        # ambil identitas unik baris
+        gi = self._global_index(row)
+        if not (0 <= gi < len(self.all_data)):
+            return
+
         sig = self._row_signature_from_ui(row)
+        rowid = self.all_data[gi].get("ROWID") or self.all_data[gi].get("_rowid_")
+
+        if not rowid:
+            show_modern_error(self, "Error", "ROWID tidak ditemukan — data tidak dapat dihapus.")
+            return
+
+        # Normalisasi tanggal (kadang tersimpan sebagai 2024-10-05, kadang 05/10/2024)
+        last_update = sig.get("LastUpdate", "").strip()
+        if "/" in last_update:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(last_update, "%d/%m/%Y")
+                last_update = dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
 
         try:
             conn = sqlite3.connect(self.db_name)
             cur = conn.cursor()
+
+            # 🔥 Hapus hanya jika semua identitas cocok persis
             cur.execute("""
                 DELETE FROM data_pemilih
-                WHERE (IFNULL(DPID,'')='' OR DPID='0')
-                  AND IFNULL(NIK,'') = ?
-                  AND IFNULL(NAMA,'') = ?
-                  AND IFNULL(TMPT_LHR,'') = ?
-                  AND IFNULL(TGL_LHR,'') = ?
-                  AND IFNULL(TPS,'') = ?
-            """, (sig["NIK"], sig["NAMA"], sig["TMPT_LHR"], sig["TGL_LHR"], sig["TPS"]))
+                WHERE ROWID = ?
+                AND IFNULL(NIK,'') = ?
+                AND IFNULL(NKK,'') = ?
+                AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
+                AND IFNULL(TGL_LHR,'') = ?
+                AND IFNULL(LastUpdate,'') = ?
+            """, (rowid, sig["NIK"], sig["NKK"], sig["DPID"], sig["TGL_LHR"], last_update))
             conn.commit()
             conn.close()
 
-            gi = self._global_index(row)
-            if 0 <= gi < len(self.all_data):
-                del self.all_data[gi]
+            # 🔹 Hapus dari memori
+            del self.all_data[gi]
+
+            # 🔹 Jika halaman kosong setelah hapus, pindah ke halaman sebelumnya
+            if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
+                self.current_page -= 1
 
             self.show_page(self.current_page)
-            show_modern_info(self, "Selesai", f"Data baris {row+1} berhasil dihapus!")
+            show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari Daftar Pemilih!")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
@@ -1515,6 +1566,9 @@ class MainWindow(QMainWindow):
                 # Pastikan event header aktif lagi
                 self.connect_header_events()
 
+                # ✅ Urutkan otomatis setelah import (tanpa konfirmasi & popup)
+                self.sort_data(auto=True)
+
                 show_modern_info(self, "Sukses", "Import CSV selesai!")
 
         except Exception as e:
@@ -1525,8 +1579,10 @@ class MainWindow(QMainWindow):
     # =================================================
     def load_data_from_db(self):
         conn = sqlite3.connect(self.db_name)
+        conn.row_factory = sqlite3.Row  # hasilnya jadi dictionary otomatis
         cur = conn.cursor()
-        # ✅ Buat tabel jika belum ada
+
+        # ✅ Pastikan tabel ada
         cur.execute("""
             CREATE TABLE IF NOT EXISTS data_pemilih (
                 KECAMATAN TEXT,
@@ -1548,34 +1604,47 @@ class MainWindow(QMainWindow):
                 KET TEXT,
                 TPS TEXT,
                 LastUpdate DATETIME,
-                CEK DATA TEXT
+                "CEK DATA" TEXT
             )
         """)
-        cur.execute("SELECT * FROM data_pemilih")
+
+        # ✅ Ambil data + ROWID untuk operasi update/hapus
+        cur.execute("SELECT rowid, * FROM data_pemilih")
         rows = cur.fetchall()
         conn.close()
 
         self.all_data = []
-        columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
 
         for row in rows:
-            data_dict = {}
-            for col, val in zip(columns[1:], row):
-                if col == "LastUpdate" and val:
-                    try:
-                        # kalau format ISO penuh
-                        dt = datetime.fromisoformat(str(val))
-                        val = dt.strftime("%d/%m/%Y")
-                    except Exception:
-                        # fallback kalau sudah string DD/MM/YYYY
+            # row adalah sqlite3.Row → bisa diakses seperti dict
+            data_dict = dict(row)
+
+            # Simpan rowid di key "_rowid_" tapi JANGAN tampilkan di tabel
+            data_dict["_rowid_"] = data_dict.pop("rowid", None)
+
+            # Format tanggal agar selalu DD/MM/YYYY
+            if data_dict.get("LastUpdate"):
+                val = str(data_dict["LastUpdate"])
+                try:
+                    from datetime import datetime
+                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                         try:
-                            dt = datetime.strptime(str(val), "%Y-%m-%d")
-                            val = dt.strftime("%d/%m/%Y")
+                            dt = datetime.strptime(val, fmt)
+                            data_dict["LastUpdate"] = dt.strftime("%d/%m/%Y")
+                            break
                         except:
-                            pass
-                data_dict[col] = str(val) if val is not None else ""
+                            continue
+                except:
+                    pass
+
+            # Pastikan semua kolom yang digunakan di tabel ada
+            for col in [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]:
+                if col not in data_dict:
+                    data_dict[col] = ""
+
             self.all_data.append(data_dict)
 
+        # ✅ Pagination
         self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
         self.show_page(1)
 
@@ -1777,22 +1846,26 @@ class MainWindow(QMainWindow):
             chk_item.setText("")
             self.table.setItem(i, 0, chk_item)
 
-            # ✅ Kolom lainnya
+            # ✅ Kolom lainnya (lewati _rowid_)
             for j, col in enumerate(app_columns[1:], start=1):
+                if col == "_rowid_":  # jangan tampilkan rowid
+                    continue
+
                 val = d.get(col, "")
 
                 # Format tanggal jika perlu
                 if col == "LastUpdate" and val:
                     try:
                         from datetime import datetime
-                        dt = datetime.fromisoformat(val)
-                        val = dt.strftime("%d/%m/%Y")
-                    except:
-                        try:
-                            dt = datetime.strptime(val, "%Y-%m-%d")
-                            val = dt.strftime("%d/%m/%Y")
-                        except:
-                            pass
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                            try:
+                                dt = datetime.strptime(val, fmt)
+                                val = dt.strftime("%d/%m/%Y")
+                                break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
 
                 item = QTableWidgetItem(val)
 
@@ -1812,26 +1885,23 @@ class MainWindow(QMainWindow):
             if ket_index != -1:
                 ket_val = str(self.table.item(i, ket_index).text()).strip().upper()
 
-                # Deteksi warna background table (untuk mode light/dark)
+                # Deteksi mode tema berdasarkan warna background table
                 bg_color = self.table.palette().color(self.table.backgroundRole())
                 brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
                 is_light_theme = brightness > 128
 
                 # Warna dasar (default teks)
-                if is_light_theme:
-                    warna_default = QColor("black")  # 🌓 Light mode → teks hitam
-                else:
-                    warna_default = QColor("white")  # 🌑 Dark mode → teks putih
+                warna_default = QColor("black") if is_light_theme else QColor("white")
 
-                # Warna khusus
+                # Warna khusus berdasarkan KET
                 if ket_val in ("1", "2", "3", "4", "5", "6", "7", "8"):
-                    warna = QColor("red")      # ❌ TMS
+                    warna = QColor("red")       # ❌ TMS
                 elif ket_val == "B":
-                    warna = QColor("green")    # 🟢 BARU
+                    warna = QColor("green")     # 🟢 BARU
                 elif ket_val == "U":
-                    warna = QColor("orange")   # 🟡 UBAH
+                    warna = QColor("orange")    # 🟡 UBAH
                 else:
-                    warna = warna_default      # ⚪ Normal
+                    warna = warna_default       # ⚪ Normal
 
                 # Terapkan ke seluruh baris
                 for c in range(self.table.columnCount()):
@@ -1846,9 +1916,9 @@ class MainWindow(QMainWindow):
         self.update_pagination()
         self.table.horizontalHeader().setSortIndicatorShown(False)
 
-        # jadwalkan auto resize kolom setelah layout selesai
+        # Jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
-
+        
     # =================================================
     # Pagination UI
     # =================================================
