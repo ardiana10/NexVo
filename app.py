@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
-    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
+    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
 from io import BytesIO
 
@@ -632,6 +632,8 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setFixedHeight(24)
         self.checkbox_delegate = CheckboxDelegate("dark")  # default dark
         self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         col_widths = {
             " ": 30,
@@ -659,6 +661,8 @@ class MainWindow(QMainWindow):
         for idx, col in enumerate(columns):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
+
+        
 
         # === Auto resize kolom sesuai isi, tapi tetap bisa manual resize ===
         # === Header dan sorting klik ===
@@ -1032,6 +1036,104 @@ class MainWindow(QMainWindow):
         header.setStretchLastSection(False)
         header.setSectionResizeMode(self.table.columnCount()-1, QHeaderView.ResizeMode.Interactive)
 
+    # Memunculkan menu klik kanan
+    def show_context_menu(self, pos):
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+
+        row = index.row()
+
+        # 🔸 Hapus semua seleksi & hilangkan semua ceklis terlebih dulu
+        for r in range(self.table.rowCount()):
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(r, 0, r, self.table.columnCount() - 1),
+                False
+            )
+            item = self.table.item(r, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
+
+        # 🔹 Pilih baris yang diklik kanan
+        self.table.clearSelection()
+        self.table.selectRow(row)
+
+        # 🔹 Pastikan baris punya checkbox dan beri tanda centang
+        chk_item = self.table.item(row, 0)
+        if chk_item is None:
+            chk_item = QTableWidgetItem()
+            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 0, chk_item)
+
+        chk_item.setCheckState(Qt.CheckState.Checked)
+        self.table.viewport().update()  # 🔹 refresh tampilan agar centang langsung terlihat
+        self.update_statusbar()
+
+        # === Context Menu ===
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2d2d30;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 28px;
+                border-radius: 4px;
+                font-family: 'Segoe UI';
+                font-size: 10.5pt;
+            }
+            QMenu::item:selected {
+                background-color: #ff9900;
+                color: black;
+            }
+        """)
+
+        actions = [
+            ("✏️ Lookup", lambda: self._context_action_wrapper(row, self.lookup_pemilih)),
+            ("🔥 Hapus", lambda: self._context_action_wrapper(row, self.hapus_pemilih)),
+            ("🚫 Meninggal", lambda: self._context_action_wrapper(row, self.meninggal_pemilih)),
+            ("⚠️ Ganda", lambda: self._context_action_wrapper(row, self.ganda_pemilih)),
+            ("🧒 Di Bawah Umur", lambda: self._context_action_wrapper(row, self.bawah_umur_pemilih)),
+            ("🏠 Pindah Domisili", lambda: self._context_action_wrapper(row, self.pindah_domisili)),
+            ("🌍 WNA", lambda: self._context_action_wrapper(row, self.wna_pemilih)),
+            ("🪖 TNI", lambda: self._context_action_wrapper(row, self.tni_pemilih)),
+            ("👮‍♂️ Polri", lambda: self._context_action_wrapper(row, self.polri_pemilih)),
+            ("📍 Salah TPS", lambda: self._context_action_wrapper(row, self.salah_tps)),
+        ]
+        for text, func in actions:
+            act = QAction(text, self)
+            act.triggered.connect(func)
+            menu.addAction(act)
+
+        # Jalankan context menu
+        chosen_action = menu.exec(self.table.viewport().mapToGlobal(pos))
+
+        # ✅ Jika user klik di luar context menu (tidak memilih apapun)
+        if chosen_action is None:
+            self.table.clearSelection()
+            if chk_item:
+                chk_item.setCheckState(Qt.CheckState.Unchecked)
+            self.table.viewport().update()
+            self.update_statusbar()
+
+
+    def _context_action_wrapper(self, row, func):
+        """Menjalankan fungsi context lalu reset seleksi & ceklis"""
+        func(row)
+        QTimer.singleShot(150, lambda: self._clear_row_selection(row))
+
+
+    def _clear_row_selection(self, row):
+        """Hapus seleksi dan ceklis setelah aksi selesai"""
+        self.table.clearSelection()
+        chk_item = self.table.item(row, 0)
+        if chk_item:
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
+        self.table.viewport().update()
+        self.update_statusbar()
 
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
@@ -1056,8 +1158,8 @@ class MainWindow(QMainWindow):
                 if kecamatan_csv != self.kecamatan_login or desa_csv != self.desa_login:
                     show_modern_warning(
                         self, "Error",
-                        f"Verifikasi gagal!\nCSV Kecamatan='{kecamatan_csv}', Desa='{desa_csv}'\n"
-                        f"Login Kecamatan='{self.kecamatan_login}', Desa='{self.desa_login}'"
+                        f"Import CSV  gagal!\n"
+                        f"Harap Import CSV untuk Desa {self.desa_login.title()} yang bersumber dari Sidalih"
                     )
                     return
 
@@ -1525,23 +1627,81 @@ class MainWindow(QMainWindow):
                                          checked=False, enabled=(self.current_page < self.total_pages))
         self.pagination_layout.addWidget(next_btn)
 
+    def lookup_pemilih(self, row): show_modern_info(self, "Lookup", f"Baris ke-{row+1} dipilih.")
+    def hapus_pemilih(self, row): show_modern_warning(self, "Hapus", f"Data di baris {row+1} akan dihapus.")
+    def meninggal_pemilih(self, row): show_modern_info(self, "Meninggal", f"Baris {row+1} ditandai meninggal.")
+    def ganda_pemilih(self, row): show_modern_info(self, "Ganda", f"Baris {row+1} terindikasi ganda.")
+    def bawah_umur_pemilih(self, row): show_modern_info(self, "Di Bawah Umur", f"Pemilih di baris {row+1} masih di bawah umur.")
+    def pindah_domisili(self, row): show_modern_info(self, "Pindah", f"Pemilih baris {row+1} pindah domisili.")
+    def wna_pemilih(self, row): show_modern_info(self, "WNA", f"Pemilih baris {row+1} terindikasi WNA.")
+    def tni_pemilih(self, row): show_modern_info(self, "TNI", f"Pemilih baris {row+1} anggota TNI.")
+    def polri_pemilih(self, row): show_modern_info(self, "Polri", f"Pemilih baris {row+1} anggota Polri.")
+    def salah_tps(self, row): show_modern_info(self, "Salah TPS", f"Pemilih baris {row+1} salah TPS.")
+
 # =====================================================
 # Login Window (dengan tambahan pilihan Tahapan)
-# =====================================================
-# =====================================================
-# LOGIN WINDOW (Versi Final: Email, Password, Tahapan)
 # =====================================================
 class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Login Akun")
-        self.showMaximized()
 
+        # === Logo aplikasi di title bar ===
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(base_dir, "KPU.png")
+        self.setWindowIcon(QIcon(logo_path))
+        self.showMaximized()
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
+
+        # === Layout utama ===
         outer_layout = QVBoxLayout()
         outer_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        # === Frame utama (dengan border & shadow) ===
+        form_frame = QFrame()
+        form_frame.setObjectName("FormFrame")  # penting agar style hanya ke frame ini
+        form_frame.setFixedWidth(420)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(35)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        form_frame.setGraphicsEffect(shadow)
+
+        # === Layout isi frame ===
         form_layout = QVBoxLayout()
-        form_layout.setSpacing(10)
+        form_layout.setSpacing(12)
+        form_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # === Logo KPU ===
+        logo_label = QLabel()
+        pixmap = QPixmap(logo_path)
+        if pixmap.isNull():
+            print(f"[PERINGATAN] Gambar tidak ditemukan di: {logo_path}")
+        else:
+            pixmap = pixmap.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(pixmap)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        form_layout.addWidget(logo_label)
+
+        # === Teks judul ===
+        title_label = QLabel("KOMISI PEMILIHAN UMUM<br>KABUPATEN TASIKMALAYA")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 13pt;
+                font-weight: bold;
+                font-family: 'Segoe UI';
+                margin-bottom: 20px;
+            }
+        """)
+        form_layout.addWidget(title_label)
 
         # === Email ===
         self.email_label = QLabel("Email:")
@@ -1600,15 +1760,28 @@ class LoginWindow(QWidget):
         self.buat_akun.clicked.connect(self.konfirmasi_buat_akun)
         form_layout.addWidget(self.buat_akun, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # === Tata letak utama ===
-        center_box = QWidget()
-        center_box.setLayout(form_layout)
-        center_box.setFixedWidth(300)
-        outer_layout.addWidget(center_box, alignment=Qt.AlignmentFlag.AlignCenter)
+        # === Tempel layout ke frame & frame ke tampilan utama ===
+        form_frame.setLayout(form_layout)
+        outer_layout.addWidget(form_frame, alignment=Qt.AlignmentFlag.AlignCenter)
         self.setLayout(outer_layout)
 
+        # === Style global ===
         self.setStyleSheet("""
-            QWidget { font-size: 11pt; color: white; background-color: #1e1e1e; }
+            QWidget {
+                font-size: 11pt;
+                color: white;
+                background-color: #1e1e1e;
+            }
+            QFrame#FormFrame {
+                background-color: #262626;
+                border: 1px solid rgba(255, 255, 255, 0.25);  /* 🔹 Border hanya di frame utama */
+                border-radius: 10px;
+                padding: 30px 40px;
+            }
+            QLabel {
+                background-color: transparent;  /* 🔹 Hilangkan background hitam label */
+                color: white;
+            }
             QLineEdit, QComboBox {
                 min-height: 28px;
                 font-size: 11pt;
@@ -1617,6 +1790,9 @@ class LoginWindow(QWidget):
                 padding-left: 6px;
                 background-color: #2d2d30;
                 color: white;
+            }
+            QPushButton {
+                background-color: transparent;
             }
         """)
 
