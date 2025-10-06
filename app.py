@@ -1522,9 +1522,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'original_data') or self.original_data is None:
             self.original_data = self.all_data.copy()
         
-        # Filter self.all_data based on the filters
+        # Always filter from original data, not from previously filtered data
+        # This allows applying new filters without resetting first
         filtered_data = []
-        for item in self.all_data:
+        for item in self.original_data:
             if self.matches_filters(item, filters):
                 filtered_data.append(item)
         
