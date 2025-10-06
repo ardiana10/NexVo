@@ -1,11 +1,12 @@
-import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode
+import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
-    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange
+    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange,
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
@@ -573,6 +574,555 @@ class SettingDialog(QDialog):
         conn.close()
         self.accept()   # close dialog dengan "OK"
 
+# =====================================================
+# Filter Sidebar (right dock)
+# =====================================================
+class FilterSidebar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Main layout untuk widget utama
+        main_container_layout = QVBoxLayout(self)
+        main_container_layout.setContentsMargins(0, 0, 0, 0)
+        main_container_layout.setSpacing(0)
+        
+        # Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # Widget yang akan di-scroll
+        scroll_content = QWidget()
+        main_layout = QVBoxLayout(scroll_content)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
+
+
+        # Form layout dengan spacing dan margin yang lebih baik
+        form_layout = QFormLayout()
+        form_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        form_layout.setSpacing(6)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Tanggal Update
+        tgl_update_layout = QHBoxLayout()
+        tgl_update_layout.setContentsMargins(0, 0, 0, 0)
+        self.tgl_update = QLineEdit()
+        self.tgl_update.setPlaceholderText("Tanggal Update")
+        tgl_update_layout.addWidget(self.tgl_update)
+        form_layout.addRow(tgl_update_layout)
+
+        # Nama
+        nama_layout = QHBoxLayout()
+        nama_layout.setContentsMargins(0, 0, 0, 0)
+        self.nama = QLineEdit()
+        self.nama.setPlaceholderText("Nama")
+        nama_layout.addWidget(self.nama)
+        form_layout.addRow(nama_layout)
+
+        # NIK & NKK
+        nik_nkk_layout = QHBoxLayout()
+        nik_nkk_layout.setContentsMargins(0, 0, 0, 0)
+        nik_nkk_layout.setSpacing(4)
+        self.nik = QLineEdit()
+        self.nik.setPlaceholderText("NIK")
+        self.nkk = QLineEdit()
+        self.nkk.setPlaceholderText("NKK")
+        nik_nkk_layout.addWidget(self.nik)
+        nik_nkk_layout.addWidget(self.nkk)
+        form_layout.addRow(nik_nkk_layout)
+
+        # Tanggal Lahir
+        tgl_lahir_layout = QHBoxLayout()
+        tgl_lahir_layout.setContentsMargins(0, 0, 0, 0)
+        self.tgl_lahir = QLineEdit()
+        self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
+        tgl_lahir_layout.addWidget(self.tgl_lahir)
+        form_layout.addRow(tgl_lahir_layout)
+
+        # Umur slider
+        umur_layout = QHBoxLayout()
+        umur_layout.setContentsMargins(0, 0, 0, 0)
+        umur_layout.setSpacing(4)
+        self.umur_slider = QSlider(Qt.Orientation.Horizontal)
+        self.umur_slider.setMinimum(0)
+        self.umur_slider.setMaximum(100)
+        self.umur_slider.setValue(0)
+        self.umur_label = QLabel("0")
+        self.umur_label.setMinimumWidth(20)
+        self.umur_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.umur_slider.valueChanged.connect(self.update_umur_label)
+        umur_layout.addWidget(self.umur_slider)
+        umur_layout.addWidget(self.umur_label)
+        form_layout.addRow("Umur", umur_layout)
+
+        main_layout.addLayout(form_layout)
+
+        # Dropdowns and Alamat
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(4)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.keterangan = QComboBox()
+        self.kelamin = QComboBox()
+        self.kawin = QComboBox()
+        self.disabilitas = QComboBox()
+        self.ktp_el = QComboBox()
+        self.sumber = QComboBox()
+        self.rank = QComboBox()
+        self.alamat = QLineEdit()
+        self.alamat.setPlaceholderText("Alamat")
+
+        self.keterangan.addItems([
+            "Keterangan",
+            "1 (Meninggal)",
+            "2 (Ganda)",
+            "3 (Di Bawah Umur)",
+            "4 (Pindah Domisili)",
+            "5 (WNA)",
+            "6 (TNI)",
+            "7 (Polri)",
+            "8 (Salah TPS)",
+            "U (Ubah)",
+            "90 (Keluar Loksus)",
+            "91 (Meninggal)",
+            "92 (Ganda)",
+            "93 (Di Bawah Umur)",
+            "94 (Pindah Domisili)",
+            "95 (WNA)",
+            "96 (TNI)",
+            "97 (Polri)"
+        ])
+        self.kelamin.addItems(["Kelamin", "L", "P"])
+        self.kawin.addItems(["Kawin", "S", "B", "P"])
+        self.disabilitas.addItems(["Disabilitas", "0", "1", "2", "3", "4"])
+        self.ktp_el.addItems(["KTP-el", "B", "K", "S"])
+        self.sumber.addItems(["Sumber", "DP4", "DPTb", "DPK"])
+        self.rank.addItems(["Rank"]) # Placeholder
+
+        grid_layout.addWidget(self.keterangan, 0, 0)
+        grid_layout.addWidget(self.kelamin, 0, 1)
+        grid_layout.addWidget(self.kawin, 0, 2)
+        grid_layout.addWidget(self.disabilitas, 1, 0)
+        grid_layout.addWidget(self.ktp_el, 1, 1)
+        grid_layout.addWidget(self.sumber, 1, 2)
+        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)
+        grid_layout.addWidget(self.rank, 2, 2)
+        main_layout.addLayout(grid_layout)
+
+        # Checkboxes
+        checkbox_layout = QGridLayout()
+        checkbox_layout.setSpacing(4)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        self.cb_ganda = QCheckBox("Ganda")
+        self.cb_invalid_tgl = QCheckBox("Invalid Tgl")
+        self.cb_nkk_terpisah = QCheckBox("NKK Terpisah")
+        self.cb_analisis_tms = QCheckBox("Analisis TMS 8")
+        checkbox_layout.addWidget(self.cb_ganda, 0, 0)
+        checkbox_layout.addWidget(self.cb_invalid_tgl, 0, 1)
+        checkbox_layout.addWidget(self.cb_nkk_terpisah, 1, 0)
+        checkbox_layout.addWidget(self.cb_analisis_tms, 1, 1)
+        main_layout.addLayout(checkbox_layout)
+
+        # Radio Buttons
+        radio_layout = QHBoxLayout()
+        radio_layout.setSpacing(6)
+        radio_layout.setContentsMargins(0, 0, 0, 0)
+        self.rb_reguler = QRadioButton("Reguler")
+        self.rb_khusus = QRadioButton("Khusus")
+        self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
+        self.rb_reguler_khusus.setChecked(True)
+        radio_layout.addWidget(self.rb_reguler)
+        radio_layout.addWidget(self.rb_khusus)
+        radio_layout.addWidget(self.rb_reguler_khusus)
+        main_layout.addLayout(radio_layout)
+
+        # Separator line sebelum tombol
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        line.setStyleSheet("background-color: #e0e0e0;")
+        main_layout.addWidget(line)
+
+        # Buttons dengan style yang lebih baik
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 8, 0, 5)
+        btn_layout.setSpacing(8)
+        
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setObjectName("resetBtn")
+        self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.btn_filter = QPushButton("Filter")
+        self.btn_filter.setObjectName("filterBtn")
+        self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.btn_reset.clicked.connect(self.reset_filters)
+        # Note: parent (MainWindow) will connect btn_reset.clicked to clear filters
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_reset)
+        btn_layout.addWidget(self.btn_filter)
+        main_layout.addLayout(btn_layout)
+        
+        # Set scroll content widget
+        scroll_area.setWidget(scroll_content)
+        main_container_layout.addWidget(scroll_area)
+
+    def reset_filters(self):
+        self.tgl_update.clear()
+        self.nama.clear()
+        self.nik.clear()
+        self.nkk.clear()
+        self.tgl_lahir.clear()
+        self.alamat.clear()
+        self.keterangan.setCurrentIndex(0)
+        self.kelamin.setCurrentIndex(0)
+        self.kawin.setCurrentIndex(0)
+        self.disabilitas.setCurrentIndex(0)
+        self.ktp_el.setCurrentIndex(0)
+        self.sumber.setCurrentIndex(0)
+        self.rank.setCurrentIndex(0)
+        self.cb_ganda.setChecked(False)
+        self.cb_invalid_tgl.setChecked(False)
+        self.cb_nkk_terpisah.setChecked(False)
+        self.cb_analisis_tms.setChecked(False)
+        self.rb_reguler_khusus.setChecked(True)
+        self.umur_slider.setValue(0)
+
+    def update_umur_label(self, value):
+        self.umur_label.setText(str(value))
+
+    def get_filters(self):
+        keterangan_text = self.keterangan.currentText()
+        keterangan_value = keterangan_text.split(' ')[0] if keterangan_text != "Keterangan" else ""
+        
+        return {
+            "nama": self.nama.text().strip(),
+            "nik": self.nik.text().strip(),
+            "nkk": self.nkk.text().strip(),
+            "tgl_lahir": self.tgl_lahir.text().strip(),
+            "umur": self.umur_slider.value(),
+            "keterangan": keterangan_value,
+            "jk": self.kelamin.currentText() if self.kelamin.currentText() != "Kelamin" else "",
+            "sts": self.kawin.currentText() if self.kawin.currentText() != "Kawin" else "",
+            "dis": self.disabilitas.currentText() if self.disabilitas.currentText() != "Disabilitas" else "",
+            "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
+            "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else ""
+        }
+    
+    def apply_theme(self, mode):
+        """Apply theme to FilterSidebar"""
+        if mode == "dark":
+            self.setStyleSheet("""
+                QWidget {
+                    font-family: 'Segoe UI', 'Calibri';
+                    font-size: 9px;
+                    background: #1e1e1e;
+                    color: #d4d4d4;
+                }
+                QScrollArea {
+                    border: none;
+                    background: #1e1e1e;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: #3e3e42;
+                    width: 6px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #666666;
+                    border-radius: 3px;
+                    min-height: 20px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #888888;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
+                }
+                QLineEdit, QComboBox {
+                    padding: 6px 8px;
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    background: #2d2d30;
+                    min-height: 20px;
+                    color: #d4d4d4;
+                    font-size: 9px;
+                }
+                QLineEdit:focus, QComboBox:focus {
+                    border: 1px solid #ff9800;
+                    outline: none;
+                }
+                QLineEdit::placeholder {
+                    color: #888;
+                }
+                QLabel {
+                    font-weight: normal;
+                    color: #d4d4d4;
+                    padding: 1px;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QPushButton {
+                    padding: 8px 20px;
+                    border: none;
+                    border-radius: 3px;
+                    font-weight: bold;
+                    min-width: 70px;
+                    font-size: 10px;
+                    color: white;
+                }
+                QPushButton#resetBtn {
+                    background: #ff9800;
+                }
+                QPushButton#filterBtn {
+                    background: #ff9800;
+                }
+                QPushButton#resetBtn:hover {
+                    background: #fb8c00;
+                }
+                QPushButton#filterBtn:hover {
+                    background: #fb8c00;
+                }
+                QPushButton:pressed {
+                    background: #f57c00;
+                }
+                QCheckBox {
+                    padding: 2px;
+                    spacing: 4px;
+                    color: #d4d4d4;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QCheckBox::indicator {
+                    width: 14px;
+                    height: 14px;
+                    border: 2px solid #555;
+                    border-radius: 2px;
+                    background: #2d2d30;
+                }
+                QCheckBox::indicator:checked {
+                    background: #2d2d30;
+                    border-color: #ff9800;
+                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #777;
+                }
+                QRadioButton {
+                    spacing: 4px;
+                    padding: 2px;
+                    color: #d4d4d4;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QRadioButton::indicator {
+                    width: 12px;
+                    height: 12px;
+                    border: 2px solid #555;
+                    border-radius: 7px;
+                    background: #2d2d30;
+                }
+                QRadioButton::indicator:checked {
+                    background: #ff9800;
+                    border-color: #ff9800;
+                }
+                QRadioButton::indicator:hover {
+                    border-color: #777;
+                }
+                QSlider::groove:horizontal {
+                    border: none;
+                    height: 3px;
+                    background: #555;
+                    margin: 0px;
+                    border-radius: 2px;
+                }
+                QSlider::handle:horizontal {
+                    background: #ff9800;
+                    border: 2px solid #2d2d30;
+                    width: 14px;
+                    height: 14px;
+                    margin: -6px 0;
+                    border-radius: 8px;
+                }
+                QSlider::handle:horizontal:hover {
+                    background: #fb8c00;
+                }
+                QComboBox::drop-down {
+                    border: none;
+                    padding-right: 6px;
+                    width: 16px;
+                }
+                QComboBox:hover {
+                    border: 1px solid #ff9800;
+                }
+                QFrame[frameShape="4"] {
+                    color: #555;
+                    background-color: #555;
+                }
+            """)
+        else:  # light theme
+            self.setStyleSheet("""
+                QWidget {
+                    font-family: 'Segoe UI', 'Calibri';
+                    font-size: 9px;
+                    background: white;
+                }
+                QScrollArea {
+                    border: none;
+                    background: white;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: #f0f0f0;
+                    width: 6px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #cccccc;
+                    border-radius: 3px;
+                    min-height: 20px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #aaaaaa;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: none;
+                }
+                QLineEdit, QComboBox {
+                    padding: 6px 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 3px;
+                    background: white;
+                    min-height: 20px;
+                    color: #333;
+                    font-size: 9px;
+                }
+                QLineEdit:focus, QComboBox:focus {
+                    border: 1px solid #4CAF50;
+                    outline: none;
+                }
+                QLineEdit::placeholder {
+                    color: #999;
+                }
+                QLabel {
+                    font-weight: normal;
+                    color: #666;
+                    padding: 1px;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QPushButton {
+                    padding: 8px 20px;
+                    border: none;
+                    border-radius: 3px;
+                    font-weight: bold;
+                    min-width: 70px;
+                    font-size: 10px;
+                    color: white;
+                }
+                QPushButton#resetBtn {
+                    background: #ff9800;
+                }
+                QPushButton#filterBtn {
+                    background: #ff9800;
+                }
+                QPushButton#resetBtn:hover {
+                    background: #fb8c00;
+                }
+                QPushButton#filterBtn:hover {
+                    background: #fb8c00;
+                }
+                QPushButton:pressed {
+                    background: #f57c00;
+                }
+                QCheckBox {
+                    padding: 2px;
+                    spacing: 4px;
+                    color: #333;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QCheckBox::indicator {
+                    width: 14px;
+                    height: 14px;
+                    border: 2px solid #ddd;
+                    border-radius: 2px;
+                    background: white;
+                }
+                QCheckBox::indicator:checked {
+                    background: white;
+                    border-color: #4CAF50;
+                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #aaa;
+                }
+                QRadioButton {
+                    spacing: 4px;
+                    padding: 2px;
+                    color: #333;
+                    background: transparent;
+                    font-size: 9px;
+                }
+                QRadioButton::indicator {
+                    width: 12px;
+                    height: 12px;
+                    border: 2px solid #ddd;
+                    border-radius: 7px;
+                    background: white;
+                }
+                QRadioButton::indicator:checked {
+                    background: #2196F3;
+                    border-color: #2196F3;
+                }
+                QRadioButton::indicator:hover {
+                    border-color: #aaa;
+                }
+                QSlider::groove:horizontal {
+                    border: none;
+                    height: 3px;
+                    background: #e0e0e0;
+                    margin: 0px;
+                    border-radius: 2px;
+                }
+                QSlider::handle:horizontal {
+                    background: #2196F3;
+                    border: 2px solid white;
+                    width: 14px;
+                    height: 14px;
+                    margin: -6px 0;
+                    border-radius: 8px;
+                }
+                QSlider::handle:horizontal:hover {
+                    background: #1976D2;
+                }
+                QComboBox::drop-down {
+                    border: none;
+                    padding-right: 6px;
+                    width: 16px;
+                }
+                QComboBox:hover {
+                    border: 1px solid #ff9800;
+                }
+                QFrame[frameShape="4"] {
+                    color: #e0e0e0;
+                    background-color: #e0e0e0;
+                }
+            """)
+
 # =========================================================
 # 🔹 FUNGSI GLOBAL: PALET TEMA
 # =========================================================
@@ -887,7 +1437,10 @@ class MainWindow(QMainWindow):
         add_spacer()
 
         btn_filter = QPushButton("Filter")
-        self.style_button(btn_filter, bg="orange", fg="black", bold=True)
+        self.style_button(btn_filter, bg="#ff6634", fg="white", bold=True)
+        btn_filter.setIcon(QIcon.fromTheme("view-filter")) # type: ignore
+        btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_filter.clicked.connect(self.toggle_filter_sidebar)
         toolbar.addWidget(btn_filter)
 
         self.status = QStatusBar()
@@ -916,6 +1469,10 @@ class MainWindow(QMainWindow):
         # ✅ Jalankan fungsi urutkan data secara senyap setelah login
         QTimer.singleShot(200, lambda: self.sort_data(auto=True))
 
+        # ✅ Initialize filter sidebar
+        self.filter_sidebar = None
+        self.filter_dock = None
+
         atexit.register(self._encrypt_and_cleanup)
 
     def show_setting_dialog(self):
@@ -923,6 +1480,179 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.apply_column_visibility()
             self.auto_fit_columns()
+    
+    def toggle_filter_sidebar(self):
+        """Toggle the filter sidebar visibility"""
+        if self.filter_dock is None:
+            # Create filter sidebar and dock widget
+            self.filter_sidebar = FilterSidebar(self)
+            self.filter_dock = QDockWidget("Filter", self)
+            self.filter_dock.setWidget(self.filter_sidebar)
+            self.filter_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+            self.filter_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+            
+            # Apply current theme to filter sidebar
+            current_theme = self.load_theme()
+            self.filter_sidebar.apply_theme(current_theme)
+            
+            # Connect filter button in sidebar to apply filters
+            self.filter_sidebar.btn_filter.clicked.connect(self.apply_filters)
+            
+            # Connect reset button to clear filters
+            self.filter_sidebar.btn_reset.clicked.connect(self.clear_filters)
+            
+            # Add to main window
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
+            
+            # Set initial size
+            self.filter_dock.setMinimumWidth(300)
+            self.filter_dock.setMaximumWidth(400)
+        
+        # Toggle visibility
+        self.filter_dock.setVisible(not self.filter_dock.isVisible())
+    
+    def apply_filters(self):
+        """Apply filters from the filter sidebar"""
+        if not self.filter_sidebar:
+            return
+            
+        filters = self.filter_sidebar.get_filters()
+        
+        # Store original data if not already stored
+        if not hasattr(self, 'original_data') or self.original_data is None:
+            self.original_data = self.all_data.copy()
+        
+        # Filter self.all_data based on the filters
+        filtered_data = []
+        for item in self.all_data:
+            if self.matches_filters(item, filters):
+                filtered_data.append(item)
+        
+        # Replace all_data with filtered data
+        self.all_data = filtered_data
+        
+        # Update pagination and display
+        self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
+        self.current_page = 1
+        self.show_page(1)
+        
+        # Update status bar with filter info (no popup)
+        self.lbl_total.setText(f"{len(filtered_data)} dari {len(self.original_data)} total (filtered)")
+    
+    def clear_filters(self):
+        """Clear all filters and restore original data"""
+        if hasattr(self, 'original_data') and self.original_data is not None:
+            self.all_data = self.original_data.copy()
+            self.original_data = None
+            
+            # Update pagination and display
+            self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
+            self.current_page = 1
+            self.show_page(1)
+        
+        # Reset filter form
+        if self.filter_sidebar:
+            self.filter_sidebar.reset_filters()
+    
+    def wildcard_match(self, pattern, text):
+        """Wildcard matching with % support
+        
+        Args:
+            pattern: Pattern string with % as wildcard (e.g., "john%doe", "%smith", "mary%")
+            text: Text to match against
+            
+        Returns:
+            bool: True if pattern matches text
+        """
+        if not pattern:
+            return True
+            
+        # Convert to lowercase for case-insensitive matching
+        pattern = pattern.lower()
+        text = text.lower()
+        
+        # If no wildcard, use simple contains check
+        if '%' not in pattern:
+            return pattern in text
+            
+        # Split pattern by wildcards
+        parts = pattern.split('%')
+        
+        # Handle edge cases
+        if len(parts) == 1:
+            return pattern in text
+            
+        # Check if text starts with first part (if not empty)
+        if parts[0] and not text.startswith(parts[0]):
+            return False
+            
+        # Check if text ends with last part (if not empty)
+        if parts[-1] and not text.endswith(parts[-1]):
+            return False
+            
+        # Check middle parts in order
+        current_pos = 0
+        for i, part in enumerate(parts):
+            if not part:  # Skip empty parts (from consecutive wildcards)
+                continue
+                
+            if i == 0:  # First part
+                current_pos = len(part)
+            elif i == len(parts) - 1:  # Last part
+                continue  # Already checked with endswith
+            else:  # Middle parts
+                pos = text.find(part, current_pos)
+                if pos == -1:
+                    return False
+                current_pos = pos + len(part)
+                
+        return True
+    
+    def matches_filters(self, item, filters):
+        """Check if an item matches the given filters"""
+        # Name filter with wildcard support
+        if filters["nama"]:
+            nama_item = item.get("NAMA", "")
+            if not self.wildcard_match(filters["nama"], nama_item):
+                return False
+            
+        # NIK filter
+        if filters["nik"] and filters["nik"] not in item.get("NIK", ""):
+            return False
+            
+        # NKK filter
+        if filters["nkk"] and filters["nkk"] not in item.get("NKK", ""):
+            return False
+            
+        # Date filter (simple contains check)
+        if filters["tgl_lahir"] and filters["tgl_lahir"] not in item.get("TGL_LHR", ""):
+            return False
+            
+        # Keterangan filter
+        if filters["keterangan"] and filters["keterangan"] != item.get("KET", ""):
+            return False
+            
+        # Gender filter
+        if filters["jk"] and filters["jk"] != item.get("JK", ""):
+            return False
+            
+        # Marital status filter
+        if filters["sts"] and filters["sts"] != item.get("STS", ""):
+            return False
+            
+        # Disability filter
+        if filters["dis"] and filters["dis"] != item.get("DIS", ""):
+            return False
+            
+        # KTP-el filter
+        if filters["ktpel"] and filters["ktpel"] != item.get("KTPel", ""):
+            return False
+            
+        # Source filter
+        if filters["sumber"] and filters["sumber"] != item.get("SUMBER", ""):
+            return False
+            
+        return True
 
     def apply_column_visibility(self):
         conn = sqlite3.connect(self.db_name)
@@ -1037,6 +1767,17 @@ class MainWindow(QMainWindow):
                     color: black;
                     border-radius: 4px;
                 }
+                QDockWidget {
+                    background-color: #1e1e1e;
+                    color: #d4d4d4;
+                    border: 1px solid #3e3e42;
+                }
+                QDockWidget::title {
+                    background-color: #333333;
+                    color: #dcdcdc;
+                    padding: 6px;
+                    font-weight: bold;
+                }
             """)
             self.checkbox_delegate.setTheme("dark")
 
@@ -1074,8 +1815,23 @@ class MainWindow(QMainWindow):
                     color: black;
                     border-radius: 4px;
                 }
+                QDockWidget {
+                    background-color: #f9f9f9;
+                    color: #000000;
+                    border: 1px solid #c0c0c0;
+                }
+                QDockWidget::title {
+                    background-color: #f0f0f0;
+                    color: #000000;
+                    padding: 6px;
+                    font-weight: bold;
+                }
             """)
             self.checkbox_delegate.setTheme("light")
+
+        # Apply theme to filter sidebar if it exists
+        if hasattr(self, 'filter_sidebar') and self.filter_sidebar is not None:
+            self.filter_sidebar.apply_theme(mode)
 
         # ✅ Simpan pilihan ke DB
         self.save_theme(mode)
@@ -1660,7 +2416,12 @@ class MainWindow(QMainWindow):
             if item and item.checkState() == Qt.CheckState.Checked:
                 selected += 1
         self.lbl_selected.setText(f"{selected} selected")
-        self.lbl_total.setText(f"{total} total")
+        
+        # Tampilkan info filter jika sedang aktif
+        if hasattr(self, 'original_data') and self.original_data is not None:
+            self.lbl_total.setText(f"{total} dari {len(self.original_data)} total (filtered)")
+        else:
+            self.lbl_total.setText(f"{total} total")
 
     def on_item_changed(self, item):
         if item.column() == 0:  # kolom checkbox
@@ -1834,6 +2595,40 @@ class MainWindow(QMainWindow):
         end = start + self.rows_per_page
         data_rows = self.all_data[start:end]
 
+        # Jika tidak ada data, tampilkan "Data Tidak Ditemukan"
+        if len(data_rows) == 0 and len(self.all_data) == 0:
+            self.table.setRowCount(1)
+            # Buat item "Data Tidak Ditemukan" yang span semua kolom
+            item = QTableWidgetItem("Data Tidak Ditemukan")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # Tidak bisa diedit atau dicentang
+            
+            # Set font style untuk membedakan
+            font = item.font()
+            font.setItalic(True)
+            font.setBold(True)
+            item.setFont(font)
+            
+            # Set warna abu-abu
+            item.setForeground(QColor("gray"))
+            
+            self.table.setItem(0, 0, item)
+            
+            # Kosongkan kolom lainnya
+            for j in range(1, self.table.columnCount()):
+                empty_item = QTableWidgetItem("")
+                empty_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(0, j, empty_item)
+            
+            # Span kolom pertama ke semua kolom
+            self.table.setSpan(0, 0, 1, self.table.columnCount())
+            
+            self.table.blockSignals(False)
+            self.lbl_selected.setText("0 selected")
+            self.update_statusbar()
+            self.update_pagination()
+            return
+        
         self.table.setRowCount(len(data_rows))
         app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
         center_cols = {"DPID", "JK", "STS", "TGL_LHR", "RT", "RW", "DIS", "KTPel", "KET", "TPS"}
@@ -1911,7 +2706,6 @@ class MainWindow(QMainWindow):
 
         self.table.blockSignals(False)
         self.lbl_selected.setText("0 selected")
-        self.lbl_total.setText(f"{len(self.all_data)} total")
         self.update_statusbar()
         self.update_pagination()
         self.table.horizontalHeader().setSortIndicatorShown(False)
@@ -2185,7 +2979,7 @@ class LoginWindow(QWidget):
         # 1️⃣ Jika OTP belum dibuat (login pertama)
         # ============================================================
         if not otp_secret:
-            import pyotp, qrcode
+            import pyotp, qrcode # type: ignore
             from io import BytesIO
 
             otp_secret = pyotp.random_base32()
@@ -2303,7 +3097,7 @@ class LoginWindow(QWidget):
         layout.addWidget(btn_verify)
 
         def do_verify():
-            import pyotp
+            import pyotp # type: ignore
             code = otp_input.text().strip()
             if not code:
                 show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
