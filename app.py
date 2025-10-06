@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
-    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange,
+    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
@@ -365,32 +365,36 @@ class CheckboxDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         value = index.data(Qt.ItemDataRole.CheckStateRole)
         if value is not None:
+            # ✅ Cast int -> Qt.CheckState
+            try:
+                state = Qt.CheckState(value)
+            except Exception:
+                state = Qt.CheckState.Unchecked
+
             rect = self.get_checkbox_rect(option)
 
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            if value == Qt.CheckState.Checked:
+            if state == Qt.CheckState.Checked:
                 # kotak oranye saat dicentang
                 painter.setBrush(QColor("#ff9900"))
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(rect, 4, 4)
 
-                # centang putih
-                painter.setPen(QPen(QColor("white"), 2))  # biar garis centang lebih jelas
+                # centang putih (buat sedikit lebih tebal/proporsional)
+                painter.setPen(QPen(QColor("white"), 2))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawLine(rect.left() + 4, rect.center().y(),
-                                 rect.center().x(), rect.bottom() - 4)
-                painter.drawLine(rect.center().x(), rect.bottom() - 4,
-                                 rect.right() - 4, rect.top() + 4)
+                painter.drawLine(rect.left() + 3, rect.center().y(),
+                                rect.center().x() - 1, rect.bottom() - 4)
+                painter.drawLine(rect.center().x() - 1, rect.bottom() - 4,
+                                rect.right() - 3, rect.top() + 3)
             else:
                 if self.theme == "dark":
-                    # dark mode → transparan + border putih tipis
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.setPen(QPen(QColor("white"), 1))
                     painter.drawRoundedRect(rect, 4, 4)
                 else:
-                    # light mode → abu-abu dengan border tipis
                     painter.setBrush(QColor("#e0e0e0"))
                     painter.setPen(QPen(QColor("#555"), 1))
                     painter.drawRoundedRect(rect, 4, 4)
@@ -405,8 +409,17 @@ class CheckboxDelegate(QStyledItemDelegate):
             return False
 
         if event.type() == event.Type.MouseButtonRelease:
-            current = index.data(Qt.ItemDataRole.CheckStateRole)
-            new_state = Qt.CheckState.Unchecked if current == Qt.CheckState.Checked else Qt.CheckState.Checked
+            raw = index.data(Qt.ItemDataRole.CheckStateRole)
+            try:
+                current = Qt.CheckState(raw)
+            except Exception:
+                current = Qt.CheckState.Unchecked
+
+            new_state = (Qt.CheckState.Unchecked if current == Qt.CheckState.Checked
+                        else Qt.CheckState.Checked)
+
+            # ❌ was: model.setData(index, int(new_state), Qt.ItemDataRole.CheckStateRole)
+            # ✅ kirim enum langsung
             model.setData(index, new_state, Qt.ItemDataRole.CheckStateRole)
             return True
         return False
@@ -811,315 +824,92 @@ class FilterSidebar(QWidget):
             "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else ""
         }
     
-    def apply_theme(self, mode):
-        """Apply theme to FilterSidebar"""
+    def apply_theme(self, mode: str):
+        """Hanya styling FilterSidebar. Jangan sentuh objek milik MainWindow."""
         if mode == "dark":
             self.setStyleSheet("""
-                QWidget {
-                    font-family: 'Segoe UI', 'Calibri';
-                    font-size: 9px;
-                    background: #1e1e1e;
-                    color: #d4d4d4;
-                }
-                QScrollArea {
-                    border: none;
-                    background: #1e1e1e;
-                }
-                QScrollBar:vertical {
-                    border: none;
-                    background: #3e3e42;
-                    width: 6px;
-                    margin: 0px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #666666;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #888888;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    border: none;
-                    background: none;
-                    height: 0px;
-                }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
-                }
+                QWidget { font-family: 'Segoe UI','Calibri'; font-size: 9px; background: #1e1e1e; color: #d4d4d4; }
+                QScrollArea { border: none; background: #1e1e1e; }
+                QScrollBar:vertical { border: none; background: #3e3e42; width: 6px; margin: 0; }
+                QScrollBar::handle:vertical { background: #666; border-radius: 3px; min-height: 20px; }
+                QScrollBar::handle:vertical:hover { background: #888; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0; }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
                 QLineEdit, QComboBox {
-                    padding: 6px 8px;
-                    border: 1px solid #555;
-                    border-radius: 3px;
-                    background: #2d2d30;
-                    min-height: 20px;
-                    color: #d4d4d4;
-                    font-size: 9px;
+                    padding: 6px 8px; border: 1px solid #555; border-radius: 3px;
+                    background: #2d2d30; min-height: 20px; color: #d4d4d4; font-size: 9px;
                 }
-                QLineEdit:focus, QComboBox:focus {
-                    border: 1px solid #ff9800;
-                    outline: none;
-                }
-                QLineEdit::placeholder {
-                    color: #888;
-                }
-                QLabel {
-                    font-weight: normal;
-                    color: #d4d4d4;
-                    padding: 1px;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QLineEdit:focus, QComboBox:focus { border: 1px solid #ff9800; outline: none; }
+                QLineEdit::placeholder { color: #888; }
+
+                QLabel { color: #d4d4d4; padding: 1px; background: transparent; font-size: 9px; }
+
                 QPushButton {
-                    padding: 8px 20px;
-                    border: none;
-                    border-radius: 3px;
-                    font-weight: bold;
-                    min-width: 70px;
-                    font-size: 10px;
-                    color: white;
+                    padding: 8px 20px; border: none; border-radius: 3px; font-weight: bold;
+                    min-width: 70px; font-size: 10px; color: white; background: #ff9800;
                 }
-                QPushButton#resetBtn {
-                    background: #ff9800;
-                }
-                QPushButton#filterBtn {
-                    background: #ff9800;
-                }
-                QPushButton#resetBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton#filterBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton:pressed {
-                    background: #f57c00;
-                }
-                QCheckBox {
-                    padding: 2px;
-                    spacing: 4px;
-                    color: #d4d4d4;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QPushButton:hover { background: #fb8c00; }
+                QPushButton:pressed { background: #f57c00; }
+
+                QCheckBox { padding: 2px; spacing: 4px; color: #d4d4d4; background: transparent; font-size: 9px; }
                 QCheckBox::indicator {
-                    width: 14px;
-                    height: 14px;
-                    border: 2px solid #555;
-                    border-radius: 2px;
-                    background: #2d2d30;
+                    width: 14px; height: 14px; border: 2px solid #555; border-radius: 2px; background: #2d2d30;
                 }
-                QCheckBox::indicator:checked {
-                    background: #2d2d30;
-                    border-color: #ff9800;
-                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #777;
-                }
-                QRadioButton {
-                    spacing: 4px;
-                    padding: 2px;
-                    color: #d4d4d4;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QCheckBox::indicator:checked { border-color: #ff9800; }
+
+                QRadioButton { spacing: 4px; padding: 2px; color: #d4d4d4; background: transparent; font-size: 9px; }
                 QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #555;
-                    border-radius: 7px;
-                    background: #2d2d30;
+                    width: 12px; height: 12px; border: 2px solid #555; border-radius: 7px; background: #2d2d30;
                 }
-                QRadioButton::indicator:checked {
-                    background: #ff9800;
-                    border-color: #ff9800;
-                }
-                QRadioButton::indicator:hover {
-                    border-color: #777;
-                }
-                QSlider::groove:horizontal {
-                    border: none;
-                    height: 3px;
-                    background: #555;
-                    margin: 0px;
-                    border-radius: 2px;
-                }
+                QRadioButton::indicator:checked { background: #ff9800; border-color: #ff9800; }
+
+                QSlider::groove:horizontal { border: none; height: 3px; background: #555; margin: 0; border-radius: 2px; }
                 QSlider::handle:horizontal {
-                    background: #ff9800;
-                    border: 2px solid #2d2d30;
-                    width: 14px;
-                    height: 14px;
-                    margin: -6px 0;
-                    border-radius: 8px;
-                }
-                QSlider::handle:horizontal:hover {
-                    background: #fb8c00;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 6px;
-                    width: 16px;
-                }
-                QComboBox:hover {
-                    border: 1px solid #ff9800;
-                }
-                QFrame[frameShape="4"] {
-                    color: #555;
-                    background-color: #555;
+                    background: #ff9800; border: 2px solid #2d2d30; width: 14px; height: 14px; margin: -6px 0; border-radius: 8px;
                 }
             """)
-        else:  # light theme
+        else:
             self.setStyleSheet("""
-                QWidget {
-                    font-family: 'Segoe UI', 'Calibri';
-                    font-size: 9px;
-                    background: white;
-                }
-                QScrollArea {
-                    border: none;
-                    background: white;
-                }
-                QScrollBar:vertical {
-                    border: none;
-                    background: #f0f0f0;
-                    width: 6px;
-                    margin: 0px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #cccccc;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #aaaaaa;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    border: none;
-                    background: none;
-                    height: 0px;
-                }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
-                }
+                QWidget { font-family: 'Segoe UI','Calibri'; font-size: 9px; background: white; color: #333; }
+                QScrollArea { border: none; background: white; }
+                QScrollBar:vertical { border: none; background: #f0f0f0; width: 6px; margin: 0; }
+                QScrollBar::handle:vertical { background: #ccc; border-radius: 3px; min-height: 20px; }
+                QScrollBar::handle:vertical:hover { background: #aaa; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0; }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
                 QLineEdit, QComboBox {
-                    padding: 6px 8px;
-                    border: 1px solid #ddd;
-                    border-radius: 3px;
-                    background: white;
-                    min-height: 20px;
-                    color: #333;
-                    font-size: 9px;
+                    padding: 6px 8px; border: 1px solid #ddd; border-radius: 3px;
+                    background: white; min-height: 20px; color: #333; font-size: 9px;
                 }
-                QLineEdit:focus, QComboBox:focus {
-                    border: 1px solid #4CAF50;
-                    outline: none;
-                }
-                QLineEdit::placeholder {
-                    color: #999;
-                }
-                QLabel {
-                    font-weight: normal;
-                    color: #666;
-                    padding: 1px;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QLineEdit:focus, QComboBox:focus { border: 1px solid #4CAF50; outline: none; }
+                QLineEdit::placeholder { color: #999; }
+
+                QLabel { color: #666; padding: 1px; background: transparent; font-size: 9px; }
+
                 QPushButton {
-                    padding: 8px 20px;
-                    border: none;
-                    border-radius: 3px;
-                    font-weight: bold;
-                    min-width: 70px;
-                    font-size: 10px;
-                    color: white;
+                    padding: 8px 20px; border: none; border-radius: 3px; font-weight: bold;
+                    min-width: 70px; font-size: 10px; color: white; background: #ff9800;
                 }
-                QPushButton#resetBtn {
-                    background: #ff9800;
-                }
-                QPushButton#filterBtn {
-                    background: #ff9800;
-                }
-                QPushButton#resetBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton#filterBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton:pressed {
-                    background: #f57c00;
-                }
-                QCheckBox {
-                    padding: 2px;
-                    spacing: 4px;
-                    color: #333;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QPushButton:hover { background: #fb8c00; }
+                QPushButton:pressed { background: #f57c00; }
+
+                QCheckBox { padding: 2px; spacing: 4px; color: #333; background: transparent; font-size: 9px; }
                 QCheckBox::indicator {
-                    width: 14px;
-                    height: 14px;
-                    border: 2px solid #ddd;
-                    border-radius: 2px;
-                    background: white;
+                    width: 14px; height: 14px; border: 2px solid #ddd; border-radius: 2px; background: white;
                 }
-                QCheckBox::indicator:checked {
-                    background: white;
-                    border-color: #4CAF50;
-                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #aaa;
-                }
-                QRadioButton {
-                    spacing: 4px;
-                    padding: 2px;
-                    color: #333;
-                    background: transparent;
-                    font-size: 9px;
-                }
+                QCheckBox::indicator:checked { border-color: #4CAF50; }
+
+                QRadioButton { spacing: 4px; padding: 2px; color: #333; background: transparent; font-size: 9px; }
                 QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #ddd;
-                    border-radius: 7px;
-                    background: white;
+                    width: 12px; height: 12px; border: 2px solid #ddd; border-radius: 7px; background: white;
                 }
-                QRadioButton::indicator:checked {
-                    background: #2196F3;
-                    border-color: #2196F3;
-                }
-                QRadioButton::indicator:hover {
-                    border-color: #aaa;
-                }
-                QSlider::groove:horizontal {
-                    border: none;
-                    height: 3px;
-                    background: #e0e0e0;
-                    margin: 0px;
-                    border-radius: 2px;
-                }
+                QRadioButton::indicator:checked { background: #2196F3; border-color: #2196F3; }
+
+                QSlider::groove:horizontal { border: none; height: 3px; background: #e0e0e0; margin: 0; border-radius: 2px; }
                 QSlider::handle:horizontal {
-                    background: #2196F3;
-                    border: 2px solid white;
-                    width: 14px;
-                    height: 14px;
-                    margin: -6px 0;
-                    border-radius: 8px;
-                }
-                QSlider::handle:horizontal:hover {
-                    background: #1976D2;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 6px;
-                    width: 16px;
-                }
-                QComboBox:hover {
-                    border: 1px solid #ff9800;
-                }
-                QFrame[frameShape="4"] {
-                    color: #e0e0e0;
-                    background-color: #e0e0e0;
+                    background: #2196F3; border: 2px solid white; width: 14px; height: 14px; margin: -6px 0; border-radius: 8px;
                 }
             """)
 
@@ -1220,7 +1010,8 @@ class MainWindow(QMainWindow):
         self.table.setShowGrid(True)
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.horizontalHeader().setFixedHeight(24)
-        self.checkbox_delegate = CheckboxDelegate("dark")  # default dark
+        mode = self.load_theme()
+        self.checkbox_delegate = CheckboxDelegate("dark" if mode == "dark" else "light", self.table)
         self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
@@ -1252,24 +1043,21 @@ class MainWindow(QMainWindow):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        
+        # Flag & koneksi sinkronisasi checkbox baris -> header
+        self._header_bulk_toggling = False
+        try:
+            self.table.itemChanged.disconnect(self._on_row_checkbox_changed_for_header_sync)
+        except Exception:
+            pass
+        self.table.itemChanged.connect(self._on_row_checkbox_changed_for_header_sync)
 
         # === Auto resize kolom sesuai isi, tapi tetap bisa manual resize ===
         # === Header dan sorting klik ===
-        header = self.table.horizontalHeader()
-        try:
-            header.sectionClicked.disconnect()  # pastikan tidak dobel koneksi
-        except Exception:
-            pass
-        header.sectionClicked.connect(self.header_clicked)
-
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.connect_header_events()
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(0, 30)
-        header.setStretchLastSection(True)
-
-        # ✅ Tambahkan di sini:
-        self.connect_header_events()   # memastikan event klik header LastUpdate aktif
-
+        self.table.horizontalHeader().setStretchLastSection(True)
+        QTimer.singleShot(0, self.init_header_checkbox)
 
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
@@ -1475,6 +1263,17 @@ class MainWindow(QMainWindow):
 
         atexit.register(self._encrypt_and_cleanup)
 
+    # --- Batch flags & stats (aman dari AttributeError) ---
+        self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
+        self._in_batch_mode = False
+        self._warning_shown_in_batch = {}
+
+    def _on_row_checkbox_changed_for_header_sync(self, item):
+        # Hanya respons kalau kolom checkbox (kolom 0) yang berubah
+        if item and item.column() == 0 and not getattr(self, "_header_bulk_toggling", False):
+            QTimer.singleShot(0, self.sync_header_checkbox_state)
+
+
     def show_setting_dialog(self):
         dlg = SettingDialog(self, self.db_name)
         if dlg.exec():
@@ -1482,34 +1281,45 @@ class MainWindow(QMainWindow):
             self.auto_fit_columns()
     
     def toggle_filter_sidebar(self):
-        """Toggle the filter sidebar visibility"""
         if self.filter_dock is None:
-            # Create filter sidebar and dock widget
             self.filter_sidebar = FilterSidebar(self)
             self.filter_dock = QDockWidget("Filter", self)
             self.filter_dock.setWidget(self.filter_sidebar)
             self.filter_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
             self.filter_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
-            
-            # Apply current theme to filter sidebar
+
+            # Terapkan tema
             current_theme = self.load_theme()
             self.filter_sidebar.apply_theme(current_theme)
-            
-            # Connect filter button in sidebar to apply filters
-            self.filter_sidebar.btn_filter.clicked.connect(self.apply_filters)
-            
-            # Connect reset button to clear filters
-            self.filter_sidebar.btn_reset.clicked.connect(self.clear_filters)
-            
-            # Add to main window
+
+            # Tambahkan ke main window
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
-            
-            # Set initial size
+
+            # >>> PASANG DROP SHADOW DI SINI <<<
+            eff = QGraphicsDropShadowEffect(self.filter_dock)
+            eff.setBlurRadius(18)
+            eff.setOffset(0, 4)
+            eff.setColor(QColor(0, 0, 0, 140))
+            self.filter_dock.setGraphicsEffect(eff)
+
+            # Opsi: ukuran awal
             self.filter_dock.setMinimumWidth(300)
             self.filter_dock.setMaximumWidth(400)
-        
-        # Toggle visibility
-        self.filter_dock.setVisible(not self.filter_dock.isVisible())
+
+            # Koneksi tombol sidebar
+            self.filter_sidebar.btn_filter.clicked.connect(self.apply_filters)
+            self.filter_sidebar.btn_reset.clicked.connect(self.clear_filters)
+
+        # Sinkron tema & header checkbox tiap toggle (opsional)
+        current_theme = self.load_theme()
+        self.table.viewport().update()
+        QTimer.singleShot(0, self.position_header_checkbox)
+
+        # Toggle tampil/sembunyi
+        if self.filter_dock.isVisible():
+            self.filter_dock.hide()
+        else:
+            self.filter_dock.show()
     
     def apply_filters(self):
         """Apply filters from the filter sidebar"""
@@ -1836,6 +1646,11 @@ class MainWindow(QMainWindow):
         # ✅ Simpan pilihan ke DB
         self.save_theme(mode)
         self.show_page(self.current_page)
+
+        # update checkbox delegate & posisi checkbox header
+        self.checkbox_delegate.setTheme("dark" if mode == "dark" else "light")
+        self.table.viewport().update()
+        QTimer.singleShot(0, self.position_header_checkbox)
         
     def auto_fit_columns(self):
         header = self.table.horizontalHeader()
@@ -1855,6 +1670,123 @@ class MainWindow(QMainWindow):
         # Jangan stretch kolom terakhir, tapi stretch kolom tertentu saja
         header.setStretchLastSection(False)
         header.setSectionResizeMode(self.table.columnCount()-1, QHeaderView.ResizeMode.Interactive)
+
+    # === Checkbox di Header Kolom Pertama (Select All) ===
+    def init_header_checkbox(self):
+        header = self.table.horizontalHeader()
+        self.header_checkbox = QCheckBox(header)
+        self.header_checkbox.setToolTip("Centang semua / batalkan semua")
+        self.header_checkbox.setTristate(False)
+        self.header_checkbox.setChecked(False)
+
+        # Tema
+        theme = self.load_theme()
+        if theme == "dark":
+            self.header_checkbox.setStyleSheet("""
+                QCheckBox::indicator {
+                    width: 12px; height: 12px;
+                    border: 2px solid #ff9900;
+                    border-radius: 4px;
+                    background: #1e1e1e;
+                }
+                QCheckBox::indicator:checked { background-color: #ff9900; }
+            """)
+        else:
+            self.header_checkbox.setStyleSheet("""
+                QCheckBox::indicator {
+                    width: 12px; height: 12px;
+                    border: 2px solid #555;
+                    border-radius: 4px;
+                    background: white;
+                }
+                QCheckBox::indicator:checked { background-color: #ff9900; }
+            """)
+
+        # 🔗 Sinyal
+        self.header_checkbox.pressed.connect(self._on_header_checkbox_pressed)  # ⬅️ TAMBAH INI
+        self.header_checkbox.stateChanged.connect(self.toggle_all_rows_checkboxes)
+
+        # Reposisi bila header berubah
+        header.sectionResized.connect(self.position_header_checkbox)
+        header.sectionMoved.connect(self.position_header_checkbox)
+        header.geometriesChanged.connect(self.position_header_checkbox)
+        QTimer.singleShot(0, self.position_header_checkbox)
+
+    def _on_header_checkbox_pressed(self):
+        st = self.header_checkbox.checkState()
+        if st == Qt.CheckState.PartiallyChecked:
+            # Jangan timpa sinyal berikutnya—cukup set langsung ke Checked.
+            self.header_checkbox.setCheckState(Qt.CheckState.Checked)
+            # Catatan: setCheckState di atas akan memicu stateChanged → toggle_all_rows_checkboxes()
+
+    def position_header_checkbox(self):
+        """Posisikan checkbox tepat di header kolom 0."""
+        header = self.table.horizontalHeader()
+        col = 0
+        x = header.sectionViewportPosition(col)
+        w = header.sectionSize(col)
+        y = (header.height() - 16) // 2
+        self.header_checkbox.setGeometry(x + (w - 16)//2, y, 16, 16)
+        self.header_checkbox.raise_()
+        self.header_checkbox.show()
+
+
+    def toggle_all_rows_checkboxes(self, state):
+        """Centang / hapus centang semua baris YANG TAMPIL (halaman aktif)."""
+        # Pastikan tipe enum
+        try:
+            state = Qt.CheckState(state)
+        except Exception:
+            return
+
+        # 🟠 KUNCI: anggap PartiallyChecked sebagai Checked (Select All)
+        if state == Qt.CheckState.PartiallyChecked:
+            state = Qt.CheckState.Checked
+
+        if state not in (Qt.CheckState.Checked, Qt.CheckState.Unchecked):
+            return
+
+        checked = (state == Qt.CheckState.Checked)
+
+        # Hindari loop sinyal
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):    # hanya baris yang tampil (halaman aktif)
+            it = self.table.item(r, 0)
+            if it is None:
+                it = QTableWidgetItem()
+                it.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(r, 0, it)
+            it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        self.table.blockSignals(False)
+
+        self.table.viewport().update()
+        self.update_statusbar()
+        QTimer.singleShot(0, self.sync_header_checkbox_state)
+
+
+    def sync_header_checkbox_state(self):
+        """Selaraskan status header dengan baris yang sedang terlihat."""
+        total = self.table.rowCount()
+        if total == 0:
+            self.header_checkbox.blockSignals(True)
+            self.header_checkbox.setCheckState(Qt.CheckState.Unchecked)
+            self.header_checkbox.blockSignals(False)
+            return
+
+        checked_cnt = 0
+        for r in range(total):
+            it = self.table.item(r, 0)
+            if it and it.checkState() == Qt.CheckState.Checked:
+                checked_cnt += 1
+
+        self.header_checkbox.blockSignals(True)
+        if checked_cnt == 0:
+            self.header_checkbox.setCheckState(Qt.CheckState.Unchecked)
+        elif checked_cnt == total:
+            self.header_checkbox.setCheckState(Qt.CheckState.Checked)
+        else:
+            self.header_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+        self.header_checkbox.blockSignals(False)
 
     # Memunculkan menu klik kanan
     def show_context_menu(self, pos):
@@ -1890,25 +1822,57 @@ class MainWindow(QMainWindow):
 
         # --- Buat Context Menu
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #2d2d30;
-                color: white;
-                border: 1px solid #444;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 28px;
-                border-radius: 4px;
-                font-family: 'Segoe UI';
-                font-size: 10.5pt;
-            }
-            QMenu::item:selected {
-                background-color: #ff9900;
-                color: black;
-            }
-        """)
+        # Deteksi tema aktif dari palet global
+        palette = QApplication.instance().palette()
+        bg_color = palette.color(QPalette.ColorRole.Window)
+        brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
+        is_dark = brightness < 128  # kalau gelap → tema dark
+        self.style_menu(menu, "dark" if is_dark else "light")
+        # (alternatif, lebih konsisten dengan app)
+        # self.style_menu(menu, self.load_theme())
+
+        if is_dark:
+            # 🌙 Tema Dark
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #2d2d30;
+                    color: white;
+                    border: 1px solid #444;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+                QMenu::item {
+                    padding: 6px 28px;
+                    border-radius: 5px;
+                    font-family: 'Segoe UI';
+                    font-size: 10.5pt;
+                }
+                QMenu::item:selected {
+                    background-color: #ff9900;
+                    color: black;
+                }
+            """)
+        else:
+            # ☀️ Tema Light
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #f0eeee;
+                    color: #000000;
+                    border: 2px solid #000000;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+                QMenu::item {
+                    padding: 6px 28px;
+                    border-radius: 5px;
+                    font-family: 'Segoe UI';
+                    font-size: 10.5pt;
+                }
+                QMenu::item:selected {
+                    background-color: #ffcc66;   /* hover kuning lembut */
+                    color: #000000;
+                }
+            """)
 
         actions = [
             ("✏️ Lookup", lambda: self._context_action_wrapper(checked_rows, self.lookup_pemilih)),
@@ -1953,6 +1917,14 @@ class MainWindow(QMainWindow):
         if isinstance(rows, int):
             rows = [rows]
 
+        # 🔒 Guard: pastikan atribut ada (hindari AttributeError)
+        if not hasattr(self, "_batch_stats"):
+            self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
+        if not hasattr(self, "_warning_shown_in_batch"):
+            self._warning_shown_in_batch = {}
+        if not hasattr(self, "_in_batch_mode"):
+            self._in_batch_mode = False
+
         is_batch = len(rows) > 1
 
         # --- Jika batch, minta konfirmasi dulu
@@ -1966,33 +1938,36 @@ class MainWindow(QMainWindow):
                 self._clear_row_selection(rows)
                 return
 
-            # Aktifkan mode batch & reset flags
+            # Aktifkan mode batch & reset flags+stats
             self._in_batch_mode = True
-            self._warning_shown_in_batch = {}   # simpan per-fungsi
-            self._batch_reset_stats()           # 🔥 reset statistik
+            self._warning_shown_in_batch = {}
+            self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
 
-        # --- Jalankan fungsi untuk setiap baris
+        # --- Jalankan fungsi untuk setiap baris (fungsi akan _batch_add sendiri)
         for r in rows:
-            func(r)  # fungsi akan mengisi _batch_stats sendiri
+            func(r)
 
         # --- Selesai, tampilkan ringkasan & reset flag
         if is_batch:
-            ok = self._batch_stats.get("ok", 0)
-            rej = self._batch_stats.get("rejected", 0)
-            skp = self._batch_stats.get("skipped", 0)
+            stats = getattr(self, "_batch_stats", {"ok": 0, "rejected": 0, "skipped": 0})
+            ok = stats.get("ok", 0)
+            rej = stats.get("rejected", 0)
 
+            # reset mode & flags
             self._in_batch_mode = False
             self._warning_shown_in_batch = {}
-            self._batch_reset_stats()
+            self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
 
-            # Ringkasan batch yang jelas
-            html = (
-                f"<b>Selesai memproses {len(rows)} data.</b><br>"
-                f"✔️ Berhasil: <b>{ok}</b><br>"
-                f"⛔ Ditolak: <b>{rej}</b><br>"
-                f"⏭️ Dilewati: <b>{skp}</b>"
-            )
-            show_modern_info(self, "Ringkasan", html)
+            # 🔹 Tampilkan hanya yang > 0 dan hanya OK/Rejected
+            lines = [f"<b>Selesai memproses {len(rows)} data.</b><br>"]
+            if ok > 0:
+                lines.append(f"✔️ Berhasil: <b>{ok}</b><br>")
+            if rej > 0:
+                lines.append(f"⛔ Ditolak: <b>{rej}</b><br>")
+            if ok == 0 and rej == 0:
+                lines.append("<i>Tidak ada data yang berhasil atau ditolak.</i>")
+
+            show_modern_info(self, "Ringkasan", "".join(lines))
 
         QTimer.singleShot(150, lambda: self._clear_row_selection(rows))
 
@@ -2072,6 +2047,7 @@ class MainWindow(QMainWindow):
             show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
         self._batch_add("ok", "aktifkan_pemilih")
+
     # =========================================================
     # 🔹 2. HAPUS PEMILIH
     # =========================================================
@@ -2168,31 +2144,46 @@ class MainWindow(QMainWindow):
         nama_item = self.table.item(row, self.col_index("NAMA"))
         nama = nama_item.text().strip() if nama_item else ""
 
+        # ⚠️ Validasi: DPID harus valid (bukan kosong/0)
         if not dpid_item or dpid_item.text().strip() in ("", "0"):
-            show_modern_warning(self, "Ditolak", "Data Pemilih Baru tidak bisa di TMS-kan.")
+            if getattr(self, "_in_batch_mode", False):
+                if not self._warning_shown_in_batch.get("set_ket_status", False):
+                    show_modern_warning(self, "Ditolak", "Data Pemilih Baru tidak bisa di-TMS-kan.")
+                    self._warning_shown_in_batch["set_ket_status"] = True
+            else:
+                show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Baru dan tidak bisa di-TMS-kan.")
+            self._batch_add("rejected", f"set_ket_status_{label}")
             return
 
-        # ubah nilai di tabel dan database
+        # (Opsional) hindari double-set kalau sudah sama
         ket_item = self.table.item(row, self.col_index("KET"))
+        if ket_item and ket_item.text().strip() == new_value:
+            # anggap tidak berubah → tidak menambah OK
+            # kalau mau hitung sebagai 'rejected', tinggal uncomment baris di bawah:
+            # self._batch_add("rejected", f"set_ket_status_{label}")
+            return
+
+        # ✅ Update nilai di tabel & DB
         if ket_item:
             ket_item.setText(new_value)
             self.update_database_field(row, "KET", new_value)
 
-        # sinkronkan memori
         gi = self._global_index(row)
         if 0 <= gi < len(self.all_data):
             self.all_data[gi]["KET"] = new_value
 
-        # ubah warna teks menjadi merah
+        # 🎨 Warnai merah
         for c in range(self.table.columnCount()):
             it = self.table.item(row, c)
             if it:
                 it.setForeground(QColor("red"))
 
-        # ✅ Hanya tampilkan popup tunggal jika bukan mode batch
+        # 🧾 Tambahkan statistik OK
+        self._batch_add("ok", f"set_ket_status_{label}")
+
+        # Popup hanya jika bukan batch
         if not getattr(self, "_in_batch_mode", False):
             show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
-
 
     # =========================================================
     # 🔹 4. Fungsi status cepat (delegasi ke helper di atas)
@@ -2244,6 +2235,14 @@ class MainWindow(QMainWindow):
             conn.close()
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
+
+
+    def apply_shadow(self, widget, blur=24, dx=0, dy=6, rgba=(0,0,0,180)):
+        eff = QGraphicsDropShadowEffect(widget)
+        eff.setBlurRadius(blur)
+        eff.setOffset(dx, dy)
+        eff.setColor(QColor(*rgba))
+        widget.setGraphicsEffect(eff)
 
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
@@ -2711,7 +2710,7 @@ class MainWindow(QMainWindow):
             # ✅ Kolom pertama: checkbox
             chk_item = QTableWidgetItem()
             chk_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            chk_item.setData(Qt.ItemDataRole.CheckStateRole, Qt.CheckState.Unchecked)
+            chk_item.setCheckState(Qt.CheckState.Unchecked)
             chk_item.setText("")
             self.table.setItem(i, 0, chk_item)
 
@@ -2786,6 +2785,7 @@ class MainWindow(QMainWindow):
 
         # Jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
+        QTimer.singleShot(0, self.sync_header_checkbox_state)
         
     # =================================================
     # Pagination UI
@@ -2850,6 +2850,95 @@ class MainWindow(QMainWindow):
         next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
                                          checked=False, enabled=(self.current_page < self.total_pages))
         self.pagination_layout.addWidget(next_btn)
+
+    def lookup_pemilih(self, row):
+        """Lookup cepat berdasarkan baris terpilih (stub aman, tidak crash)."""
+        try:
+            # Ambil beberapa kolom penting
+            idx_nik  = self.col_index("NIK")
+            idx_nama = self.col_index("NAMA")
+            idx_dpid = self.col_index("DPID")
+
+            nik  = self.table.item(row, idx_nik).text()  if idx_nik  != -1 and self.table.item(row, idx_nik)  else ""
+            nama = self.table.item(row, idx_nama).text() if idx_nama != -1 and self.table.item(row, idx_nama) else ""
+            dpid = self.table.item(row, idx_dpid).text() if idx_dpid != -1 and self.table.item(row, idx_dpid) else ""
+
+            # Tampilkan info sederhana dulu (anti-crash)
+            show_modern_info(self, "Lookup",
+                            f"NIK: {nik}<br>Nama: {nama}<br>DPID: {dpid}<br><br>(Fungsi lookup belum diimplementasikan.)")
+            return True
+        except Exception as e:
+            show_modern_error(self, "Lookup Gagal", f"Gagal melakukan lookup:<br>{e}")
+            return False
+        
+    def style_menu(self, menu: QMenu, theme: str):
+        if theme == "dark":
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #121212;
+                    border: 1px solid #333;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background: #2a2a2a;
+                    margin: 6px 8px;
+                }
+                QMenu::item {
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    color: #eaeaea;
+                    background: transparent;
+                }
+                QMenu::item:selected {
+                    background: #ff9900;
+                    color: #000;
+                }
+                QMenu::item:disabled {
+                    color: #777;
+                    background: transparent;
+                }
+                QMenu::icon { padding-left: 6px; }
+            """)
+            shadow_color = QColor(0, 0, 0, 200)
+        else:
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #ffffff;
+                    border: 1px solid #000;
+                    border-radius: 8px;
+                    padding: 6px;
+                }
+                QMenu::separator {
+                    height: 1px;
+                    background: #e5e5e5;
+                    margin: 6px 8px;
+                }
+                QMenu::item {
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    color: #111;
+                    background: transparent;
+                }
+                QMenu::item:selected {
+                    background: #ff9900;
+                    color: #000;
+                }
+                QMenu::item:disabled {
+                    color: #9a9a9a;
+                    background: transparent;
+                }
+                QMenu::icon { padding-left: 6px; }
+            """)
+            shadow_color = QColor(0, 0, 0, 140)
+
+        eff = QGraphicsDropShadowEffect(menu)
+        eff.setBlurRadius(24)
+        eff.setOffset(0, 6)
+        eff.setColor(shadow_color)
+        menu.setGraphicsEffect(eff)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
 # =====================================================
 # Login Window (dengan tambahan pilihan Tahapan)
