@@ -1863,33 +1863,32 @@ class MainWindow(QMainWindow):
             return
 
         row = index.row()
-
-        # 🔸 Hapus semua seleksi & hilangkan semua ceklis terlebih dulu
-        for r in range(self.table.rowCount()):
-            self.table.setRangeSelected(
-                QTableWidgetSelectionRange(r, 0, r, self.table.columnCount() - 1),
-                False
-            )
-            item = self.table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.CheckState.Unchecked)
-
-        # 🔹 Pilih baris yang diklik kanan
-        self.table.clearSelection()
-        self.table.selectRow(row)
-
-        # 🔹 Pastikan baris punya checkbox dan beri tanda centang
         chk_item = self.table.item(row, 0)
-        if chk_item is None:
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            self.table.setItem(row, 0, chk_item)
 
-        chk_item.setCheckState(Qt.CheckState.Checked)
-        self.table.viewport().update()  # 🔹 refresh tampilan agar centang langsung terlihat
+        # --- Ambil semua baris yang sudah dicentang
+        checked_rows = [
+            r for r in range(self.table.rowCount())
+            if self.table.item(r, 0)
+            and self.table.item(r, 0).checkState() == Qt.CheckState.Checked
+        ]
+
+        # --- Jika belum ada checkbox tercentang → anggap klik kanan tunggal
+        if not checked_rows:
+            for r in range(self.table.rowCount()):
+                item = self.table.item(r, 0)
+                if item:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+            if not chk_item:
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(row, 0, chk_item)
+            chk_item.setCheckState(Qt.CheckState.Checked)
+            checked_rows = [row]
+
+        self.table.viewport().update()
         self.update_statusbar()
 
-        # === Context Menu ===
+        # --- Buat Context Menu
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
@@ -1912,47 +1911,85 @@ class MainWindow(QMainWindow):
         """)
 
         actions = [
-            ("✏️ Lookup", lambda: self._context_action_wrapper(row, self.lookup_pemilih)),
-            ("🔁 Aktifkan Pemilih", lambda: self._context_action_wrapper(row, self.aktifkan_pemilih)),
-            ("🔥 Hapus", lambda: self._context_action_wrapper(row, self.hapus_pemilih)),
-            ("🚫 Meninggal", lambda: self._context_action_wrapper(row, self.meninggal_pemilih)),
-            ("⚠️ Ganda", lambda: self._context_action_wrapper(row, self.ganda_pemilih)),
-            ("🧒 Di Bawah Umur", lambda: self._context_action_wrapper(row, self.bawah_umur_pemilih)),
-            ("🏠 Pindah Domisili", lambda: self._context_action_wrapper(row, self.pindah_domisili)),
-            ("🌍 WNA", lambda: self._context_action_wrapper(row, self.wna_pemilih)),
-            ("🪖 TNI", lambda: self._context_action_wrapper(row, self.tni_pemilih)),
-            ("👮‍♂️ Polri", lambda: self._context_action_wrapper(row, self.polri_pemilih)),
-            ("📍 Salah TPS", lambda: self._context_action_wrapper(row, self.salah_tps)),
+            ("✏️ Lookup", lambda: self._context_action_wrapper(checked_rows, self.lookup_pemilih)),
+            ("🔁 Aktifkan Pemilih", lambda: self._context_action_wrapper(checked_rows, self.aktifkan_pemilih)),
+            ("🔥 Hapus", lambda: self._context_action_wrapper(checked_rows, self.hapus_pemilih)),
+            ("🚫 Meninggal", lambda: self._context_action_wrapper(checked_rows, self.meninggal_pemilih)),
+            ("⚠️ Ganda", lambda: self._context_action_wrapper(checked_rows, self.ganda_pemilih)),
+            ("🧒 Di Bawah Umur", lambda: self._context_action_wrapper(checked_rows, self.bawah_umur_pemilih)),
+            ("🏠 Pindah Domisili", lambda: self._context_action_wrapper(checked_rows, self.pindah_domisili)),
+            ("🌍 WNA", lambda: self._context_action_wrapper(checked_rows, self.wna_pemilih)),
+            ("🪖 TNI", lambda: self._context_action_wrapper(checked_rows, self.tni_pemilih)),
+            ("👮‍♂️ Polri", lambda: self._context_action_wrapper(checked_rows, self.polri_pemilih)),
+            ("📍 Salah TPS", lambda: self._context_action_wrapper(checked_rows, self.salah_tps)),
         ]
+
         for text, func in actions:
             act = QAction(text, self)
             act.triggered.connect(func)
             menu.addAction(act)
 
-        # Jalankan context menu
+        # --- Jalankan dan tangkap hasil
         chosen_action = menu.exec(self.table.viewport().mapToGlobal(pos))
 
-        # ✅ Jika user klik di luar context menu (tidak memilih apapun)
-        if chosen_action is None:
-            self.table.clearSelection()
+        # ✅ Jika user klik di luar menu → hapus seleksi & ceklis
+        if not chosen_action:
+            self._clear_row_selection(checked_rows)
+
+
+    def _context_action_wrapper(self, rows, func):
+        """Menjalankan fungsi context untuk 1 atau banyak baris dengan konfirmasi batch."""
+        if isinstance(rows, int):
+            rows = [rows]
+
+        is_batch = len(rows) > 1
+
+        # --- Jika batch, minta konfirmasi dulu
+        if is_batch:
+            label_action = func.__name__.replace("_pemilih", "").replace("_", " ").title()
+            if not show_modern_question(
+                self,
+                "Konfirmasi Batch",
+                f"Anda yakin ingin memproses <b>{len(rows)}</b> data sebagai <b>{label_action}</b>?"
+            ):
+                self._clear_row_selection(rows)
+                return
+
+            # Aktifkan mode batch supaya popup per baris dimatikan
+            self._in_batch_mode = True
+
+        # --- Jalankan fungsi untuk setiap baris
+        for r in rows:
+            func(r)
+
+        # --- Selesai, tampilkan ringkasan & reset flag
+        if is_batch:
+            self._in_batch_mode = False
+            show_modern_info(
+                self,
+                "Selesai",
+                f"{len(rows)} data berhasil diproses."
+            )
+
+        # --- Hapus seleksi & centang
+        QTimer.singleShot(150, lambda: self._clear_row_selection(rows))
+
+    def _clear_row_selection(self, rows):
+        """Reset seleksi & ceklis. rows boleh int atau list[int]."""
+        # Normalisasi ke list
+        if isinstance(rows, int):
+            rows = [rows]
+        elif not isinstance(rows, (list, tuple, set)):
+            rows = []
+
+        # Hapus centang di semua baris yang diminta
+        for r in rows:
+            chk_item = self.table.item(r, 0)
             if chk_item:
                 chk_item.setCheckState(Qt.CheckState.Unchecked)
-            self.table.viewport().update()
-            self.update_statusbar()
 
-
-    def _context_action_wrapper(self, row, func):
-        """Menjalankan fungsi context lalu reset seleksi & ceklis"""
-        func(row)
-        QTimer.singleShot(150, lambda: self._clear_row_selection(row))
-
-
-    def _clear_row_selection(self, row):
-        """Hapus seleksi dan ceklis setelah aksi selesai"""
+        # Bersihkan highlight seleksi
         self.table.clearSelection()
-        chk_item = self.table.item(row, 0)
-        if chk_item:
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
         self.table.viewport().update()
         self.update_statusbar()
 
@@ -2009,7 +2046,9 @@ class MainWindow(QMainWindow):
             if it:
                 it.setForeground(warna_normal)
 
-        show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
+        # ✅ Hanya tampilkan popup tunggal jika bukan mode batch
+        if not getattr(self, "_in_batch_mode", False):
+            show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
     # =========================================================
     # 🔹 2. HAPUS PEMILIH
@@ -2088,8 +2127,9 @@ class MainWindow(QMainWindow):
             if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
                 self.current_page -= 1
 
-            self.show_page(self.current_page)
-            show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari Daftar Pemilih!")
+            # ✅ Hanya tampilkan popup tunggal jika bukan mode batch
+            if not getattr(self, "_in_batch_mode", False):
+                show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari Daftar Pemilih!")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
@@ -2124,7 +2164,9 @@ class MainWindow(QMainWindow):
             if it:
                 it.setForeground(QColor("red"))
 
-        show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
+        # ✅ Hanya tampilkan popup tunggal jika bukan mode batch
+        if not getattr(self, "_in_batch_mode", False):
+            show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
 
     # =========================================================
