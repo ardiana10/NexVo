@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
-    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange
+    QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QGridLayout
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
@@ -471,6 +471,159 @@ def get_desa(kecamatan):
     conn.close()
     return data
 
+class DetailPemilihDialog(QDialog):
+    def __init__(self, data, theme="dark", parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.setWindowTitle("Detail Informasi Pemilih")
+        self.resize(1100, 620)
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.MSWindowsFixedSizeDialogHint)
+
+        # 🌗 Tema adaptif
+        if self.theme == "dark":
+            bg_color = "#121212"
+            card_color = "#1e1e1e"
+            text_color = "#f5f5f5"
+            field_bg = "#2b2b2b"
+            border_color = "#555"
+            accent = "#ff9900"
+        else:
+            bg_color = "#ffffff"
+            card_color = "#f9f9f9"
+            text_color = "#222"
+            field_bg = "#ffffff"
+            border_color = "#ccc"
+            accent = "#ff6600"
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg_color};
+                font-family: 'Segoe UI';
+                color: {text_color};
+            }}
+            QLabel {{
+                font-size: 10.5pt;
+                color: {text_color};
+            }}
+            QLineEdit {{
+                border: 1px solid {border_color};
+                border-radius: 5px;
+                padding: 6px 8px;
+                background-color: {field_bg};
+                color: {text_color};
+                font-size: 10pt;
+            }}
+            QPushButton {{
+                background-color: {accent};
+                color: white;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+            }}
+            QPushButton:hover {{
+                background-color: #ffb84d;
+                color: black;
+            }}
+            QFrame {{
+                background-color: {card_color};
+                border-radius: 10px;
+                border: 1px solid {border_color};
+            }}
+        """)
+
+        # ====== Layout utama ======
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+
+        # ====== Header ======
+        title = QLabel(f"📁  <b style='color:{accent}; font-size:13pt;'>Detail Informasi Pemilih</b>")
+        title.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        main_layout.addWidget(title)
+
+        # ====== Card utama ======
+        frame = QFrame()
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(20, 20, 20, 20)
+        frame_layout.setSpacing(15)
+
+        # ====== BAGIAN ATAS (2 baris identitas utama) ======
+        top_grid = QGridLayout()
+        top_grid.setHorizontalSpacing(15)
+        top_grid.setVerticalSpacing(10)
+
+        def add_field(layout, label, key, row, col, span=1):
+            lbl = QLabel(label)
+            txt = QLineEdit(data.get(key, ""))
+            txt.setReadOnly(True)
+            layout.addWidget(lbl, row, col * 2)
+            layout.addWidget(txt, row, col * 2 + 1, 1, span)
+
+        add_field(top_grid, "DPID", "DPID", 0, 0)
+        add_field(top_grid, "KECAMATAN", "KECAMATAN", 0, 1)
+        add_field(top_grid, "KELURAHAN / DESA", "DESA", 0, 2)
+        add_field(top_grid, "TPS", "TPS", 0, 3)
+
+        add_field(top_grid, "Nomor Kartu Keluarga (NKK)", "NKK", 1, 0, 3)
+        add_field(top_grid, "Nomor Induk Kependudukan (NIK)", "NIK", 2, 0, 3)
+        add_field(top_grid, "Nama Lengkap", "NAMA", 3, 0, 3)
+
+        frame_layout.addLayout(top_grid)
+
+        # ====== BAGIAN TENGAH ======
+        middle_grid = QGridLayout()
+        middle_grid.setHorizontalSpacing(15)
+        middle_grid.setVerticalSpacing(10)
+
+        add_field(middle_grid, "Tempat Lahir", "TMPT_LHR", 0, 0)
+        add_field(middle_grid, "Tanggal Lahir", "TGL_LHR", 0, 1)
+        add_field(middle_grid, "Jenis Kelamin (L/P)", "JK", 0, 2)
+        add_field(middle_grid, "Status Kawin (B/S/P)", "STS", 0, 3)
+
+        add_field(middle_grid, "Alamat", "ALAMAT", 1, 0, 3)
+        add_field(middle_grid, "RT", "RT", 2, 0)
+        add_field(middle_grid, "RW", "RW", 2, 1)
+        add_field(middle_grid, "Disabilitas (1-6)", "DIS", 3, 0)
+        add_field(middle_grid, "Status KTP-el (B/S)", "KTPel", 3, 1)
+        add_field(middle_grid, "Sumber Data", "SUMBER", 3, 2)
+        add_field(middle_grid, "Keterangan Ubah (0-8)", "KET", 3, 3)
+
+        frame_layout.addLayout(middle_grid)
+        main_layout.addWidget(frame)
+
+        # ====== Tombol bawah ======
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_edit = QPushButton("Sunting")
+        btn_close = QPushButton("Tutup")
+        btn_edit.setFixedWidth(100)
+        btn_close.setFixedWidth(100)
+
+        btn_edit.clicked.connect(lambda: self.enable_edit_mode(frame, btn_edit))
+        btn_close.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_edit)
+        btn_layout.addWidget(btn_close)
+        main_layout.addLayout(btn_layout)
+
+    def enable_edit_mode(self, frame, btn_edit):
+        edits = frame.findChildren(QLineEdit)
+        for e in edits:
+            e.setReadOnly(False)
+        btn_edit.setText("Simpan")
+        btn_edit.clicked.disconnect()
+        btn_edit.clicked.connect(lambda: self.save_data(edits, btn_edit))
+
+    def save_data(self, edits, btn_edit):
+        for e in edits:
+            e.setReadOnly(True)
+        btn_edit.setText("Sunting")
+        btn_edit.clicked.disconnect()
+        btn_edit.clicked.connect(lambda: self.enable_edit_mode(self.findChild(QFrame), btn_edit))
+
 # =====================================================
 # Dialog Setting Aplikasi
 # =====================================================
@@ -674,6 +827,7 @@ class MainWindow(QMainWindow):
         self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.cellDoubleClicked.connect(self.show_detail_pemilih)
 
         col_widths = {
             " ": 30,
@@ -1463,6 +1617,19 @@ class MainWindow(QMainWindow):
             conn.close()
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
+
+    # =========================================================
+    # 🔹 Tampilkan Detail Pemilih
+    def show_detail_pemilih(self, row, column):
+        """Tampilkan dialog detail informasi pemilih ketika double click di baris manapun."""
+        data = {}
+        for i in range(self.table.columnCount()):
+            header = self.table.horizontalHeaderItem(i).text()
+            item = self.table.item(row, i)
+            data[header] = item.text() if item else ""
+
+        dlg = DetailPemilihDialog(data, self)
+        dlg.exec()
 
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
