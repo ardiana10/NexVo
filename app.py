@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
-    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
@@ -1092,12 +1092,20 @@ class MainWindow(QMainWindow):
         self.pagination_layout.setSpacing(4)
         self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        central_box = QWidget()
-        v = QVBoxLayout(central_box)
+        # --- Halaman Data (tetap hidup selama app jalan)
+        self.data_page = QWidget()
+        v = QVBoxLayout(self.data_page)
         v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(self.table)
         v.addWidget(self.pagination_container)
-        self.setCentralWidget(central_box)
+
+        # --- Stack: penampung semua halaman (Data & Dashboard)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.data_page)         # index 0 = Data
+        self.setCentralWidget(self.stack)
+
+        # Flag posisi halaman
+        self._is_on_dashboard = False
 
         self.table.itemChanged.connect(self.on_item_changed)
 
@@ -1122,10 +1130,14 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("File")
         action_dashboard = QAction("  Dashboard", self)
         action_dashboard.setShortcut("Alt+H")
+        action_dashboard.triggered.connect(self.show_dashboard_page)
         file_menu.addAction(action_dashboard)
+
         action_pemutakhiran = QAction("  Pemutakhiran Data", self)
         action_pemutakhiran.setShortcut("Alt+C")
+        action_pemutakhiran.triggered.connect(self.show_data_page)
         file_menu.addAction(action_pemutakhiran)
+
         action_unggah_reguler = QAction("  Unggah Webgrid TPS Reguler", self)
         action_unggah_reguler.setShortcut("Alt+I")
         file_menu.addAction(action_unggah_reguler)
@@ -1143,16 +1155,45 @@ class MainWindow(QMainWindow):
         file_menu.addAction(action_keluar)
 
         generate_menu = menubar.addMenu("Generate")
+
         view_menu = menubar.addMenu("View")
 
-        # Menambahkan tema Dark & Light
-        action_dark = QAction("  Dark", self, shortcut="Ctrl+D")
-        action_dark.triggered.connect(lambda: self.apply_theme("dark"))
-        view_menu.addAction(action_dark)
+        # ============================================================
+        # 🧭 Tema Dark & Light — dengan style elegan & soft disabled
+        # ============================================================
+        self.action_dark = QAction("  Dark", self, shortcut="Ctrl+D")
+        self.action_light = QAction("  Light", self, shortcut="Ctrl+L")
 
-        action_light = QAction("  Light", self, shortcut="Ctrl+L")
-        action_light.triggered.connect(lambda: self.apply_theme("light"))
-        view_menu.addAction(action_light)
+        # Hubungkan ke fungsi apply_theme
+        self.action_dark.triggered.connect(lambda: self.apply_theme("dark"))
+        self.action_light.triggered.connect(lambda: self.apply_theme("light"))
+
+        view_menu.addAction(self.action_dark)
+        view_menu.addAction(self.action_light)
+
+        # 🎨 Style menu agar efek disabled tampak lembut & modern
+        view_menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                color: #000000;
+                border: 1px solid #ccc;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #ff9900;
+                color: black;
+            }
+            QMenu::item:disabled {
+                color: rgba(100, 100, 100, 130);
+                background: transparent;
+                font-style: italic;
+            }
+        """)
 
         view_menu.addAction(QAction("  Actual Size", self, shortcut="Ctrl+0"))
         view_menu.addAction(QAction("  Zoom In", self, shortcut="Ctrl+Shift+="))
@@ -1567,10 +1608,27 @@ class MainWindow(QMainWindow):
         btn.setStyleSheet(style)
         return btn
 
-    def apply_theme(self, mode):
+    def apply_theme(self, mode: str):
+        """
+        Menerapkan tema aplikasi (dark / light) dengan aman.
+        Tidak menimbulkan error meskipun berada di Dashboard.
+        """
+        # =====================================================
+        # 🧩 1️⃣ Cegah perubahan tema saat di Dashboard
+        # =====================================================
+        if getattr(self, "_is_on_dashboard", False):
+            show_modern_info(self, "Info", "Mode tema tidak dapat diubah saat di Dashboard.")
+            return
+
+        # =====================================================
+        # 🎨 2️⃣ Terapkan palet global Qt
+        # =====================================================
         app = QApplication.instance()
         apply_global_palette(app, mode)
 
+        # =====================================================
+        # 🌗 3️⃣ Terapkan gaya utama per tema
+        # =====================================================
         if mode == "dark":
             self.setStyleSheet("""
                 QMainWindow, QWidget {
@@ -1667,19 +1725,306 @@ class MainWindow(QMainWindow):
             """)
             self.checkbox_delegate.setTheme("light")
 
-        # Apply theme to filter sidebar if it exists
-        if hasattr(self, 'filter_sidebar') and self.filter_sidebar is not None:
-            self.filter_sidebar.apply_theme(mode)
+        # =====================================================
+        # 🧱 4️⃣ Update sidebar / komponen tambahan
+        # =====================================================
+        if hasattr(self, "filter_sidebar") and self.filter_sidebar is not None:
+            try:
+                self.filter_sidebar.apply_theme(mode)
+            except Exception:
+                pass
 
-        # ✅ Simpan pilihan ke DB
-        self.save_theme(mode)
-        self.show_page(self.current_page)
+        # =====================================================
+        # 💾 5️⃣ Simpan pilihan tema ke database
+        # =====================================================
+        try:
+            self.save_theme(mode)
+        except Exception as e:
+            print("Gagal menyimpan tema:", e)
 
-        # update checkbox delegate & posisi checkbox header
-        self.checkbox_delegate.setTheme("dark" if mode == "dark" else "light")
-        self.table.viewport().update()
-        QTimer.singleShot(0, self.position_header_checkbox)
+        # =====================================================
+        # 📊 6️⃣ Refresh tampilan tabel jika halaman aktif adalah data
+        # =====================================================
+        if hasattr(self, "table") and not getattr(self, "_is_on_dashboard", False):
+            try:
+                central = self.centralWidget()
+                if isinstance(central, QWidget) and self.table in central.findChildren(QTableWidget):
+                    # Refresh isi tabel sesuai halaman aktif
+                    self.show_page(self.current_page)
+
+                # Update checkbox dan posisi header
+                self.checkbox_delegate.setTheme("dark" if mode == "dark" else "light")
+                self.table.viewport().update()
+                QTimer.singleShot(0, self.position_header_checkbox)
+
+            except RuntimeError:
+                # Jika table sudah dilepas Qt (misalnya saat sedang ganti halaman)
+                pass
+            except Exception as e:
+                print("Warning saat update tabel:", e)
+
+        # =====================================================
+        # 🧭 7️⃣ Update status bar agar pengguna tahu mode aktif
+        # =====================================================
+        #if hasattr(self, "status"):
+            #theme_text = "Mode Gelap" if mode == "dark" else "Mode Terang"
+            #self.status.showMessage(f"Tema diperbarui: {theme_text}")
+
+
+    # =========================================================
+    # DASHBOARD PAGE
+    # =========================================================
+    def show_dashboard_page(self):
+        """Tampilkan Dashboard dalam stack, nonaktifkan kontrol tema & toolbar."""
+        # siapkan/ambil dashboard page
+        if not hasattr(self, "dashboard_page"):
+            self.dashboard_page = self._build_dashboard_widget()
+            self.stack.addWidget(self.dashboard_page)   # index 1 = Dashboard
+
+        self._is_on_dashboard = True
+
+        # Sembunyikan toolbar & filter
+        for tb in self.findChildren(QToolBar): tb.hide()
+        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+
+        # Nonaktifkan Dark/Light (soft disabled)
+        self.action_dark.setEnabled(False); self.action_light.setEnabled(False)
+        for act in [self.action_dark, self.action_light]:
+            f = act.font(); f.setItalic(True); act.setFont(f)
+
+        # Tampilkan dashboard dengan fade
+        self._stack_fade_to(self.dashboard_page, duration=400)
+        #self.statusBar().showMessage("Dashboard ditampilkan")
+
+    def _build_dashboard_widget(self) -> QWidget:
+        """Bangun widget Dashboard (tampilan saja; data nanti)."""
+        dash_widget = QWidget()
+        dash_layout = QVBoxLayout(dash_widget)
+        dash_layout.setContentsMargins(30, 20, 30, 20)
+        dash_layout.setSpacing(25)
+
+        # ===== Baris 1: kartu ringkasan =====
+        top_row = QHBoxLayout()
+        top_row.setSpacing(15)
+
+        def make_card(icon, title, value):
+            card = QFrame()
+            card.setMinimumWidth(140)
+            card.setStyleSheet("""
+                QFrame { background:#fff; border-radius:12px; border:1px solid #ddd; }
+                QLabel { font-family:'Segoe UI'; }
+            """)
+            lay = QVBoxLayout(card)
+            lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_icon = QLabel(icon);      lbl_icon.setStyleSheet("font-size:24pt; color:#ff6600;")
+            lbl_title = QLabel(title);    lbl_title.setStyleSheet("font-size:10pt; color:#777;")
+            lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_value = QLabel(value);    lbl_value.setStyleSheet("font-size:14pt; font-weight:bold; color:#333;")
+            for w in (lbl_icon, lbl_title, lbl_value): lay.addWidget(w)
+            # bayangan lembut
+            sh = QGraphicsDropShadowEffect(); sh.setBlurRadius(25); sh.setOffset(0,3); sh.setColor(QColor(0,0,0,60))
+            card.setGraphicsEffect(sh)
+            return card
+
+        top_row.addWidget(make_card("🚀", "tasikmalayakab.kpu.go.id\nAGUNG ADHISIETIONO", ""))
+        top_row.addWidget(make_card("👥", "Pemilih", "1.439.738"))
+        top_row.addWidget(make_card("👨", "Laki-laki", "728.475"))
+        top_row.addWidget(make_card("👩", "Perempuan", "711.263"))
+        top_row.addWidget(make_card("🏛️", "Kecamatan", "39"))
+        top_row.addWidget(make_card("🏠", "Kelurahan", "351"))
+        top_row.addWidget(make_card("📍", "TPS", "2.847"))
+        dash_layout.addLayout(top_row)
+
+        # ===== Baris 2: Pie & bar horizontal =====
+        from PyQt6.QtCharts import QChart, QChartView, QPieSeries
+        from PyQt6.QtCore import QMargins
+
+        middle_row = QHBoxLayout(); middle_row.setSpacing(40)
+
+        series = QPieSeries(); series.append("Laki-laki", 50.6); series.append("Perempuan", 49.4)
+        series.slices()[0].setBrush(QColor("#6b4e71")); series.slices()[1].setBrush(QColor("#ff6600"))
+        for s in series.slices(): s.setLabelVisible(False)
+
+        chart = QChart(); chart.addSeries(series); chart.legend().setVisible(True)
+        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom); chart.setBackgroundVisible(False)
+        chart.setMargins(QMargins(0,0,0,0))
+        chart_view = QChartView(chart); chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        chart_view.setMinimumWidth(380)
+        middle_row.addWidget(chart_view, 1)
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        chart_view.setStyleSheet("background: #fff; border-radius: 12px;")
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(25)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 50))
+        chart_view.setGraphicsEffect(shadow)
+
+
+        bar_frame = QFrame(); bar_layout = QVBoxLayout(bar_frame)
+        bar_layout.setSpacing(6); bar_layout.setContentsMargins(10,10,10,10)
+        bars = [
+            ("Meninggal", 0.051),
+            ("Ganda", 0.002),
+            ("Di Bawah Umur", 0.000),
+            ("Pindah Domisili", 0.019),
+            ("WNA", 0.000),
+            ("TNI", 0.000),
+            ("Polri", 0.000),
+            ("Salah TPS", 0.017),
+        ]
+        for label, val in bars:
+            row = QHBoxLayout(); row.setSpacing(8)
+            lbl = QLabel(label); lbl.setStyleSheet("font-size:9pt; color:#555; min-width:240px;")
+            bg = QFrame(); bg.setFixedHeight(8); bg.setStyleSheet("background:#eee; border-radius:4px;")
+            fg = QFrame(bg); fg.setGeometry(0,0, max(1, int(val*1800)), 8)
+            fg.setStyleSheet("background:#ff6600; border-radius:4px;")
+            pct = QLabel(f"{val:.3%}"); pct.setStyleSheet("font-size:9pt; color:#333;")
+            row.addWidget(lbl); row.addWidget(bg, 1); row.addWidget(pct); bar_layout.addLayout(row)
+
+        middle_row.addWidget(bar_frame, 2)
+        dash_layout.addLayout(middle_row)
+
+        # ===== Styling: sama untuk light/dark =====
+        dash_widget.setStyleSheet("""
+            QWidget { background:#f9f9f9; color:#333; font-family:'Segoe UI','Calibri'; }
+            QLabel { color:#333; }
+        """)
+        return dash_widget
+    
+    def _stack_fade_to(self, target_widget, duration=350):
+        """Fade-in ke target page di QStackedWidget (aman, tanpa hapus widget)."""
+        self.stack.setCurrentWidget(target_widget)
+
+        # Nonaktifkan sementara update untuk mencegah konflik painter
+        target_widget.setUpdatesEnabled(False)
+
+        eff = QGraphicsOpacityEffect(target_widget)
+        target_widget.setGraphicsEffect(eff)
+        eff.setOpacity(0.0)
+
+        anim = QPropertyAnimation(eff, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        # Setelah selesai, aktifkan kembali update
+        def on_finished():
+            target_widget.setUpdatesEnabled(True)
+            target_widget.update()  # paksa repaint final agar tampil sempurna
+            target_widget.setGraphicsEffect(None)
+
+        anim.finished.connect(on_finished)
+        anim.start()
+
+        # Simpan referensi supaya animasi tidak berhenti mendadak
+        self._fade_anim = anim
         
+    def show_data_page(self):
+        """Kembali ke halaman utama Data di dalam stack (tanpa menghapus table)."""
+        self._is_on_dashboard = False
+
+        # Aktifkan kembali toolbar
+        for tb in self.findChildren(QToolBar): tb.show()
+        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+
+        # Aktifkan kembali tema
+        self.action_dark.setEnabled(True); self.action_light.setEnabled(True)
+        for act in [self.action_dark, self.action_light]:
+            f = act.font(); f.setItalic(False); act.setFont(f)
+
+        # Pindah page ke Data + refresh tampilan halaman saat ini
+        self._stack_fade_to(self.data_page, duration=300)
+        try:
+            self.show_page(getattr(self, "_last_page_index", self.current_page))
+        except Exception:
+            pass
+
+        #self.statusBar().showMessage("Kembali ke halaman Pemutakhiran Data")
+
+
+    # =========================================================
+    # 🔸 Fungsi bantu animasi transisi
+    # =========================================================
+    def _fade_transition(self, old_widget, new_widget, duration=400):
+        """Efek transisi fade-in/out antara dua widget."""
+        # Step 1: Opacity effect
+        old_effect = QGraphicsOpacityEffect(old_widget)
+        old_widget.setGraphicsEffect(old_effect)
+
+        new_effect = QGraphicsOpacityEffect(new_widget)
+        new_widget.setGraphicsEffect(new_effect)
+        new_effect.setOpacity(0)
+
+        # Step 2: Tambahkan widget baru di posisi yang sama sementara
+        old_widget.setVisible(True)
+        new_widget.setVisible(True)
+        self.setCentralWidget(new_widget)
+
+        # Step 3: Buat animasi fade-out untuk lama, fade-in untuk baru
+        anim_out = QPropertyAnimation(old_effect, b"opacity")
+        anim_out.setDuration(duration)
+        anim_out.setStartValue(1.0)
+        anim_out.setEndValue(0.0)
+        anim_out.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        anim_in = QPropertyAnimation(new_effect, b"opacity")
+        anim_in.setDuration(duration)
+        anim_in.setStartValue(0.0)
+        anim_in.setEndValue(1.0)
+        anim_in.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        # Jalankan animasi
+        anim_out.start()
+        anim_in.start()
+
+        # Simpan agar tidak di-garbage collect
+        self._fade_anims = (anim_out, anim_in)
+
+
+    def _slide_transition(self, old_widget, new_widget, direction="left", duration=450):
+        """Transisi geser elegan antar halaman (aman dari widget deletion)."""
+        # 🛡️ Pastikan widget valid
+        if old_widget is None or new_widget is None:
+            self.setCentralWidget(new_widget)
+            return
+        try:
+            if old_widget.parent() is None or new_widget.parent() is None:
+                self.setCentralWidget(new_widget)
+                return
+        except RuntimeError:
+            # Kalau sudah dihapus Qt (C++ object deleted)
+            self.setCentralWidget(new_widget)
+            return
+
+        # 🧭 Jalankan animasi aman
+        geo = self.centralWidget().geometry()
+        w, h = geo.width(), geo.height()
+        new_widget.setGeometry(geo)
+
+        # Posisi awal berdasarkan arah transisi
+        start_rect = QRect(0, 0, w, h)
+        if direction == "left":
+            start_rect.moveTo(w, 0)
+        elif direction == "right":
+            start_rect.moveTo(-w, 0)
+
+        new_widget.setGeometry(start_rect)
+        self.setCentralWidget(new_widget)
+
+        # Animasi geser halus
+        anim = QPropertyAnimation(new_widget, b"geometry")
+        anim.setDuration(duration)
+        anim.setStartValue(start_rect)
+        anim.setEndValue(geo)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
+
+        # Simpan referensi supaya animasi tidak dihentikan premature
+        self._slide_anim = anim
+
+    
     def auto_fit_columns(self):
         header = self.table.horizontalHeader()
         self.table.resizeColumnsToContents()
@@ -2048,7 +2393,7 @@ class MainWindow(QMainWindow):
         if not dpid or dpid == "0":
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
-                    show_modern_warning(self, "Ditolak", "Data yang kamu pilih adalah Pemilih Aktif.")
+                    #show_modern_warning(self, "Ditolak", "Data yang kamu pilih adalah Pemilih Aktif.")
                     self._warning_shown_in_batch["aktifkan_pemilih"] = True
             else:
                 show_modern_warning(self, "Ditolak", f"Tindakan ditolak.<br>{nama} adalah Pemilih Aktif.")
@@ -2059,7 +2404,7 @@ class MainWindow(QMainWindow):
         if ket not in ("1","2","3","4","5","6","7","8"):
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
-                    show_modern_warning(self, "Ditolak", "Data yang kamu pilih adalah Pemilih Aktif.")
+                    #show_modern_warning(self, "Ditolak", "Data yang kamu pilih adalah Pemilih Aktif.")
                     self._warning_shown_in_batch["aktifkan_pemilih"] = True
             else:
                 show_modern_warning(self, "Ditolak", f"Tindakan ditolak.<br>{nama} adalah Pemilih Aktif.")
