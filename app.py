@@ -9,50 +9,76 @@ from PyQt6.QtWidgets import (
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
-from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve
 from io import BytesIO
 
 def show_modern_warning(parent, title, text):
-    """Tampilkan pesan peringatan (kuning)."""
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
     msg.setText(text)
     msg.setIcon(QMessageBox.Icon.Warning)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    _apply_modern_style(msg, accent="#ffc107")  # kuning lembut
-    msg.exec()
 
+    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#ffc107")
+    msg.show()
+
+    # (opsional) fade-in
+    anim = QPropertyAnimation(msg, b"windowOpacity")
+    anim.setDuration(150)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    anim.start()
+    msg.anim = anim
 
 def show_modern_info(parent, title, text):
-    """Tampilkan pesan informasi (biru)."""
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
     msg.setText(text)
     msg.setIcon(QMessageBox.Icon.Information)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    _apply_modern_style(msg, accent="#17a2b8")  # biru toska
-    msg.exec()
 
+    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#17a2b8")
+    msg.show()
+
+    anim = QPropertyAnimation(msg, b"windowOpacity")
+    anim.setDuration(150)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    anim.start()
+    msg.anim = anim
 
 def show_modern_error(parent, title, text):
-    """Tampilkan pesan error (merah)."""
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
     msg.setText(text)
     msg.setIcon(QMessageBox.Icon.Critical)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    _apply_modern_style(msg, accent="#dc3545")  # merah elegan
-    msg.exec()
 
+    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#dc3545")
+    msg.show()
+
+    anim = QPropertyAnimation(msg, b"windowOpacity")
+    anim.setDuration(150)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    anim.start()
+    msg.anim = anim
 
 def show_modern_question(parent, title, text):
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
     msg.setText(text)
     msg.setIcon(QMessageBox.Icon.Question)
-    msg.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-    )
+    msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     msg.setDefaultButton(QMessageBox.StandardButton.No)
 
     msg.setStyleSheet("""
@@ -1913,11 +1939,11 @@ class MainWindow(QMainWindow):
         self._batch_stats[key] = self._batch_stats.get(key, 0) + 1
 
     def _context_action_wrapper(self, rows, func):
-        """Menjalankan fungsi context untuk 1 atau banyak baris dengan konfirmasi batch."""
+        """Menjalankan fungsi context untuk 1 atau banyak baris (versi super kilat penuh)."""
         if isinstance(rows, int):
             rows = [rows]
 
-        # 🔒 Guard: pastikan atribut ada (hindari AttributeError)
+        # --- Inisialisasi atribut batch
         if not hasattr(self, "_batch_stats"):
             self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
         if not hasattr(self, "_warning_shown_in_batch"):
@@ -1927,49 +1953,62 @@ class MainWindow(QMainWindow):
 
         is_batch = len(rows) > 1
 
-        # --- Jika batch, minta konfirmasi dulu
+        # --- Konfirmasi batch
         if is_batch:
             label_action = func.__name__.replace("_pemilih", "").replace("_", " ").title()
             if not show_modern_question(
-                self,
-                "Konfirmasi Batch",
+                self, "Konfirmasi Batch",
                 f"Anda yakin ingin memproses <b>{len(rows)}</b> data sebagai <b>{label_action}</b>?"
             ):
                 self._clear_row_selection(rows)
                 return
-
-            # Aktifkan mode batch & reset flags+stats
             self._in_batch_mode = True
-            self._warning_shown_in_batch = {}
+            self._warning_shown_in_batch.clear()
             self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
 
-        # --- Jalankan fungsi untuk setiap baris (fungsi akan _batch_add sendiri)
-        for r in rows:
-            func(r)
+        # --- Matikan update GUI
+        self.table.blockSignals(True)
+        self.table.setUpdatesEnabled(False)
 
-        # --- Selesai, tampilkan ringkasan & reset flag
+        # --- Gunakan satu koneksi untuk batch
+        shared_conn = shared_cur = None
         if is_batch:
-            stats = getattr(self, "_batch_stats", {"ok": 0, "rejected": 0, "skipped": 0})
-            ok = stats.get("ok", 0)
-            rej = stats.get("rejected", 0)
+            shared_conn = sqlite3.connect(self.db_name)
+            shared_cur = shared_conn.cursor()
+            self._shared_conn = shared_conn
+            self._shared_cur = shared_cur
 
-            # reset mode & flags
+        try:
+            for r in rows:
+                func(r)
+        finally:
+            if shared_conn:
+                shared_conn.commit()
+                shared_cur.close()
+                shared_conn.close()
+                self._shared_conn = self._shared_cur = None
+
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            self.table.viewport().update()
+
+        # --- Ringkasan batch
+        if is_batch:
+            stats = self._batch_stats
+            ok, rej = stats.get("ok", 0), stats.get("rejected", 0)
             self._in_batch_mode = False
-            self._warning_shown_in_batch = {}
+            self._warning_shown_in_batch.clear()
             self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
 
-            # 🔹 Tampilkan hanya yang > 0 dan hanya OK/Rejected
             lines = [f"<b>Selesai memproses {len(rows)} data.</b><br>"]
-            if ok > 0:
-                lines.append(f"✔️ Berhasil: <b>{ok}</b><br>")
-            if rej > 0:
-                lines.append(f"⛔ Ditolak: <b>{rej}</b><br>")
-            if ok == 0 and rej == 0:
+            if ok:  lines.append(f"✔️ Berhasil: <b>{ok}</b><br>")
+            if rej: lines.append(f"⛔ Ditolak: <b>{rej}</b><br>")
+            if not ok and not rej:
                 lines.append("<i>Tidak ada data yang berhasil atau ditolak.</i>")
 
             show_modern_info(self, "Ringkasan", "".join(lines))
 
-        QTimer.singleShot(150, lambda: self._clear_row_selection(rows))
+        QTimer.singleShot(100, lambda: self._clear_row_selection(rows))
 
     def _clear_row_selection(self, rows):
         """Reset seleksi & ceklis. rows boleh int atau list[int]."""
@@ -2002,7 +2041,7 @@ class MainWindow(QMainWindow):
         ket  = ket_item.text().strip().upper() if ket_item else ""
         nama = nama_item.text().strip() if nama_item else ""
 
-        # ⚠️ Validasi 1: pastikan DPID valid
+        # ⚠️ Validasi 1
         if not dpid or dpid == "0":
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
@@ -2013,7 +2052,7 @@ class MainWindow(QMainWindow):
             self._batch_add("rejected", "aktifkan_pemilih")
             return
 
-        # ⚠️ Validasi 2: hanya boleh jika KET = 1–8
+        # ⚠️ Validasi 2
         if ket not in ("1","2","3","4","5","6","7","8"):
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
@@ -2024,7 +2063,7 @@ class MainWindow(QMainWindow):
             self._batch_add("rejected", "aktifkan_pemilih")
             return
 
-        # ✅ Set kolom KET jadi 0 (aktif)
+        # ✅ Set KET ke 0
         ket_item.setText("0")
         self.update_database_field(row, "KET", "0")
 
@@ -2032,17 +2071,15 @@ class MainWindow(QMainWindow):
         if 0 <= gi < len(self.all_data):
             self.all_data[gi]["KET"] = "0"
 
-        # 🌗 Warna teks normal sesuai tema
+        # 🌗 Warna sesuai tema
         bg_color = self.table.palette().color(self.table.backgroundRole())
         brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
         warna_normal = QColor("black") if brightness > 128 else QColor("white")
-
         for c in range(self.table.columnCount()):
             it = self.table.item(row, c)
             if it:
                 it.setForeground(warna_normal)
 
-        # ✅ Popup hanya jika bukan batch
         if not getattr(self, "_in_batch_mode", False):
             show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
@@ -2108,21 +2145,32 @@ class MainWindow(QMainWindow):
                 pass
 
         try:
-            conn = sqlite3.connect(self.db_name)
-            cur = conn.cursor()
-            cur.execute("""
-                DELETE FROM data_pemilih
-                WHERE ROWID = ?
-                AND IFNULL(NIK,'') = ?
-                AND IFNULL(NKK,'') = ?
-                AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
-                AND IFNULL(TGL_LHR,'') = ?
-                AND IFNULL(LastUpdate,'') = ?
-            """, (rowid, sig["NIK"], sig["NKK"], sig["DPID"], sig["TGL_LHR"], last_update))
-            conn.commit()
-            conn.close()
+            # 🟢 Shared cursor versi super kilat
+            if getattr(self, "_in_batch_mode", False) and hasattr(self, "_shared_cur") and self._shared_cur:
+                cur = self._shared_cur
+                cur.execute("""
+                    DELETE FROM data_pemilih
+                    WHERE ROWID = ?
+                    AND IFNULL(NIK,'') = ?
+                    AND IFNULL(NKK,'') = ?
+                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
+                    AND IFNULL(TGL_LHR,'') = ?
+                    AND IFNULL(LastUpdate,'') = ?
+                """, (rowid, sig["NIK"], sig["NKK"], sig["DPID"], sig["TGL_LHR"], last_update))
+            else:
+                with sqlite3.connect(self.db_name) as conn:
+                    conn.execute("""
+                        DELETE FROM data_pemilih
+                        WHERE ROWID = ?
+                        AND IFNULL(NIK,'') = ?
+                        AND IFNULL(NKK,'') = ?
+                        AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
+                        AND IFNULL(TGL_LHR,'') = ?
+                        AND IFNULL(LastUpdate,'') = ?
+                    """, (rowid, sig["NIK"], sig["NKK"], sig["DPID"], sig["TGL_LHR"], last_update))
+                    conn.commit()
 
-            # Hapus dari memori & pagination
+            # ✅ Setelah sukses, hapus dari memori
             del self.all_data[gi]
             if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
                 self.current_page -= 1
@@ -2144,7 +2192,7 @@ class MainWindow(QMainWindow):
         nama_item = self.table.item(row, self.col_index("NAMA"))
         nama = nama_item.text().strip() if nama_item else ""
 
-        # ⚠️ Validasi: DPID harus valid (bukan kosong/0)
+        # ⚠️ Validasi
         if not dpid_item or dpid_item.text().strip() in ("", "0"):
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("set_ket_status", False):
@@ -2155,15 +2203,10 @@ class MainWindow(QMainWindow):
             self._batch_add("rejected", f"set_ket_status_{label}")
             return
 
-        # (Opsional) hindari double-set kalau sudah sama
         ket_item = self.table.item(row, self.col_index("KET"))
         if ket_item and ket_item.text().strip() == new_value:
-            # anggap tidak berubah → tidak menambah OK
-            # kalau mau hitung sebagai 'rejected', tinggal uncomment baris di bawah:
-            # self._batch_add("rejected", f"set_ket_status_{label}")
             return
 
-        # ✅ Update nilai di tabel & DB
         if ket_item:
             ket_item.setText(new_value)
             self.update_database_field(row, "KET", new_value)
@@ -2178,10 +2221,8 @@ class MainWindow(QMainWindow):
             if it:
                 it.setForeground(QColor("red"))
 
-        # 🧾 Tambahkan statistik OK
         self._batch_add("ok", f"set_ket_status_{label}")
 
-        # Popup hanya jika bukan batch
         if not getattr(self, "_in_batch_mode", False):
             show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
@@ -2222,20 +2263,21 @@ class MainWindow(QMainWindow):
         return sig
 
     def update_database_field(self, row, field_name, value):
-        """Update satu kolom di database berdasar NIK."""
+        """Update satu kolom di database berdasar NIK (super kilat)."""
         try:
             nik_col = self.col_index("NIK")
             nik = self.table.item(row, nik_col).text().strip() if nik_col != -1 else None
             if not nik:
                 return
-            conn = sqlite3.connect(self.db_name)
-            cur = conn.cursor()
-            cur.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
-            conn.commit()
-            conn.close()
+
+            if getattr(self, "_in_batch_mode", False) and hasattr(self, "_shared_cur") and self._shared_cur:
+                self._shared_cur.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
+            else:
+                with sqlite3.connect(self.db_name) as conn:
+                    conn.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
+                    conn.commit()
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
-
 
     def apply_shadow(self, widget, blur=24, dx=0, dy=6, rgba=(0,0,0,180)):
         eff = QGraphicsDropShadowEffect(widget)
