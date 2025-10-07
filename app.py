@@ -2106,7 +2106,7 @@ class MainWindow(QMainWindow):
         if dpid and dpid != "0":
             if getattr(self, "_in_batch_mode", False):
                 if not self._warning_shown_in_batch.get("hapus_pemilih", False):
-                    show_modern_warning(self, "Ditolak", "Hanya Pemilih Baru di tahap ini yang bisa dihapus!")
+                    #show_modern_warning(self, "Ditolak", "Hanya Pemilih Baru di tahap ini yang bisa dihapus!")
                     self._warning_shown_in_batch["hapus_pemilih"] = True
             else:
                 show_modern_warning(
