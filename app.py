@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
-from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
+from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
 from io import BytesIO
 
 def show_modern_warning(parent, title, text):
@@ -3853,11 +3853,160 @@ class RegisterWindow(QWidget):
 
         qr_dialog.exec()
 
+        # === Setelah user klik "Saya Sudah Scan" → verifikasi OTP dulu ===
+        if qr_dialog.result() == QDialog.DialogCode.Accepted:
+            totp = pyotp.TOTP(otp_secret)
+
+            # Maks 3 percobaan
+            verified = False
+            for attempt in range(3):
+                code = self._prompt_otp_code_dialog()
+                if code is None:
+                    # User batal → hentikan flow, jangan pindah ke Login
+                    show_modern_warning(self, "Dibatalkan", "Verifikasi OTP dibatalkan.")
+                    return
+
+                # Allow ±1 step drift (±30 detik) supaya toleran
+                if totp.verify(code, valid_window=1):
+                    verified = True
+                    break
+                else:
+                    show_modern_warning(self, "OTP Salah", "Kode OTP tidak valid atau sudah kedaluwarsa. Coba lagi.")
+
+            if not verified:
+                show_modern_error(self, "Gagal", "Verifikasi OTP gagal 3 kali. Silakan scan ulang QR atau coba lagi.")
+                return
+        else:
+            # Dialog QR ditutup bukan dengan 'accept' → hentikan flow
+            return
+
         dlg = ModernMessage("Sukses", "Akun berhasil dibuat!", "success")
         dlg.exec()
         self.close()
         self.login_window = LoginWindow()
         self.login_window.show()
+
+    def _prompt_otp_code_dialog(self):
+        """
+        Tampilkan dialog kecil untuk input 6 digit OTP.
+        Return: string 'NNNNNN' jika OK, atau None jika batal.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Verifikasi OTP")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setFixedSize(380, 200)
+        dlg.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.MSWindowsFixedSizeDialogHint)
+
+        # Tema ringan/gelap mengikuti parent
+        bg_is_dark = True
+        try:
+            bg_color = self.palette().color(self.backgroundRole()).lightness()
+            bg_is_dark = bg_color < 128
+        except Exception:
+            pass
+
+        bg = "#111" if bg_is_dark else "#f7f7f7"
+        fg = "white" if bg_is_dark else "#222"
+        accent = "#ff6600" if bg_is_dark else "#d35400"
+
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg};
+                color: {fg};
+                border-radius: 12px;
+                border: 1px solid {"#444" if bg_is_dark else "#ccc"};
+            }}
+            QLabel {{
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+            }}
+            QLineEdit {{
+                font-family: 'Segoe UI';
+                font-size: 16pt;
+                padding: 8px 12px;
+                border: 1px solid {"#555" if bg_is_dark else "#bbb"};
+                border-radius: 8px;
+                background: {"#1a1a1a" if bg_is_dark else "white"};
+                color: {fg};
+                letter-spacing: 2px;
+            }}
+            QPushButton {{
+                background-color: {accent};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 18px;
+                font-weight: bold;
+                font-size: 10.5pt;
+                min-width: 110px;
+            }}
+            QPushButton:hover {{
+                background-color: #ff8533;
+            }}
+            QPushButton#btnCancel {{
+                background-color: {"#333" if bg_is_dark else "#ddd"};
+                color: {fg};
+            }}
+            QPushButton#btnCancel:hover {{
+                background-color: {"#444" if bg_is_dark else "#ccc"};
+            }}
+        """)
+
+        vbox = QVBoxLayout(dlg)
+        vbox.setContentsMargins(22, 20, 22, 18)
+        vbox.setSpacing(14)
+
+        info = QLabel("Masukkan 6 digit kode OTP dari aplikasi authenticator Anda.")
+        info.setWordWrap(True)
+        vbox.addWidget(info)
+
+        otp_edit = QLineEdit()
+        otp_edit.setMaxLength(6)
+        otp_edit.setPlaceholderText("123456")
+        otp_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_edit.setClearButtonEnabled(True)
+        # Hanya angka 6 digit
+        otp_edit.setValidator(QRegularExpressionValidator(QRegularExpression(r"^\d{0,6}$")))
+        vbox.addWidget(otp_edit)
+
+        # Tombol
+        hbox = QHBoxLayout()
+        hbox.addStretch(1)
+        btn_ok = QPushButton("Verifikasi")
+        btn_cancel = QPushButton("Batal")
+        btn_cancel.setObjectName("btnCancel")
+        hbox.addWidget(btn_cancel)
+        hbox.addWidget(btn_ok)
+        vbox.addLayout(hbox)
+
+        # Enter untuk submit
+        otp_edit.returnPressed.connect(btn_ok.click)
+
+        # Aksi
+        code_holder = {"val": None}
+
+        def do_ok():
+            code = otp_edit.text().strip().replace(" ", "")
+            if len(code) == 6 and code.isdigit():
+                code_holder["val"] = code
+                dlg.accept()
+            else:
+                show_modern_warning(self, "Format Salah", "Kode OTP harus 6 digit angka.")
+
+        def do_cancel():
+            code_holder["val"] = None
+            dlg.reject()
+
+        btn_ok.clicked.connect(do_ok)
+        btn_cancel.clicked.connect(do_cancel)
+
+        # Tampilkan di tengah
+        screen_geo = QApplication.primaryScreen().geometry()
+        dlg.move(screen_geo.center() - dlg.rect().center())
+
+        dlg.exec()
+
+        return code_holder["val"]
 
 # =====================================================
 # Fungsi Hapus Semua Data Akun & Database
