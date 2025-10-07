@@ -1,12 +1,13 @@
 import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
-from datetime import datetime
+from datetime import datetime, date, timedelta
+import calendar
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange,
-    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStyle, QStyleOptionButton
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
@@ -354,6 +355,187 @@ class ModernInputDialog(QDialog):
         return "", False
 
 
+# =====================================================
+# Date Range Picker Dialog for LastUpdate Filter
+# =====================================================
+class DateRangePickerDialog(QDialog):
+    """Dialog untuk memilih rentang tanggal dengan dua kalender berdampingan dan preset di kiri.
+
+    Format keluaran: (date_awal, date_akhir)
+    """
+    def __init__(self, parent=None, start_date: date | None = None, end_date: date | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Pilih Rentang Tanggal")
+        self.setModal(True)
+        self.setFixedSize(720, 360)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.start_date: date | None = start_date
+        self.end_date: date | None = end_date
+
+        self.setStyleSheet("""
+            QDialog { background:#2b2b2b; border:1px solid #444; border-radius:10px; }
+            QLabel { color:#fff; font-family:'Segoe UI'; }
+            QPushButton { background:#444; color:#fff; border:none; border-radius:6px; padding:6px 12px; }
+            QPushButton:hover { background:#555; }
+            QPushButton.primary { background:#ff7700; font-weight:bold; }
+            QPushButton.primary:hover { background:#ff8c1a; }
+        """)
+
+        main = QHBoxLayout(self)
+        main.setContentsMargins(14,14,14,14)
+        main.setSpacing(14)
+
+        # === Preset panel ===
+        preset_panel = QVBoxLayout()
+        preset_panel.setSpacing(8)
+        lbl_preset = QLabel("Preset")
+        lbl_preset.setStyleSheet("font-weight:bold;")
+        preset_panel.addWidget(lbl_preset)
+
+        def add_preset(name, func):
+            btn = QPushButton(name)
+            btn.clicked.connect(lambda: self.apply_preset(func))
+            preset_panel.addWidget(btn)
+        today = date.today()
+        add_preset("Hari ini", lambda: (today, today))
+        add_preset("Kemarin", lambda: (today - timedelta(days=1), today - timedelta(days=1)))
+        first_day_month = today.replace(day=1)
+        last_day_month = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+        add_preset("Bulan ini", lambda: (first_day_month, last_day_month))
+        # Bulan lalu
+        prev_year, prev_month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+        first_prev = date(prev_year, prev_month, 1)
+        last_prev = date(prev_year, prev_month, calendar.monthrange(prev_year, prev_month)[1])
+        add_preset("Bulan lalu", lambda: (first_prev, last_prev))
+        preset_panel.addStretch(1)
+        main.addLayout(preset_panel)
+
+        # === Dua kalender ===
+        cal_container = QHBoxLayout()
+        cal_container.setSpacing(12)
+        from PyQt6.QtWidgets import QCalendarWidget  # local import agar jelas
+        self.cal_left = QCalendarWidget()
+        self.cal_right = QCalendarWidget()
+        # Sinkronisasi agar right selalu month+1 (kecuali Desember -> Januari tahun berikutnya)
+        self.cal_left.currentPageChanged.connect(self.sync_right_calendar)
+        for cal in (self.cal_left, self.cal_right):
+            cal.setGridVisible(True)
+            cal.clicked.connect(self.on_date_clicked)
+            cal.setVerticalHeaderFormat(cal.VerticalHeaderFormat.NoVerticalHeader)
+            cal.setStyleSheet("""
+                QCalendarWidget QWidget { alternate-background-color:#333; }
+                QCalendarWidget QAbstractItemView:enabled { color:#eee; selection-background-color:#ff7700; selection-color:#fff; }
+            """)
+        # Set posisi awal
+        if self.start_date:
+            self.cal_left.setSelectedDate(self.start_date)
+        if self.end_date:
+            self.cal_right.setSelectedDate(self.end_date)
+        cal_container.addWidget(self.cal_left)
+        cal_container.addWidget(self.cal_right)
+        main.addLayout(cal_container, 1)
+
+        # === Panel kanan (info + aksi) ===
+        side = QVBoxLayout()
+        self.lbl_range = QLabel("Pilih tanggal mulai dan tanggal akhir")
+        self.lbl_range.setWordWrap(True)
+        side.addWidget(self.lbl_range)
+        side.addStretch(1)
+        btn_row = QHBoxLayout()
+        self.btn_cancel = QPushButton("Batal")
+        self.btn_ok = QPushButton("Pilih")
+        self.btn_ok.setObjectName("pilihBtn")
+        self.btn_ok.setProperty("class","primary")
+        self.btn_ok.setStyleSheet("QPushButton { background:#ff7700; } QPushButton:hover { background:#ff8c1a; }")
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.clicked.connect(self.accept_if_valid)
+        btn_row.addWidget(self.btn_cancel)
+        btn_row.addWidget(self.btn_ok)
+        side.addLayout(btn_row)
+        main.addLayout(side)
+
+        # Sync right calendar now
+        self.sync_right_calendar(self.cal_left.yearShown(), self.cal_left.monthShown())
+        self.refresh_highlight()
+
+    def apply_preset(self, fn):
+        self.start_date, self.end_date = fn()
+        self.refresh_highlight()
+        self.update_range_label()
+
+    def sync_right_calendar(self, year, month):
+        # Set calendar right ke bulan berikutnya
+        if month == 12:
+            next_month = 1; next_year = year + 1
+        else:
+            next_month = month + 1; next_year = year
+        self.cal_right.blockSignals(True)
+        self.cal_right.setCurrentPage(next_year, next_month)
+        self.cal_right.blockSignals(False)
+
+    def on_date_clicked(self, qdate):
+        d = date(qdate.year(), qdate.month(), qdate.day())
+        if self.start_date is None or (self.start_date and self.end_date):
+            # Mulai baru
+            self.start_date = d
+            self.end_date = None
+        else:
+            # Set end
+            if d < self.start_date:
+                self.start_date, self.end_date = d, self.start_date
+            else:
+                self.end_date = d
+        self.refresh_highlight()
+        self.update_range_label()
+
+    def refresh_highlight(self):
+        from PyQt6.QtGui import QTextCharFormat
+        from PyQt6.QtCore import QDate
+        fmt_range = QTextCharFormat(); fmt_range.setBackground(QColor("#ff7700")); fmt_range.setForeground(QColor("white"))
+        fmt_start_end = QTextCharFormat(); fmt_start_end.setBackground(QColor("#cc5600")); fmt_start_end.setForeground(QColor("white"))
+        fmt_clear = QTextCharFormat()
+        # Clear semua (cukup untuk visible pages)
+        for cal in (self.cal_left, self.cal_right):
+            year = cal.yearShown(); month = cal.monthShown()
+            days_in_month = calendar.monthrange(year, month)[1]
+            for day in range(1, days_in_month+1):
+                cal.setDateTextFormat(QDate(year, month, day), fmt_clear)
+        if self.start_date:
+            if self.end_date:
+                cur = self.start_date
+                while cur <= self.end_date:
+                    qd = QDate(cur.year, cur.month, cur.day)
+                    # Start / End beda warna
+                    if cur == self.start_date or cur == self.end_date:
+                        self.cal_left.setDateTextFormat(qd, fmt_start_end)
+                        self.cal_right.setDateTextFormat(qd, fmt_start_end)
+                    else:
+                        self.cal_left.setDateTextFormat(qd, fmt_range)
+                        self.cal_right.setDateTextFormat(qd, fmt_range)
+                    cur += timedelta(days=1)
+            else:
+                qd = QDate(self.start_date.year, self.start_date.month, self.start_date.day)
+                self.cal_left.setDateTextFormat(qd, fmt_start_end)
+                self.cal_right.setDateTextFormat(qd, fmt_start_end)
+
+    def update_range_label(self):
+        if self.start_date and self.end_date:
+            self.lbl_range.setText(f"Dipilih: {self.start_date.strftime('%d/%m/%Y')} - {self.end_date.strftime('%d/%m/%Y')}")
+        elif self.start_date:
+            self.lbl_range.setText(f"Tanggal mulai: {self.start_date.strftime('%d/%m/%Y')} (pilih akhir)")
+        else:
+            self.lbl_range.setText("Pilih tanggal mulai dan tanggal akhir")
+
+    def accept_if_valid(self):
+        if self.start_date and self.end_date:
+            self.accept()
+        else:
+            show_modern_warning(self, "Rentang belum lengkap", "Silakan pilih tanggal mulai dan tanggal akhir.")
+
+    def get_range(self):
+        return self.start_date, self.end_date
+
+
 class CheckboxDelegate(QStyledItemDelegate):
     def __init__(self, theme="dark", parent=None):
         super().__init__(parent)
@@ -575,200 +757,261 @@ class SettingDialog(QDialog):
         self.accept()   # close dialog dengan "OK"
 
 # =====================================================
+# Custom Checkbox untuk Filter Sidebar
+# =====================================================
+class CustomCheckBox(QCheckBox):
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.theme = "dark"
+        
+        # Set smaller size and better margins
+        self.setMinimumHeight(18)
+        self.setMaximumHeight(22)
+        self.setContentsMargins(0, 0, 0, 0)
+        
+        # Override mouse press area to be more precise
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        
+    def setTheme(self, theme):
+        self.theme = theme
+        self.update()
+        
+    def paintEvent(self, event):
+        # Custom paint untuk checkbox dengan checkmark yang sama seperti tabel
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Get checkbox rect - make it smaller
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        style = self.style()
+        
+        # Calculate smaller checkbox size and position
+        checkbox_size = 12  # Reduced from default 14
+        checkbox_rect = QRect(2, (self.height() - checkbox_size) // 2, checkbox_size, checkbox_size)
+        
+        # Draw checkbox background and border
+        if self.isChecked():
+            # Orange background when checked
+            painter.setBrush(QColor("#ff9900"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(checkbox_rect, 3, 3)
+            
+            # White checkmark - adjusted for smaller size
+            painter.setPen(QPen(QColor("white"), 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawLine(checkbox_rect.left() + 3, checkbox_rect.center().y(),
+                             checkbox_rect.center().x(), checkbox_rect.bottom() - 3)
+            painter.drawLine(checkbox_rect.center().x(), checkbox_rect.bottom() - 3,
+                             checkbox_rect.right() - 3, checkbox_rect.top() + 3)
+        else:
+            # Unchecked state
+            if self.theme == "dark":
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor("white"), 1))
+            else:
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor("#888"), 1))
+            painter.drawRoundedRect(checkbox_rect, 3, 3)
+        
+        # Draw text with smaller font and better spacing
+        text_rect = QRect(checkbox_rect.right() + 6, 0, self.width() - checkbox_rect.right() - 8, self.height())
+        painter.setPen(QColor("#d4d4d4") if self.theme == "dark" else QColor("#333"))
+        
+        # Set smaller font
+        font = painter.font()
+        font.setPointSize(8)  # Smaller font size
+        painter.setFont(font)
+        
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.text())
+        
+        painter.end()
+    
+    def mousePressEvent(self, event):
+        # Handle click on checkbox area more precisely
+        checkbox_size = 12
+        checkbox_rect = QRect(2, (self.height() - checkbox_size) // 2, checkbox_size, checkbox_size)
+        
+        if event.button() == Qt.MouseButton.LeftButton:
+            if checkbox_rect.contains(event.pos()) or event.pos().x() < 20:
+                # Click on checkbox or very close to it
+                self.toggle()
+                return
+        
+        # For clicks on text area, also toggle
+        super().mousePressEvent(event)
+
+# =====================================================
+# Custom ComboBox dengan simbol dropdown ∨
+# =====================================================
+class CustomComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.theme = "dark"  # default theme
+        # Hilangkan panah & drop-down default; padding kanan untuk arrow kustom
+        self.setStyleSheet(
+            "QComboBox { padding-right: 22px; }"
+            "QComboBox::down-arrow { image: none; }"
+            "QComboBox::drop-down { width: 0px; border: none; }"
+        )
+
+    def setTheme(self, theme):
+        """Atur tema untuk warna simbol yang benar."""
+        self.theme = theme
+        self.update()  # Memicu penggambaran ulang
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        rect = self.rect()
+        # Penempatan arrow geser sedikit agar tidak terlalu rapat ke border
+        arrow_size = 5
+        center_x = rect.width() - 14
+        center_y = rect.height() // 2
+        
+        # Pilih warna berdasarkan tema
+        color = "#d4d4d4" if self.theme == "dark" else "#333"
+        
+        # Gambar panah chevron kustom
+        pen = QPen(QColor(color), 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        
+        # Gambar bentuk 'V'
+        painter.drawLine(center_x - arrow_size, center_y - (arrow_size // 2), center_x, center_y + (arrow_size // 2))
+        painter.drawLine(center_x, center_y + (arrow_size // 2), center_x + arrow_size, center_y - (arrow_size // 2))
+        
+        painter.end()
+
+# =====================================================
 # Filter Sidebar (right dock)
 # =====================================================
 class FilterSidebar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Main layout untuk widget utama
+
+        # Spacing seragam
+        gap = 8
+
+        # Container utama
         main_container_layout = QVBoxLayout(self)
         main_container_layout.setContentsMargins(0, 0, 0, 0)
         main_container_layout.setSpacing(0)
-        
-        # Scroll Area
+
+        # Scroll area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        # Widget yang akan di-scroll
+
         scroll_content = QWidget()
         main_layout = QVBoxLayout(scroll_content)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(10)
+        # Tambah margin kiri/kanan agar field tidak terlalu mepet sisi dock
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(gap)
 
+        # Blok input atas
+        inputs_layout = QVBoxLayout()
+        inputs_layout.setContentsMargins(0, 0, 0, 0)
+        inputs_layout.setSpacing(gap)
 
-        # Form layout dengan spacing dan margin yang lebih baik
-        form_layout = QFormLayout()
-        form_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-        form_layout.setSpacing(6)
-        form_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Tanggal Update
-        tgl_update_layout = QHBoxLayout()
-        tgl_update_layout.setContentsMargins(0, 0, 0, 0)
-        self.tgl_update = QLineEdit()
-        self.tgl_update.setPlaceholderText("Tanggal Update")
+        # ====== Tanggal Update (Date Range Picker) ======
+        tgl_update_layout = QHBoxLayout(); tgl_update_layout.setContentsMargins(0,0,0,0); tgl_update_layout.setSpacing(4)
+        self.tgl_update = QLineEdit(); self.tgl_update.setPlaceholderText("Tanggal Update"); self.tgl_update.setReadOnly(True)
+        self.btn_tgl_update = QPushButton("📅")
+        self.btn_tgl_update.setFixedWidth(36)
+        self.btn_tgl_update.clicked.connect(self.open_date_range_picker)
         tgl_update_layout.addWidget(self.tgl_update)
-        form_layout.addRow(tgl_update_layout)
+        tgl_update_layout.addWidget(self.btn_tgl_update)
+        inputs_layout.addLayout(tgl_update_layout)
+        self.nama = QLineEdit(); self.nama.setPlaceholderText("Nama"); inputs_layout.addWidget(self.nama)
 
-        # Nama
-        nama_layout = QHBoxLayout()
-        nama_layout.setContentsMargins(0, 0, 0, 0)
-        self.nama = QLineEdit()
-        self.nama.setPlaceholderText("Nama")
-        nama_layout.addWidget(self.nama)
-        form_layout.addRow(nama_layout)
+        nik_nkk_row = QHBoxLayout(); nik_nkk_row.setContentsMargins(0,0,0,0); nik_nkk_row.setSpacing(gap)
+        self.nik = QLineEdit(); self.nik.setPlaceholderText("NIK")
+        self.nkk = QLineEdit(); self.nkk.setPlaceholderText("NKK")
+        nik_nkk_row.addWidget(self.nik); nik_nkk_row.addWidget(self.nkk)
+        inputs_layout.addLayout(nik_nkk_row)
 
-        # NIK & NKK
-        nik_nkk_layout = QHBoxLayout()
-        nik_nkk_layout.setContentsMargins(0, 0, 0, 0)
-        nik_nkk_layout.setSpacing(4)
-        self.nik = QLineEdit()
-        self.nik.setPlaceholderText("NIK")
-        self.nkk = QLineEdit()
-        self.nkk.setPlaceholderText("NKK")
-        nik_nkk_layout.addWidget(self.nik)
-        nik_nkk_layout.addWidget(self.nkk)
-        form_layout.addRow(nik_nkk_layout)
+        self.tgl_lahir = QLineEdit(); self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)"); inputs_layout.addWidget(self.tgl_lahir)
 
-        # Tanggal Lahir
-        tgl_lahir_layout = QHBoxLayout()
-        tgl_lahir_layout.setContentsMargins(0, 0, 0, 0)
-        self.tgl_lahir = QLineEdit()
-        self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
-        tgl_lahir_layout.addWidget(self.tgl_lahir)
-        form_layout.addRow(tgl_lahir_layout)
-
-        # Umur slider
-        umur_layout = QHBoxLayout()
-        umur_layout.setContentsMargins(0, 0, 0, 0)
-        umur_layout.setSpacing(4)
-        self.umur_slider = QSlider(Qt.Orientation.Horizontal)
-        self.umur_slider.setMinimum(0)
-        self.umur_slider.setMaximum(100)
-        self.umur_slider.setValue(0)
-        self.umur_label = QLabel("0")
-        self.umur_label.setMinimumWidth(20)
-        self.umur_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Umur
+        umur_container = QVBoxLayout(); umur_container.setContentsMargins(0,0,0,0); umur_container.setSpacing(gap)
+        lbl_umur = QLabel("Umur")
+        umur_layout = QHBoxLayout(); umur_layout.setContentsMargins(2,0,2,0); umur_layout.setSpacing(gap)
+        self.umur_slider = QSlider(Qt.Orientation.Horizontal); self.umur_slider.setRange(0,100)
+        self.umur_label = QLabel("0"); self.umur_label.setMinimumWidth(26); self.umur_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.umur_slider.valueChanged.connect(self.update_umur_label)
-        umur_layout.addWidget(self.umur_slider)
-        umur_layout.addWidget(self.umur_label)
-        form_layout.addRow("Umur", umur_layout)
+        umur_layout.addWidget(self.umur_slider); umur_layout.addWidget(self.umur_label)
+        umur_container.addWidget(lbl_umur); umur_container.addLayout(umur_layout)
+        inputs_layout.addLayout(umur_container)
 
-        main_layout.addLayout(form_layout)
+        main_layout.addLayout(inputs_layout)
 
-        # Dropdowns and Alamat
-        grid_layout = QGridLayout()
-        grid_layout.setSpacing(4)
-        grid_layout.setContentsMargins(0, 0, 0, 0)
-        self.keterangan = QComboBox()
-        self.kelamin = QComboBox()
-        self.kawin = QComboBox()
-        self.disabilitas = QComboBox()
-        self.ktp_el = QComboBox()
-        self.sumber = QComboBox()
-        self.rank = QComboBox()
-        self.alamat = QLineEdit()
-        self.alamat.setPlaceholderText("Alamat")
-
-        self.keterangan.addItems([
-            "Keterangan",
-            "1 (Meninggal)",
-            "2 (Ganda)",
-            "3 (Di Bawah Umur)",
-            "4 (Pindah Domisili)",
-            "5 (WNA)",
-            "6 (TNI)",
-            "7 (Polri)",
-            "8 (Salah TPS)",
-            "U (Ubah)",
-            "90 (Keluar Loksus)",
-            "91 (Meninggal)",
-            "92 (Ganda)",
-            "93 (Di Bawah Umur)",
-            "94 (Pindah Domisili)",
-            "95 (WNA)",
-            "96 (TNI)",
-            "97 (Polri)"
-        ])
-        self.kelamin.addItems(["Kelamin", "L", "P"])
-        self.kawin.addItems(["Kawin", "S", "B", "P"])
-        self.disabilitas.addItems(["Disabilitas", "0", "1", "2", "3", "4"])
-        self.ktp_el.addItems(["KTP-el", "B", "K", "S"])
-        self.sumber.addItems(["Sumber", "DP4", "DPTb", "DPK"])
-        self.rank.addItems(["Rank"]) # Placeholder
-
-        grid_layout.addWidget(self.keterangan, 0, 0)
-        grid_layout.addWidget(self.kelamin, 0, 1)
-        grid_layout.addWidget(self.kawin, 0, 2)
-        grid_layout.addWidget(self.disabilitas, 1, 0)
-        grid_layout.addWidget(self.ktp_el, 1, 1)
-        grid_layout.addWidget(self.sumber, 1, 2)
-        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)
-        grid_layout.addWidget(self.rank, 2, 2)
+        # Dropdown grid
+        grid_layout = QGridLayout(); grid_layout.setContentsMargins(0,0,0,0)
+        grid_layout.setHorizontalSpacing(gap); grid_layout.setVerticalSpacing(gap)
+        self.keterangan = CustomComboBox(); self.kelamin = CustomComboBox(); self.kawin = CustomComboBox()
+        self.disabilitas = CustomComboBox(); self.ktp_el = CustomComboBox(); self.sumber = CustomComboBox(); self.rank = CustomComboBox()
+        self.alamat = QLineEdit(); self.alamat.setPlaceholderText("Alamat")
+        self.keterangan.addItems(["Keterangan","1 (Meninggal)","2 (Ganda)","3 (Di Bawah Umur)","4 (Pindah Domisili)","5 (WNA)","6 (TNI)","7 (Polri)","8 (Salah TPS)","U (Ubah)","90 (Keluar Loksus)","91 (Meninggal)","92 (Ganda)","93 (Di Bawah Umur)","94 (Pindah Domisili)","95 (WNA)","96 (TNI)","97 (Polri)"])
+        self.kelamin.addItems(["Kelamin","L","P"])
+        self.kawin.addItems(["Kawin","S","B","P"])
+        self.disabilitas.addItems(["Disabilitas","0 (Normal)","1 (Fisik)","2 (Intelektual)","3 (Mental)","4 (Sensorik Wicara)","5 (Sensorik Rungu)","6 (Sensorik Netra)"])
+        self.ktp_el.addItems(["KTP-el","B","S"])
+        self.sumber.addItems(["Sumber","DP4","DPTb","DPK"])
+        self.rank.addItems(["Rank","Aktif","Ubah","TMS","Baru"])
+        grid_layout.addWidget(self.keterangan,0,0); grid_layout.addWidget(self.kelamin,0,1); grid_layout.addWidget(self.kawin,0,2)
+        grid_layout.addWidget(self.disabilitas,1,0); grid_layout.addWidget(self.ktp_el,1,1); grid_layout.addWidget(self.sumber,1,2)
+        grid_layout.addWidget(self.alamat,2,0,1,2); grid_layout.addWidget(self.rank,2,2)
+        main_layout.addSpacing(gap)
         main_layout.addLayout(grid_layout)
 
         # Checkboxes
-        checkbox_layout = QGridLayout()
-        checkbox_layout.setSpacing(4)
-        checkbox_layout.setContentsMargins(0, 0, 0, 0)
-        self.cb_ganda = QCheckBox("Ganda")
-        self.cb_invalid_tgl = QCheckBox("Invalid Tgl")
-        self.cb_nkk_terpisah = QCheckBox("NKK Terpisah")
-        self.cb_analisis_tms = QCheckBox("Analisis TMS 8")
-        checkbox_layout.addWidget(self.cb_ganda, 0, 0)
-        checkbox_layout.addWidget(self.cb_invalid_tgl, 0, 1)
-        checkbox_layout.addWidget(self.cb_nkk_terpisah, 1, 0)
-        checkbox_layout.addWidget(self.cb_analisis_tms, 1, 1)
+        checkbox_layout = QGridLayout(); checkbox_layout.setContentsMargins(0,0,0,0)
+        checkbox_layout.setHorizontalSpacing(gap); checkbox_layout.setVerticalSpacing(gap)
+        self.cb_ganda = CustomCheckBox("Ganda"); self.cb_invalid_tgl = CustomCheckBox("Invalid Tgl")
+        self.cb_nkk_terpisah = CustomCheckBox("NKK Terpisah"); self.cb_analisis_tms = CustomCheckBox("Analisis TMS 8")
+        for cb in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+            cb.setFixedHeight(22)
+        checkbox_layout.addWidget(self.cb_ganda,0,0); checkbox_layout.addWidget(self.cb_invalid_tgl,0,1)
+        checkbox_layout.addWidget(self.cb_nkk_terpisah,1,0); checkbox_layout.addWidget(self.cb_analisis_tms,1,1)
+        main_layout.addSpacing(gap)
         main_layout.addLayout(checkbox_layout)
 
-        # Radio Buttons
-        radio_layout = QHBoxLayout()
-        radio_layout.setSpacing(6)
-        radio_layout.setContentsMargins(0, 0, 0, 0)
-        self.rb_reguler = QRadioButton("Reguler")
-        self.rb_khusus = QRadioButton("Khusus")
-        self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
+        # Radio buttons
+        radio_layout = QHBoxLayout(); radio_layout.setContentsMargins(0,0,0,0); radio_layout.setSpacing(gap)
+        self.rb_reguler = QRadioButton("Reguler"); self.rb_khusus = QRadioButton("Khusus"); self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
         self.rb_reguler_khusus.setChecked(True)
-        radio_layout.addWidget(self.rb_reguler)
-        radio_layout.addWidget(self.rb_khusus)
-        radio_layout.addWidget(self.rb_reguler_khusus)
+        for rb in [self.rb_reguler, self.rb_khusus, self.rb_reguler_khusus]:
+            radio_layout.addWidget(rb)
+        main_layout.addSpacing(gap)
         main_layout.addLayout(radio_layout)
 
-        # Separator line sebelum tombol
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        line.setStyleSheet("background-color: #e0e0e0;")
-        main_layout.addWidget(line)
-
-        # Buttons dengan style yang lebih baik
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 8, 0, 5)
-        btn_layout.setSpacing(8)
-        
-        self.btn_reset = QPushButton("Reset")
-        self.btn_reset.setObjectName("resetBtn")
-        self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        self.btn_filter = QPushButton("Filter")
-        self.btn_filter.setObjectName("filterBtn")
-        self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
-        
+        # Buttons
+        btn_layout = QHBoxLayout(); btn_layout.setContentsMargins(0,4,0,4); btn_layout.setSpacing(gap)
+        self.btn_reset = QPushButton("Reset"); self.btn_reset.setObjectName("resetBtn"); self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_filter = QPushButton("Filter"); self.btn_filter.setObjectName("filterBtn"); self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reset.clicked.connect(self.reset_filters)
-        # Note: parent (MainWindow) will connect btn_reset.clicked to clear filters
-        
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.btn_reset)
-        btn_layout.addWidget(self.btn_filter)
+        btn_layout.addStretch(); btn_layout.addWidget(self.btn_reset); btn_layout.addWidget(self.btn_filter); btn_layout.addStretch()
+        main_layout.addSpacing(gap)
         main_layout.addLayout(btn_layout)
-        
-        # Set scroll content widget
+
+        # Finalize
         scroll_area.setWidget(scroll_content)
         main_container_layout.addWidget(scroll_area)
 
+        # Tinggi input & combo
+        desired_height = 38
+        for w in [self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, self.alamat,
+                  self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
+            w.setFixedHeight(desired_height)
+
+    # ==========================
+    # Method: Reset Filters
+    # ==========================
     def reset_filters(self):
         self.tgl_update.clear()
         self.nama.clear()
@@ -796,6 +1039,133 @@ class FilterSidebar(QWidget):
     def get_filters(self):
         keterangan_text = self.keterangan.currentText()
         keterangan_value = keterangan_text.split(' ')[0] if keterangan_text != "Keterangan" else ""
+        disabilitas_text = self.disabilitas.currentText()
+        disabilitas_value = disabilitas_text.split(' ')[0] if disabilitas_text != "Disabilitas" else ""
+        rank_text = self.rank.currentText()
+        rank_value = rank_text if rank_text != "Rank" else ""
+        # Parse rentang tanggal update (format: DD/MM/YYYY - DD/MM/YYYY)
+        last_update_start = ""; last_update_end = ""
+        raw_range = self.tgl_update.text().strip()
+        if raw_range and ' - ' in raw_range:
+            part_start, part_end = raw_range.split(' - ', 1)
+            if self._valid_date(part_start) and self._valid_date(part_end):
+                last_update_start, last_update_end = part_start, part_end
+        return {
+            "nama": self.nama.text().strip(),
+            "nik": self.nik.text().strip(),
+            "nkk": self.nkk.text().strip(),
+            "tgl_lahir": self.tgl_lahir.text().strip(),
+            "umur": self.umur_slider.value(),
+            "keterangan": keterangan_value,
+            "jk": self.kelamin.currentText() if self.kelamin.currentText() != "Kelamin" else "",
+            "sts": self.kawin.currentText() if self.kawin.currentText() != "Kawin" else "",
+            "dis": disabilitas_value,
+            "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
+            "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
+            "rank": rank_value,
+            "last_update_start": last_update_start,
+            "last_update_end": last_update_end
+        }
+
+    def open_date_range_picker(self):
+        # Jika sudah ada nilai sebelumnya, parse agar pramuat
+        start = end = None
+        txt = self.tgl_update.text().strip()
+        if txt and ' - ' in txt:
+            s,e = txt.split(' - ',1)
+            try:
+                start = datetime.strptime(s, "%d/%m/%Y").date()
+                end = datetime.strptime(e, "%d/%m/%Y").date()
+            except ValueError:
+                start = end = None
+        dlg = DateRangePickerDialog(self, start, end)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            s,e = dlg.get_range()
+            if s and e:
+                self.tgl_update.setText(f"{s.strftime('%d/%m/%Y')} - {e.strftime('%d/%m/%Y')}")
+
+    def _valid_date(self, s: str) -> bool:
+        try:
+            datetime.strptime(s, "%d/%m/%Y")
+            return True
+        except ValueError:
+            return False
+
+    def apply_theme(self, mode):
+        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+            checkbox.setTheme(mode)
+        for combo in [self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
+            combo.setTheme(mode)
+        if mode == "dark":
+            self.setStyleSheet("""
+                QWidget { font-family: 'Segoe UI', 'Calibri'; font-size: 9px; background: #1e1e1e; color: #d4d4d4; }
+                QScrollArea { border: none; background: #1e1e1e; }
+                QScrollBar:vertical { border: none; background: #3e3e42; width: 6px; margin: 0px; }
+                QScrollBar::handle:vertical { background: #666666; border-radius: 3px; min-height: 20px; }
+                QScrollBar::handle:vertical:hover { background: #888888; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+                QLineEdit, QComboBox { padding: 8px 10px; border: 1px solid #555; border-radius: 4px; background: #2d2d30; min-height: 34px; color: #d4d4d4; font-size: 10px; }
+                QLineEdit:focus, QComboBox:focus { border: 1px solid #888; }
+                QComboBox QListView { background: #2d2d30; border: 1px solid #555; selection-background-color: #094771; }
+                QSlider::groove:horizontal { height: 6px; background: #2d2d30; border-radius: 3px; }
+                QSlider::handle:horizontal { background: #007acc; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
+                QPushButton#resetBtn { background: #444; border: 1px solid #666; border-radius: 4px; padding: 6px 14px; }
+                QPushButton#resetBtn:hover { background: #555; }
+                QPushButton#filterBtn { background: #0e639c; border: 1px solid #1177bb; border-radius: 4px; padding: 6px 14px; }
+                QPushButton#filterBtn:hover { background: #1177bb; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QWidget { font-family: 'Segoe UI', 'Calibri'; font-size: 9px; background: #f2f2f2; color: #222; }
+                QScrollArea { border: none; background: #f2f2f2; }
+                QScrollBar:vertical { border: none; background: #d0d0d0; width: 6px; margin: 0px; }
+                QScrollBar::handle:vertical { background: #999; border-radius: 3px; min-height: 20px; }
+                QScrollBar::handle:vertical:hover { background: #777; }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+                QLineEdit, QComboBox { padding: 8px 10px; border: 1px solid #bbb; border-radius: 4px; background: #ffffff; min-height: 34px; color: #222; font-size: 10px; }
+                QLineEdit:focus, QComboBox:focus { border: 1px solid #888; }
+                QComboBox QListView { background: #ffffff; border: 1px solid #bbb; selection-background-color: #d7ebff; }
+                QSlider::groove:horizontal { height: 6px; background: #d0d0d0; border-radius: 3px; }
+                QSlider::handle:horizontal { background: #0e639c; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
+                QPushButton#resetBtn { background: #e0e0e0; border: 1px solid #ccc; border-radius: 4px; padding: 6px 14px; }
+                QPushButton#resetBtn:hover { background: #dadada; }
+                QPushButton#filterBtn { background: #0e639c; border: 1px solid #1177bb; border-radius: 4px; padding: 6px 14px; color: #fff; }
+                QPushButton#filterBtn:hover { background: #1177bb; }
+            """)
+
+# =====================================================
+# FixedDockWidget untuk mencegah resize lebar sidebar
+# =====================================================
+class FixedDockWidget(QDockWidget):
+    def __init__(self, title: str, parent=None, fixed_width: int = 320):
+        super().__init__(title, parent)
+        self._fixed_width = fixed_width
+        self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        # Hanya bisa di-close, tidak bisa di-float / ubah size
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        self.setMinimumWidth(fixed_width)
+        self.setMaximumWidth(fixed_width)
+
+    def setWidget(self, widget: QWidget) -> None:  # type: ignore
+        super().setWidget(widget)
+        widget.setFixedWidth(self._fixed_width)
+
+    def sizeHint(self):  # type: ignore
+        sz = super().sizeHint()
+        sz.setWidth(self._fixed_width)
+        return sz
+        keterangan_text = self.keterangan.currentText()
+        keterangan_value = keterangan_text.split(' ')[0] if keterangan_text != "Keterangan" else ""
+        
+        # Extract disability value properly (handle numbers with descriptions)
+        disabilitas_text = self.disabilitas.currentText()
+        disabilitas_value = disabilitas_text.split(' ')[0] if disabilitas_text != "Disabilitas" else ""
+        
+        # Extract rank value properly
+        rank_text = self.rank.currentText()
+        rank_value = rank_text if rank_text != "Rank" else ""
         
         return {
             "nama": self.nama.text().strip(),
@@ -806,13 +1176,22 @@ class FilterSidebar(QWidget):
             "keterangan": keterangan_value,
             "jk": self.kelamin.currentText() if self.kelamin.currentText() != "Kelamin" else "",
             "sts": self.kawin.currentText() if self.kawin.currentText() != "Kawin" else "",
-            "dis": self.disabilitas.currentText() if self.disabilitas.currentText() != "Disabilitas" else "",
+            "dis": disabilitas_value,
             "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
-            "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else ""
+            "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
+            "rank": rank_value
         }
     
     def apply_theme(self, mode):
         """Apply theme to FilterSidebar"""
+        # Set theme for custom checkboxes
+        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+            checkbox.setTheme(mode)
+        
+        # Atur tema untuk CustomComboBox
+        for combo in [self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
+            combo.setTheme(mode)
+            
         if mode == "dark":
             self.setStyleSheet("""
                 QWidget {
@@ -848,13 +1227,13 @@ class FilterSidebar(QWidget):
                     background: none;
                 }
                 QLineEdit, QComboBox {
-                    padding: 6px 8px;
+                    padding: 8px 10px;
                     border: 1px solid #555;
-                    border-radius: 3px;
+                    border-radius: 4px;
                     background: #2d2d30;
-                    min-height: 20px;
+                    min-height: 34px; /* disesuaikan dengan tinggi baru */
                     color: #d4d4d4;
-                    font-size: 9px;
+                    font-size: 10px;
                 }
                 QLineEdit:focus, QComboBox:focus {
                     border: 1px solid #ff9800;
@@ -894,40 +1273,18 @@ class FilterSidebar(QWidget):
                 QPushButton:pressed {
                     background: #f57c00;
                 }
-                QCheckBox {
-                    padding: 2px;
-                    spacing: 4px;
-                    color: #d4d4d4;
-                    background: transparent;
-                    font-size: 9px;
-                }
-                QCheckBox::indicator {
-                    width: 14px;
-                    height: 14px;
-                    border: 2px solid #555;
-                    border-radius: 2px;
-                    background: #2d2d30;
-                }
-                QCheckBox::indicator:checked {
-                    background: #2d2d30;
-                    border-color: #ff9800;
-                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #777;
-                }
                 QRadioButton {
-                    spacing: 4px;
-                    padding: 2px;
+                    spacing: 3px;
+                    padding: 1px;
                     color: #d4d4d4;
                     background: transparent;
-                    font-size: 9px;
+                    font-size: 8px;
                 }
                 QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #555;
-                    border-radius: 7px;
+                    width: 10px;
+                    height: 10px;
+                    border: 1px solid #555;
+                    border-radius: 5px;
                     background: #2d2d30;
                 }
                 QRadioButton::indicator:checked {
@@ -959,6 +1316,13 @@ class FilterSidebar(QWidget):
                     border: none;
                     padding-right: 6px;
                     width: 16px;
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                }
+                QComboBox::down-arrow {
+                    image: none;
+                    width: 0;
+                    height: 0;
                 }
                 QComboBox:hover {
                     border: 1px solid #ff9800;
@@ -1002,16 +1366,16 @@ class FilterSidebar(QWidget):
                     background: none;
                 }
                 QLineEdit, QComboBox {
-                    padding: 6px 8px;
+                    padding: 8px 10px;
                     border: 1px solid #ddd;
-                    border-radius: 3px;
+                    border-radius: 4px;
                     background: white;
-                    min-height: 20px;
+                    min-height: 34px; /* disesuaikan dengan tinggi baru */
                     color: #333;
-                    font-size: 9px;
+                    font-size: 10px;
                 }
                 QLineEdit:focus, QComboBox:focus {
-                    border: 1px solid #4CAF50;
+                    border: 1px solid #ff9800;
                     outline: none;
                 }
                 QLineEdit::placeholder {
@@ -1058,30 +1422,37 @@ class FilterSidebar(QWidget):
                 QCheckBox::indicator {
                     width: 14px;
                     height: 14px;
-                    border: 2px solid #ddd;
-                    border-radius: 2px;
-                    background: white;
+                    border: 1px solid #888;
+                    border-radius: 4px;
+                    background: transparent;
                 }
                 QCheckBox::indicator:checked {
-                    background: white;
-                    border-color: #4CAF50;
-                    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-apply-32.png);
+                    background-color: #ff9900;
+                    border: 1px solid #ff9900;
+                }
+                QCheckBox::indicator:checked::after {
+                    content: "✓";
+                    color: white;
+                    font-weight: bold;
+                    font-size: 10px;
+                    text-align: center;
+                    line-height: 14px;
                 }
                 QCheckBox::indicator:hover {
-                    border-color: #aaa;
+                    border-color: #ff9900;
                 }
                 QRadioButton {
-                    spacing: 4px;
-                    padding: 2px;
+                    spacing: 3px;
+                    padding: 1px;
                     color: #333;
                     background: transparent;
-                    font-size: 9px;
+                    font-size: 8px;
                 }
                 QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #ddd;
-                    border-radius: 7px;
+                    width: 10px;
+                    height: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
                     background: white;
                 }
                 QRadioButton::indicator:checked {
@@ -1113,6 +1484,13 @@ class FilterSidebar(QWidget):
                     border: none;
                     padding-right: 6px;
                     width: 16px;
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                }
+                QComboBox::down-arrow {
+                    image: none;
+                    width: 0;
+                    height: 0;
                 }
                 QComboBox:hover {
                     border: 1px solid #ff9800;
@@ -1486,10 +1864,10 @@ class MainWindow(QMainWindow):
         if self.filter_dock is None:
             # Create filter sidebar and dock widget
             self.filter_sidebar = FilterSidebar(self)
-            self.filter_dock = QDockWidget("Filter", self)
+            # Gunakan FixedDockWidget agar lebar benar-benar fix dan tidak bisa digeser
+            fixed_width = 320
+            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=fixed_width)
             self.filter_dock.setWidget(self.filter_sidebar)
-            self.filter_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
-            self.filter_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
             
             # Apply current theme to filter sidebar
             current_theme = self.load_theme()
@@ -1504,9 +1882,7 @@ class MainWindow(QMainWindow):
             # Add to main window
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
             
-            # Set initial size
-            self.filter_dock.setMinimumWidth(300)
-            self.filter_dock.setMaximumWidth(400)
+            # Lebar sudah dikunci oleh FixedDockWidget; tidak perlu setFixedWidth lagi
         
         # Toggle visibility
         self.filter_dock.setVisible(not self.filter_dock.isVisible())
@@ -1652,6 +2028,48 @@ class MainWindow(QMainWindow):
         # Source filter
         if filters["sumber"] and filters["sumber"] != item.get("SUMBER", ""):
             return False
+        
+        # Rank filter - map rank values to KET values
+        if filters["rank"]:
+            rank_mapping = {
+                "Aktif": "0",      # KET = 0 means active
+                "Ubah": "U",       # KET = U means changed
+                "TMS": ["1", "2", "3", "4", "5", "6", "7", "8"],  # KET = 1-8 means TMS
+                "Baru": "B"        # KET = B means new
+            }
+            
+            ket_value = item.get("KET", "")
+            rank_filter = filters["rank"]
+            
+            if rank_filter == "TMS":
+                if ket_value not in rank_mapping["TMS"]:
+                    return False
+            else:
+                expected_ket = rank_mapping.get(rank_filter, "")
+                if ket_value != expected_ket:
+                    return False
+
+        # LastUpdate date range filter
+        if filters.get("last_update_start") and filters.get("last_update_end"):
+            raw_last = item.get("LastUpdate", "").strip()
+            if not raw_last:
+                return False
+            parsed = None
+            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+                try:
+                    parsed = datetime.strptime(raw_last, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if not parsed:
+                return False
+            try:
+                start_dt = datetime.strptime(filters["last_update_start"], "%d/%m/%Y").date()
+                end_dt = datetime.strptime(filters["last_update_end"], "%d/%m/%Y").date()
+            except ValueError:
+                return False
+            if parsed < start_dt or parsed > end_dt:
+                return False
             
         return True
 
