@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
-    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget, QInputDialog
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
@@ -493,6 +493,45 @@ def _decrypt_file(enc_path: str, plain_path: str):
 
 # === DB utama ===
 DB_NAME = os.path.join(BASE_DIR, "app.db")
+
+
+#####################################*************########################################
+#####################################*************########################################
+#####################################*************########################################
+def is_dev_mode_requested():
+    """Cek apakah mode Dev diaktifkan via environment variable atau argumen CLI."""
+    if os.getenv("NEXVO_DEV_MODE", "") == "1":
+        return True
+    if "--dev" in sys.argv:
+        return True
+    return False
+
+
+def confirm_dev_mode(parent=None):
+    """
+    Jika ada password dev di environment variable, minta password dulu.
+    Jika tidak, hanya tampilkan konfirmasi yes/no.
+    """
+    dev_pw = os.getenv("NEXVO_DEV_PASSWORD", "").strip()
+    if dev_pw:
+        pw, ok = QInputDialog.getText(
+            parent, "Dev Mode",
+            "Masukkan DEV password:",
+            echo=QInputDialog.EchoMode.Password
+        )
+        if not ok:
+            return False
+        return pw == dev_pw
+    else:
+        ans = QMessageBox.question(
+            parent, "Dev Mode",
+            "Jalankan aplikasi dalam MODE DEV (bypass login & OTP)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        return ans == QMessageBox.StandardButton.Yes
+#####################################*************########################################
+#####################################*************########################################
+#####################################*************########################################
 
 def get_kecamatan():
     conn = sqlite3.connect(DB_NAME)
@@ -4411,8 +4450,44 @@ def hapus_semua_data():
 # =====================================================
 # Main
 # =====================================================
+#if __name__ == "__main__":
+#    app = QApplication(sys.argv)
+#    login = LoginWindow()
+#    login.show()
+#    sys.exit(app.exec())
+
+
+##################################################**************************############################################
+##################################################**************************############################################
+##################################################**************************############################################
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    if getattr(sys, "frozen", False):
+        os.environ.pop("NEXVO_DEV_MODE", None)
+        os.environ.pop("NEXVO_DEV_PASSWORD", None)
+
+    # Jika kamu punya fungsi untuk tema, panggil di sini
+    # apply_global_palette(app, "dark")
+
+    # === MODE DEV ===
+    if is_dev_mode_requested():
+        ok = confirm_dev_mode(None)
+        if ok:
+            dev_nama = "ARI ARDIANA"
+            dev_kecamatan = "TANJUNGJAYA"
+            dev_desa = "SUKASENANG"
+            dev_tahapan = "DPHP"
+            dev_dbname = "dphp.db"  # sesuaikan dengan DB default kamu
+
+            # langsung buka MainWindow
+            mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, dev_dbname, dev_tahapan)
+            mw.show()
+            sys.exit(app.exec())
+        # jika batal, lanjut ke login normal
+
+    # === NORMAL MODE ===
     login = LoginWindow()
     login.show()
     sys.exit(app.exec())
