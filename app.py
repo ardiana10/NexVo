@@ -997,6 +997,7 @@ class MainWindow(QMainWindow):
 
         # Path database absolut
         self.db_name = db_name
+        self._init_db_pragmas()
 
         # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
         base = os.path.basename(self.db_name)
@@ -1293,6 +1294,7 @@ class MainWindow(QMainWindow):
         self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
         self._in_batch_mode = False
         self._warning_shown_in_batch = {}
+        self._install_safe_shutdown_hooks()
 
     def _on_row_checkbox_changed_for_header_sync(self, item):
         # Hanya respons kalau kolom checkbox (kolom 0) yang berubah
@@ -1974,6 +1976,7 @@ class MainWindow(QMainWindow):
         shared_conn = shared_cur = None
         if is_batch:
             shared_conn = sqlite3.connect(self.db_name)
+            shared_conn.execute("PRAGMA busy_timeout=3000;")
             shared_cur = shared_conn.cursor()
             self._shared_conn = shared_conn
             self._shared_cur = shared_cur
@@ -2159,6 +2162,7 @@ class MainWindow(QMainWindow):
                 """, (rowid, sig["NIK"], sig["NKK"], sig["DPID"], sig["TGL_LHR"], last_update))
             else:
                 with sqlite3.connect(self.db_name) as conn:
+                    conn.execute("PRAGMA busy_timeout=3000;")
                     conn.execute("""
                         DELETE FROM data_pemilih
                         WHERE ROWID = ?
@@ -2981,6 +2985,96 @@ class MainWindow(QMainWindow):
         eff.setColor(shadow_color)
         menu.setGraphicsEffect(eff)
         menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def _install_safe_shutdown_hooks(self):
+        # Pastikan flag & pointer ada
+        if not hasattr(self, "_in_batch_mode"):
+            self._in_batch_mode = False
+        self._shared_conn = getattr(self, "_shared_conn", None)
+        self._shared_cur  = getattr(self, "_shared_cur", None)
+
+        app = QApplication.instance()
+        if app:
+            # Dipanggil saat app akan keluar "normal"
+            app.aboutToQuit.connect(lambda: self._flush_db("aboutToQuit"))
+
+        # Panggil saat proses berakhir (nyaris selalu terpanggil)
+        atexit.register(lambda: self._flush_db("atexit"))
+
+        # Tangani Ctrl+C / kill jika tersedia (di Windows sebagian sinyal terbatas)
+        try:
+            import signal
+            signal.signal(signal.SIGINT,  lambda s, f: self._graceful_terminate("SIGINT"))
+            signal.signal(signal.SIGTERM, lambda s, f: self._graceful_terminate("SIGTERM"))
+        except Exception:
+            pass  # aman dilewati jika tidak didukung
+
+    def _graceful_terminate(self, source):
+        """Commit dulu, lalu keluar rapi."""
+        try:
+            self._flush_db(source)
+        finally:
+            app = QApplication.instance()
+            if app:
+                app.quit()
+
+    def closeEvent(self, event):
+        """Klik tombol X di kanan atas juga lewat sini."""
+        self._flush_db("closeEvent")
+        super().closeEvent(event)
+
+    def _flush_db(self, where=""):
+        """
+        Pastikan semua perubahan tersimpan sebelum keluar.
+        - Commit transaksi batch (shared cursor) bila masih terbuka
+        - Tutup cursor & koneksi bersama
+        - Aktifkan kembali UI supaya tidak blank saat keluar
+        """
+        try:
+            # Pastikan UI terlihat
+            if hasattr(self, "table") and self.table:
+                try:
+                    self.table.setUpdatesEnabled(True)
+                    self.table.viewport().update()
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+
+            # Kalau sedang batch dan ada shared connection → commit sekali
+            if getattr(self, "_in_batch_mode", False) and getattr(self, "_shared_conn", None):
+                try:
+                    self._shared_conn.commit()
+                except Exception:
+                    # Jangan agresif pas shutdown
+                    pass
+                finally:
+                    try:
+                        if getattr(self, "_shared_cur", None):
+                            self._shared_cur.close()
+                    except Exception:
+                        pass
+                    try:
+                        self._shared_conn.close()
+                    except Exception:
+                        pass
+                    self._shared_cur  = None
+                    self._shared_conn = None
+                    self._in_batch_mode = False
+        except Exception as e:
+            # Hindari popup saat shutdown; cukup log ke stderr
+            print(f"[WARN] _flush_db({where}) error: {e}", file=sys.stderr)
+
+    def _init_db_pragmas(self):
+        try:
+            import sqlite3
+            with sqlite3.connect(self.db_name) as conn:
+                cur = conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL;")
+                cur.execute("PRAGMA synchronous=NORMAL;")
+                cur.execute("PRAGMA busy_timeout=3000;")  # 3 detik
+                conn.commit()
+        except Exception as e:
+            print(f"[WARN] init pragmas: {e}", file=sys.stderr)
 
 # =====================================================
 # Login Window (dengan tambahan pilihan Tahapan)
