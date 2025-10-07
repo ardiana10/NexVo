@@ -13,6 +13,14 @@ from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation
 from io import BytesIO
 
+# ===================================================
+# 🚀 MEMUAT VARIABEL LINGKUNGAN DARI FILE .env
+# ===================================================
+from dotenv import load_dotenv # 👈 Tambahkan import ini
+load_dotenv()
+# ===================================================
+
+
 def show_modern_warning(parent, title, text):
     """Tampilkan pesan peringatan (kuning)."""
     msg = QMessageBox(parent)
@@ -928,7 +936,7 @@ class FilterSidebar(QWidget):
         tgl_update_layout.addWidget(self.btn_tgl_update)
         inputs_layout.addLayout(tgl_update_layout)
         self.nama = QLineEdit(); self.nama.setPlaceholderText("Nama"); inputs_layout.addWidget(self.nama)
-
+        
         nik_nkk_row = QHBoxLayout(); nik_nkk_row.setContentsMargins(0,0,0,0); nik_nkk_row.setSpacing(gap)
         self.nik = QLineEdit(); self.nik.setPlaceholderText("NIK")
         self.nkk = QLineEdit(); self.nkk.setPlaceholderText("NKK")
@@ -1156,41 +1164,6 @@ class FixedDockWidget(QDockWidget):
         sz = super().sizeHint()
         sz.setWidth(self._fixed_width)
         return sz
-        keterangan_text = self.keterangan.currentText()
-        keterangan_value = keterangan_text.split(' ')[0] if keterangan_text != "Keterangan" else ""
-        
-        # Extract disability value properly (handle numbers with descriptions)
-        disabilitas_text = self.disabilitas.currentText()
-        disabilitas_value = disabilitas_text.split(' ')[0] if disabilitas_text != "Disabilitas" else ""
-        
-        # Extract rank value properly
-        rank_text = self.rank.currentText()
-        rank_value = rank_text if rank_text != "Rank" else ""
-        
-        return {
-            "nama": self.nama.text().strip(),
-            "nik": self.nik.text().strip(),
-            "nkk": self.nkk.text().strip(),
-            "tgl_lahir": self.tgl_lahir.text().strip(),
-            "umur": self.umur_slider.value(),
-            "keterangan": keterangan_value,
-            "jk": self.kelamin.currentText() if self.kelamin.currentText() != "Kelamin" else "",
-            "sts": self.kawin.currentText() if self.kawin.currentText() != "Kawin" else "",
-            "dis": disabilitas_value,
-            "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
-            "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
-            "rank": rank_value
-        }
-    
-    def apply_theme(self, mode):
-        """Apply theme to FilterSidebar"""
-        # Set theme for custom checkboxes
-        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
-            checkbox.setTheme(mode)
-        
-        # Atur tema untuk CustomComboBox
-        for combo in [self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
-            combo.setTheme(mode)
             
         if mode == "dark":
             self.setStyleSheet("""
@@ -1757,8 +1730,7 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu.addAction(action_import_baru)
             import_ecoklit_menu.addAction(action_import_tms)
             import_ecoklit_menu.addAction(action_import_ubah)
-
-       # === Toolbar ===
+        # === Toolbar ===
         toolbar = QToolBar("Toolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
@@ -4079,8 +4051,51 @@ def hapus_semua_data():
 # =====================================================
 # Main
 # =====================================================
+#if __name__ == "__main__":
+#   app = QApplication(sys.argv)
+#   login = LoginWindow()
+#   login.show()
+#   sys.exit(app.exec())
+
+# =====================================================
+# Main
+# =====================================================
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    login = LoginWindow()
-    login.show()
+
+    # Baca environment variable 'APP_MODE'.
+    # Jika tidak ditemukan, defaultnya adalah 'production' untuk keamanan.
+    app_mode = os.getenv('APP_MODE', 'production')
+
+    if app_mode == 'development':
+        # --- MODE PENGEMBANG AKTIF ---
+        print("================================================")
+        print("== 🚀 MENJALANKAN DALAM MODE PENGEMBANG ...  ==")
+        print("==      Login dan OTP akan dilewati.      ==")
+        print("================================================")
+
+        # Data tiruan (mock data) untuk testing, sesuaikan jika perlu
+        mock_username = "DEVELOPER"
+        mock_kecamatan = "KECAMATAN_TEST"
+        mock_desa = "DESA_TEST"
+        mock_tahapan = "DPHP"  # Pilih salah satu: DPHP, DPSHP, atau DPSHPA
+        
+        # Logika ini meniru `accept_login` untuk menentukan nama database
+        mock_db_name = os.path.join(BASE_DIR, f"{mock_tahapan}.db")
+
+        # Langsung buat dan tampilkan MainWindow
+        main_window = MainWindow(
+            username=mock_username,
+            kecamatan=mock_kecamatan,
+            desa=mock_desa,
+            db_name=mock_db_name,
+            tahapan=mock_tahapan
+        )
+        main_window.show()
+    else:
+        # --- MODE NORMAL (LOGIN) ---
+        # Kode ini akan berjalan jika APP_MODE bukan 'development'
+        login = LoginWindow()
+        login.show()
+
     sys.exit(app.exec())
