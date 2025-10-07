@@ -765,6 +765,33 @@ class SettingDialog(QDialog):
         self.accept()   # close dialog dengan "OK"
 
 # =====================================================
+# Utility function untuk proteksi dropdown
+# =====================================================
+def protect_combobox_from_scroll(combobox):
+    """Mencegah dropdown berubah nilai dengan scroll wheel atau keyboard tanpa diklik dulu."""
+    
+    def wheelEvent(event):
+        if not combobox.view().isVisible():
+            event.ignore()
+            return
+        # Jika dropdown terbuka, gunakan behavior default
+        QComboBox.wheelEvent(combobox, event)
+    
+    def keyPressEvent(event):
+        if not combobox.view().isVisible():
+            # Hanya izinkan Enter, Space, atau arrow down untuk membuka dropdown
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space, Qt.Key.Key_Down):
+                combobox.showPopup()
+            event.ignore()
+            return
+        # Jika dropdown terbuka, gunakan behavior default
+        QComboBox.keyPressEvent(combobox, event)
+    
+    # Override methods
+    combobox.wheelEvent = wheelEvent
+    combobox.keyPressEvent = keyPressEvent
+
+# =====================================================
 # Custom Checkbox untuk Filter Sidebar
 # =====================================================
 class CustomCheckBox(QCheckBox):
@@ -868,6 +895,23 @@ class CustomComboBox(QComboBox):
         self.theme = theme
         self.update()  # Memicu penggambaran ulang
 
+    def wheelEvent(self, event):
+        """Cegah scroll wheel kecuali dropdown sedang terbuka."""
+        if not self.view().isVisible():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event):
+        """Cegah keyboard navigation kecuali dropdown sedang terbuka."""
+        if not self.view().isVisible():
+            # Hanya izinkan Enter, Space, atau arrow down untuk membuka dropdown
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space, Qt.Key.Key_Down):
+                self.showPopup()
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         
@@ -927,14 +971,19 @@ class FilterSidebar(QWidget):
         inputs_layout.setSpacing(gap)
 
         # ====== Tanggal Update (Date Range Picker) ======
-        tgl_update_layout = QHBoxLayout(); tgl_update_layout.setContentsMargins(0,0,0,0); tgl_update_layout.setSpacing(4)
-        self.tgl_update = QLineEdit(); self.tgl_update.setPlaceholderText("Tanggal Update"); self.tgl_update.setReadOnly(True)
-        self.btn_tgl_update = QPushButton("📅")
-        self.btn_tgl_update.setFixedWidth(36)
-        self.btn_tgl_update.clicked.connect(self.open_date_range_picker)
-        tgl_update_layout.addWidget(self.tgl_update)
-        tgl_update_layout.addWidget(self.btn_tgl_update)
-        inputs_layout.addLayout(tgl_update_layout)
+        # Ganti: hilangkan tombol terpisah, jadikan field ini klik-able untuk buka dialog
+        self.tgl_update = QLineEdit()
+        self.tgl_update.setPlaceholderText("Tanggal Update")
+        self.tgl_update.setReadOnly(True)
+        self.tgl_update.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tgl_update.setToolTip("Klik untuk memilih rentang tanggal")
+        # Override mousePressEvent agar bertindak sebagai tombol
+        def _tgl_update_click(ev, orig=self.tgl_update):
+            if ev.button() == Qt.MouseButton.LeftButton:
+                self.open_date_range_picker()
+            QLineEdit.mousePressEvent(orig, ev)
+        self.tgl_update.mousePressEvent = _tgl_update_click  # type: ignore
+        inputs_layout.addWidget(self.tgl_update)
         self.nama = QLineEdit(); self.nama.setPlaceholderText("Nama"); inputs_layout.addWidget(self.nama)
         
         nik_nkk_row = QHBoxLayout(); nik_nkk_row.setContentsMargins(0,0,0,0); nik_nkk_row.setSpacing(gap)
@@ -969,7 +1018,23 @@ class FilterSidebar(QWidget):
         self.kawin.addItems(["Kawin","S","B","P"])
         self.disabilitas.addItems(["Disabilitas","0 (Normal)","1 (Fisik)","2 (Intelektual)","3 (Mental)","4 (Sensorik Wicara)","5 (Sensorik Rungu)","6 (Sensorik Netra)"])
         self.ktp_el.addItems(["KTP-el","B","S"])
-        self.sumber.addItems(["Sumber","DP4","DPTb","DPK"])
+        # Sumber data (ditambah sesuai permintaan)
+        # Pastikan opsi pertama adalah label placeholder agar filter bisa dianggap kosong saat posisi index 0
+        self.sumber.addItems([
+            "Sumber",
+            "dp4",
+            "trw3_2025",
+            "tms_trw 2 _2025",
+            "kemendagri",
+            "coklit",
+            "trw2_2025",
+            "ubah_trw 2 _2025",
+            "ganda kab",
+            "ganda prov",
+            "loksus",
+            "masyarakat",
+            "dpk"
+        ])
         self.rank.addItems(["Rank","Aktif","Ubah","TMS","Baru"])
         grid_layout.addWidget(self.keterangan,0,0); grid_layout.addWidget(self.kelamin,0,1); grid_layout.addWidget(self.kawin,0,2)
         grid_layout.addWidget(self.disabilitas,1,0); grid_layout.addWidget(self.ktp_el,1,1); grid_layout.addWidget(self.sumber,1,2)
@@ -1593,6 +1658,7 @@ class MainWindow(QMainWindow):
             "RW": 50,
             "DIS": 60,
             "KTPel": 80,
+            # Lebar SUMBER diperlebar supaya seluruh teks pilihan (misal: "ubah_trw 2 _2025") tidak terpotong
             "SUMBER": 100,
             "KET": 100,
             "TPS": 80,
@@ -1978,48 +2044,77 @@ class MainWindow(QMainWindow):
             return False
             
         # Keterangan filter
-        if filters["keterangan"] and filters["keterangan"] != item.get("KET", ""):
-            return False
+        if filters["keterangan"]:
+            ket_filter = filters["keterangan"].strip().upper()
+            ket_data = item.get("KET", "").strip().upper()
+            if ket_filter != ket_data:
+                return False
             
         # Gender filter
-        if filters["jk"] and filters["jk"] != item.get("JK", ""):
-            return False
+        if filters["jk"]:
+            jk_filter = filters["jk"].strip().upper()
+            jk_data = item.get("JK", "").strip().upper()
+            if jk_filter != jk_data:
+                return False
             
         # Marital status filter
-        if filters["sts"] and filters["sts"] != item.get("STS", ""):
-            return False
+        if filters["sts"]:
+            sts_filter = filters["sts"].strip().upper()
+            sts_data = item.get("STS", "").strip().upper()
+            if sts_filter != sts_data:
+                return False
             
         # Disability filter
-        if filters["dis"] and filters["dis"] != item.get("DIS", ""):
-            return False
+        if filters["dis"]:
+            dis_filter = filters["dis"].strip().upper()
+            dis_data = item.get("DIS", "").strip().upper()
+            if dis_filter != dis_data:
+                return False
             
         # KTP-el filter
-        if filters["ktpel"] and filters["ktpel"] != item.get("KTPel", ""):
-            return False
+        if filters["ktpel"]:
+            ktpel_filter = filters["ktpel"].strip().upper()
+            ktpel_data = item.get("KTPel", "").strip().upper()
+            if ktpel_filter != ktpel_data:
+                return False
             
         # Source filter
-        if filters["sumber"] and filters["sumber"] != item.get("SUMBER", ""):
-            return False
+        if filters["sumber"]:
+            sumber_filter = filters["sumber"].strip().upper()
+            sumber_data = item.get("SUMBER", "").strip().upper()
+            if sumber_filter != sumber_data:
+                return False
         
-        # Rank filter - map rank values to KET values
+        # Rank filter (Aktif / Ubah / Baru / TMS) adaptif
         if filters["rank"]:
-            rank_mapping = {
-                "Aktif": "0",      # KET = 0 means active
-                "Ubah": "U",       # KET = U means changed
-                "TMS": ["1", "2", "3", "4", "5", "6", "7", "8"],  # KET = 1-8 means TMS
-                "Baru": "B"        # KET = B means new
-            }
-            
-            ket_value = item.get("KET", "")
-            rank_filter = filters["rank"]
-            
-            if rank_filter == "TMS":
-                if ket_value not in rank_mapping["TMS"]:
-                    return False
+            rank_filter_raw = filters["rank"].strip().upper()
+            ket_raw = (item.get("KET", "") or "").strip().upper()
+            dpid_val = (item.get("DPID", "") or "").strip()
+
+            # Rekonstruksi nilai jika kosong
+            if not ket_raw:
+                if dpid_val and dpid_val != "0":
+                    ket_val = "0"  # dianggap aktif
+                else:
+                    ket_val = "B"  # dianggap baru
             else:
-                expected_ket = rank_mapping.get(rank_filter, "")
-                if ket_value != expected_ket:
-                    return False
+                ket_val = ket_raw
+
+            is_tms = ket_val in {"1","2","3","4","5","6","7","8"}
+
+            def matches_rank():
+                if rank_filter_raw == "AKTIF":
+                    return ket_val == "0"
+                if rank_filter_raw == "UBAH":
+                    return ket_val == "U"
+                if rank_filter_raw == "BARU":
+                    return ket_val == "B"
+                if rank_filter_raw == "TMS":
+                    return is_tms
+                return True
+
+            if not matches_rank():
+                return False
 
         # LastUpdate date range filter
         if filters.get("last_update_start") and filters.get("last_update_end"):
@@ -2706,10 +2801,8 @@ class MainWindow(QMainWindow):
                         if csv_col in header:
                             col_idx = header.index(csv_col)
                             val = row[col_idx].strip()
-
-                            # ⚡ Pastikan kolom KET selalu "0" saat import CSV
                             if app_col == "KET":
-                                val = "0"
+                                val = val.upper()
 
                             # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
@@ -2727,6 +2820,17 @@ class MainWindow(QMainWindow):
 
                             data_dict[app_col] = val
                             values.append(val)
+
+                    # Derivasi KET jika kosong berdasarkan STATUS
+                    if not data_dict.get("KET", "").strip():
+                        if status_val == "AKTIF":
+                            data_dict["KET"] = "0"
+                        elif status_val == "UBAH":
+                            data_dict["KET"] = "U"
+                        elif status_val == "BARU":
+                            data_dict["KET"] = "B"
+                        else:
+                            data_dict["KET"] = "0"
 
                     self.all_data.append(data_dict)
 
@@ -3300,6 +3404,7 @@ class LoginWindow(QWidget):
         self.tahapan_label = QLabel("Tahapan:")
         self.tahapan_combo = QComboBox()
         self.tahapan_combo.addItems(["-- Pilih Tahapan --", "DPHP", "DPSHP", "DPSHPA"])
+        protect_combobox_from_scroll(self.tahapan_combo)  # Proteksi dari scroll
         form_layout.addWidget(self.tahapan_label)
         form_layout.addWidget(self.tahapan_combo)
 
@@ -3714,6 +3819,7 @@ class RegisterWindow(QWidget):
         # Desa
         self.desa = QComboBox()
         self.desa.addItem("-- Pilih Desa --")
+        protect_combobox_from_scroll(self.desa)  # Proteksi dari scroll
         center_layout.addWidget(self.desa)
 
         # Password dan Konfirmasi
