@@ -1,4 +1,4 @@
-import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
+﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
