@@ -1,4 +1,4 @@
-﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
+﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode, hashlib, tempfile # type: ignore
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
@@ -8,9 +8,144 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget, QInputDialog
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator, QPalette
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
 from io import BytesIO
+from cryptography.fernet import Fernet
+
+
+# ===================== ENKRIPSI/DEKRIPSI DB (pakai nexvo.key) =====================
+
+# --- Konstanta format file terenkripsi ---
+MAGIC = b"NEXVOENC1"                 # header format/versi berkas terenkripsi
+SQLITE_HEADER = b"SQLite format 3"   # header DB SQLite
+
+# --- Manajemen lokasi key (portable + per-user) ---
+APP_NAME = "NexVo"
+KEY_FILENAME = "nexvo.key"
+
+def _user_key_dir() -> str:
+    """Folder default untuk menyimpan key yang pasti writable per-user."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+        return os.path.join(base, APP_NAME)
+    elif sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~/Library/Application Support"), APP_NAME)
+    else:
+        return os.path.join(os.path.expanduser("~/.config"), APP_NAME)
+
+def _portable_key_path() -> str:
+    """Coba cari nexvo.key di lokasi yang sama dengan EXE/skrip (portable mode)."""
+    base = os.path.dirname(getattr(sys, "frozen", False) and sys.executable or os.path.abspath(__file__))
+    return os.path.join(base, KEY_FILENAME)
+
+def _default_key_path() -> str:
+    """Lokasi fallback per-user (writable)."""
+    d = _user_key_dir()
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, KEY_FILENAME)
+
+def _resolve_key_path() -> str:
+    """
+    Urutan pencarian:
+      1) nexvo.key di folder EXE/skrip (portable mode)
+      2) nexvo.key di folder per-user (dibuat otomatis kalau belum ada)
+    """
+    p_portable = _portable_key_path()
+    if os.path.exists(p_portable):
+        return p_portable
+    return _default_key_path()
+
+def _generate_key_at(path: str) -> bytes:
+    key = Fernet.generate_key()
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(key)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    return key
+
+def load_key() -> bytes:
+    """
+    Muat key:
+      - Jika ada di folder EXE/skrip -> pakai itu (portable)
+      - Kalau tidak ada -> pakai folder per-user; buat baru jika belum ada
+    """
+    p = _resolve_key_path()
+    if not os.path.exists(p):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        #####print(f"[INFO] Key enkripsi belum ada, membuat baru di: {p}")####
+        return _generate_key_at(p)
+    with open(p, "rb") as f:
+        return f.read()
+
+# --- Helper I/O atomic (aman dari file setengah jadi) ---
+def _atomic_write(path: str, data: bytes):
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_enc_", dir=d)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+def _sha256(b: bytes) -> bytes:
+    return hashlib.sha256(b).digest()
+
+def _encrypt_file(plain_path: str, enc_path: str):
+    """Enkripsi DB SQLite -> file .enc (MAGIC + checksum + ciphertext)."""
+    if not os.path.exists(plain_path):
+        raise FileNotFoundError(f"Plain DB tidak ditemukan: {plain_path}")
+    with open(plain_path, "rb") as f:
+        db = f.read()
+    if not db.startswith(SQLITE_HEADER):
+        raise ValueError("File plaintext bukan database SQLite yang valid.")
+
+    key = load_key()
+    fernet = Fernet(key)
+    checksum = _sha256(db)
+    ciphertext = fernet.encrypt(db)
+
+    payload = MAGIC + checksum + ciphertext
+    _atomic_write(enc_path, payload)
+
+def _decrypt_file(enc_path: str, dec_path: str):
+    """Dekripsi file .enc -> plaintext DB (verifikasi MAGIC + checksum + header)."""
+    if not os.path.exists(enc_path):
+        raise FileNotFoundError(f"Encrypted DB tidak ditemukan: {enc_path}")
+
+    with open(enc_path, "rb") as f:
+        blob = f.read()
+
+    min_len = len(MAGIC) + 32 + 1
+    if len(blob) < min_len:
+        raise ValueError("File .enc terlalu pendek / corrupt.")
+    if not blob.startswith(MAGIC):
+        raise ValueError("MAGIC header tidak cocok (bukan format NEXVOENC1).")
+
+    hdr_len = len(MAGIC)
+    checksum = blob[hdr_len:hdr_len+32]
+    ciphertext = blob[hdr_len+32:]
+
+    key = load_key()
+    fernet = Fernet(key)
+    db = fernet.decrypt(ciphertext)
+
+    if _sha256(db) != checksum:
+        raise ValueError("Checksum plaintext tidak cocok. File terenkripsi rusak.")
+    if not db.startswith(SQLITE_HEADER):
+        raise ValueError("Hasil dekripsi bukan database SQLite yang valid.")
+
+    _atomic_write(dec_path, db)
+# =====================================================================
 
 def show_modern_warning(parent, title, text):
     msg = QMessageBox(parent)
@@ -456,44 +591,11 @@ class CheckboxDelegate(QStyledItemDelegate):
         y = option.rect.y() + (option.rect.height() - size) // 2
         return QRect(x, y, size, size)
 
-# === Enkripsi (cryptography - Fernet) ===
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-
-# ====== KONFIGURASI KUNCI ENKRIPSI ======
-APP_PASSPHRASE = "9@%RM79hiQt%^@7BneHFtRS&9k9*fJ"   # <<< WAJIB kamu ubah
-APP_SALT = b"698z*#$&moK&g6^c43WFkS4#3@Ks%&"
-
-_kdf = PBKDF2HMAC(
-    algorithm=hashes.SHA256(),
-    length=32,
-    salt=APP_SALT,
-    iterations=390000,
-)
-_KEY = base64.urlsafe_b64encode(_kdf.derive(APP_PASSPHRASE.encode("utf-8")))
-_fernet = Fernet(_KEY)
-
 # === Lokasi folder NexVo (tempat app.py) ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def _encrypt_file(plain_path: str, enc_path: str):
-    with open(plain_path, "rb") as f:
-        data = f.read()
-    token = _fernet.encrypt(data)
-    with open(enc_path, "wb") as f:
-        f.write(token)
-
-def _decrypt_file(enc_path: str, plain_path: str):
-    with open(enc_path, "rb") as f:
-        token = f.read()
-    data = _fernet.decrypt(token)
-    with open(plain_path, "wb") as f:
-        f.write(data)
-
 # === DB utama ===
 DB_NAME = os.path.join(BASE_DIR, "app.db")
-
 
 #####################################*************########################################
 #####################################*************########################################
@@ -1034,9 +1136,7 @@ class MainWindow(QMainWindow):
         self.desa_login = desa.upper()
         self.username = username
 
-        # Path database absolut
         self.db_name = db_name
-        self._init_db_pragmas()
 
         # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
         base = os.path.basename(self.db_name)
@@ -1055,7 +1155,8 @@ class MainWindow(QMainWindow):
             conn.close()
 
         self.db_name = self.plain_db_path
-
+        self._init_db_pragmas()
+        self._ensure_schema_and_migrate()
         self.all_data = []
 
         self.sort_lastupdate_asc = True  # ✅ toggle: True = dari terbaru ke lama, False = sebaliknya
@@ -1067,7 +1168,7 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK DATA"
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK_DATA"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
@@ -1103,7 +1204,7 @@ class MainWindow(QMainWindow):
             "KET": 100,
             "TPS": 80,
             "LastUpdate": 100,
-            "CEK DATA": 200
+            "CEK_DATA": 200
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
@@ -1323,6 +1424,7 @@ class MainWindow(QMainWindow):
 
         btn_cekdata = QPushButton("Cek Data")
         self.style_button(btn_cekdata)
+        btn_cekdata.clicked.connect(self.cek_data)
         toolbar.addWidget(btn_cekdata)
         add_spacer()
 
@@ -1346,9 +1448,8 @@ class MainWindow(QMainWindow):
         self.status.addWidget(self.lbl_selected)
         self.status.addWidget(self.lbl_total)
         self.status.addPermanentWidget(self.lbl_version)
-
-        self.update_pagination()
         self.load_data_from_db()
+        self.update_pagination()
         self.apply_column_visibility()
 
         # ✅ Load theme terakhir dari database
@@ -1367,8 +1468,6 @@ class MainWindow(QMainWindow):
         # ✅ Initialize filter sidebar
         self.filter_sidebar = None
         self.filter_dock = None
-
-        atexit.register(self._encrypt_and_cleanup)
 
     # --- Batch flags & stats (aman dari AttributeError) ---
         self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
@@ -1585,17 +1684,9 @@ class MainWindow(QMainWindow):
             if col_name in settings:
                 self.table.setColumnHidden(i, settings[col_name] == 0)
 
-    def closeEvent(self, event):
-        self._encrypt_and_cleanup()
-        super().closeEvent(event)
-
     def _encrypt_and_cleanup(self):
-        try:
-            if os.path.exists(self.plain_db_path):
-                _encrypt_file(self.plain_db_path, self.enc_path)
-                os.remove(self.plain_db_path)
-        except Exception as e:
-            print(f"[WARN] Gagal encrypt/cleanup: {e}")
+        # Backward-compat saja: delegasikan ke satu pintu
+        self._shutdown("_encrypt_and_cleanup")
 
     def save_theme(self, mode):
         conn = sqlite3.connect(self.db_name)
@@ -1814,117 +1905,310 @@ class MainWindow(QMainWindow):
     # DASHBOARD PAGE
     # =========================================================
     def show_dashboard_page(self):
-        """Tampilkan Dashboard dalam stack, nonaktifkan kontrol tema & toolbar."""
-        # siapkan/ambil dashboard page
+        """Tampilkan Dashboard elegan (dengan animasi, tanpa status bar)."""
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect, QToolBar
+        from PyQt6.QtGui import QIcon
+        import os
+
+        # === Pastikan ikon aplikasi (KPU.png) muncul di kiri atas ===
+        icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        # === Siapkan dashboard jika belum ada ===
         if not hasattr(self, "dashboard_page"):
             self.dashboard_page = self._build_dashboard_widget()
-            self.stack.addWidget(self.dashboard_page)   # index 1 = Dashboard
+            self.stack.addWidget(self.dashboard_page)
 
         self._is_on_dashboard = True
 
-        # Sembunyikan toolbar & filter
-        for tb in self.findChildren(QToolBar): tb.hide()
-        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+        # === Sembunyikan toolbar & filter ===
+        for tb in self.findChildren(QToolBar):
+            tb.hide()
+        if hasattr(self, "filter_dock") and self.filter_dock:
+            self.filter_dock.hide()
 
-        # Nonaktifkan Dark/Light (soft disabled)
-        self.action_dark.setEnabled(False); self.action_light.setEnabled(False)
+        # === Status bar tetap ada tapi hanya menampilkan versi NexVo ===
+        if self.statusBar():
+            self.statusBar().showMessage("NexVo v1.0")
+
+        # === Nonaktifkan tema sementara ===
+        self.action_dark.setEnabled(False)
+        self.action_light.setEnabled(False)
         for act in [self.action_dark, self.action_light]:
-            f = act.font(); f.setItalic(True); act.setFont(f)
+            f = act.font()
+            f.setItalic(True)
+            act.setFont(f)
 
-        # Tampilkan dashboard dengan fade
-        self._stack_fade_to(self.dashboard_page, duration=400)
-        #self.statusBar().showMessage("Dashboard ditampilkan")
+        # === Fade-in Dashboard ===
+        self._stack_fade_to(self.dashboard_page, duration=600)
+
 
     def _build_dashboard_widget(self) -> QWidget:
-        """Bangun widget Dashboard (tampilan saja; data nanti)."""
+        """Bangun halaman Dashboard modern, elegan, dan bersih."""
+        import os
+        from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
+        from PyQt6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+            QGraphicsDropShadowEffect, QGraphicsOpacityEffect
+        )
+        from PyQt6.QtGui import QColor, QPainter, QFont, QPixmap
+        from PyQt6.QtCore import Qt, QMargins, QPropertyAnimation, QEasingCurve
+
+        # === ROOT DASHBOARD ===
         dash_widget = QWidget()
         dash_layout = QVBoxLayout(dash_widget)
-        dash_layout.setContentsMargins(30, 20, 30, 20)
+        dash_layout.setContentsMargins(30, 0, 30, 10)
         dash_layout.setSpacing(25)
 
-        # ===== Baris 1: kartu ringkasan =====
+        # === HEADER ===
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
+
+        logo_path = os.path.join(os.path.dirname(__file__), "KPU.png")
+        logo = QLabel()
+        if os.path.exists(logo_path):
+            pix = QPixmap(logo_path).scaled(
+                42, 42, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            logo.setPixmap(pix)
+        else:
+            logo.setText("🗳️")
+
+        title_lbl = QLabel("Sidalih Pilkada 2024 Desktop – Pemutakhiran Data")
+        title_lbl.setStyleSheet("font-size:14pt; font-weight:600; color:#333;")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        header.addWidget(logo)
+        header.addWidget(title_lbl)
+        header.addStretch()
+
+        header_frame = QFrame()
+        header_frame.setLayout(header)
+        dash_layout.addWidget(header_frame)
+        dash_layout.addSpacing(-50)
+
+        # === Fade-in untuk header ===
+        header_effect = QGraphicsOpacityEffect(header_frame)
+        header_frame.setGraphicsEffect(header_effect)
+        header_anim = QPropertyAnimation(header_effect, b"opacity")
+        header_anim.setDuration(800)
+        header_anim.setStartValue(0.0)
+        header_anim.setEndValue(1.0)
+        header_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        header_anim.start()
+
+        # === KARTU RINGKASAN ===
         top_row = QHBoxLayout()
         top_row.setSpacing(15)
 
         def make_card(icon, title, value):
+            """Kartu elegan tanpa border luar, semua center."""
             card = QFrame()
-            card.setMinimumWidth(140)
-            card.setStyleSheet("""
-                QFrame { background:#fff; border-radius:12px; border:1px solid #ddd; }
-                QLabel { font-family:'Segoe UI'; }
-            """)
+            card.setMinimumWidth(150)
+            card.setMaximumWidth(220)
             lay = QVBoxLayout(card)
+            lay.setContentsMargins(10, 8, 10, 8)
             lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_icon = QLabel(icon);      lbl_icon.setStyleSheet("font-size:24pt; color:#ff6600;")
-            lbl_title = QLabel(title);    lbl_title.setStyleSheet("font-size:10pt; color:#777;")
+
+            lbl_icon = QLabel(icon)
+            lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_icon.setStyleSheet("font-size:30pt; color:#ff6600;")
+
+            lbl_value = QLabel(value)
+            lbl_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_value.setStyleSheet("font-size:18pt; font-weight:700; color:#222;")
+
+            lbl_title = QLabel(title)
             lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_value = QLabel(value);    lbl_value.setStyleSheet("font-size:14pt; font-weight:bold; color:#333;")
-            for w in (lbl_icon, lbl_title, lbl_value): lay.addWidget(w)
-            # bayangan lembut
-            sh = QGraphicsDropShadowEffect(); sh.setBlurRadius(25); sh.setOffset(0,3); sh.setColor(QColor(0,0,0,60))
+            lbl_title.setStyleSheet("font-size:10pt; color:#777;")
+
+            for w in (lbl_icon, lbl_value, lbl_title):
+                lay.addWidget(w)
+
+            sh = QGraphicsDropShadowEffect()
+            sh.setBlurRadius(25)
+            sh.setOffset(0, 3)
+            sh.setColor(QColor(0, 0, 0, 40))
             card.setGraphicsEffect(sh)
+            card.setStyleSheet("background:#fff; border-radius:12px;")
             return card
 
-        top_row.addWidget(make_card("🚀", "tasikmalayakab.kpu.go.id\nAGUNG ADHISIETIONO", ""))
-        top_row.addWidget(make_card("👥", "Pemilih", "1.439.738"))
-        top_row.addWidget(make_card("👨", "Laki-laki", "728.475"))
-        top_row.addWidget(make_card("👩", "Perempuan", "711.263"))
-        top_row.addWidget(make_card("🏛️", "Kecamatan", "39"))
-        top_row.addWidget(make_card("🏠", "Kelurahan", "351"))
-        top_row.addWidget(make_card("📍", "TPS", "2.847"))
+            # 🪪🤴👸♀️♂️⚧️📠📖📚📬📫📮🗓️🏛️🏦👧🏻👦🏻📌🚩🚹🚺🚻🏠
+        cards = [
+            ("🏦", "Nama Desa", "Sukasenang"),
+            ("🚻", "Pemilih", "1.439.738"),
+            ("🚹", "Laki-laki", "728.475"),
+            ("🚺", "Perempuan", "711.263"),
+            ("🏠", "Kelurahan", "351"),
+            ("🚩", "TPS", "2.847"),
+        ]
+        for icon, title, value in cards:
+            top_row.addWidget(make_card(icon, title, value))
         dash_layout.addLayout(top_row)
 
-        # ===== Baris 2: Pie & bar horizontal =====
-        from PyQt6.QtCharts import QChart, QChartView, QPieSeries
-        from PyQt6.QtCore import QMargins
+        # === PIE DONUT + BAR ===
+        middle_row = QHBoxLayout()
+        middle_row.setSpacing(40)
 
-        middle_row = QHBoxLayout(); middle_row.setSpacing(40)
+        # === PIE DONUT ===
+        series = QPieSeries()
+        series.append("Laki-laki", 50.6)
+        series.append("Perempuan", 49.4)
 
-        series = QPieSeries(); series.append("Laki-laki", 50.6); series.append("Perempuan", 49.4)
-        series.slices()[0].setBrush(QColor("#6b4e71")); series.slices()[1].setBrush(QColor("#ff6600"))
-        for s in series.slices(): s.setLabelVisible(False)
+        series.slices()[0].setBrush(QColor("#6b4e71"))
+        series.slices()[1].setBrush(QColor("#ff6600"))
+        for s in series.slices():
+            s.setLabelVisible(False)
+            s.setBorderColor(Qt.GlobalColor.transparent)
+        series.setHoleSize(0.65)
 
-        chart = QChart(); chart.addSeries(series); chart.legend().setVisible(True)
-        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom); chart.setBackgroundVisible(False)
-        chart.setMargins(QMargins(0,0,0,0))
-        chart_view = QChartView(chart); chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        chart_view.setMinimumWidth(380)
-        middle_row.addWidget(chart_view, 1)
-        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setBackgroundVisible(False)
+        chart.legend().setVisible(True)
+        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+        chart.legend().setMarkerShape(QLegend.MarkerShape.MarkerShapeFromSeries)
+        chart.setMargins(QMargins(10, 10, 10, 10))
 
-        chart_view.setStyleSheet("background: #fff; border-radius: 12px;")
+        chart_view = QChartView(chart)
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        chart_view.setMinimumSize(330, 280)
+        chart_view.setStyleSheet("background:#fff; border-radius:12px;")
+
+        class ChartContainer(QFrame):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setMinimumSize(330, 230)
+                self.setStyleSheet("background:#fff; border-radius:12px;")
+                self._center_label = None
+
+            def set_center_label(self, label: QLabel):
+                self._center_label = label
+                self._reposition_label()
+
+            def resizeEvent(self, event):
+                self._reposition_label()
+                super().resizeEvent(event)
+
+            def _reposition_label(self):
+                if self._center_label:
+                    self._center_label.setGeometry(0, 0, self.width(), self.height())
+                    self._center_label.raise_()
+
+        chart_container = ChartContainer()
+        cc_layout = QVBoxLayout(chart_container)
+        cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.addWidget(chart_view)
+
+        # === Label tengah terdiri dari dua bagian (judul + nilai)
+        center_widget = QWidget(chart_container)
+        center_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        center_widget.setStyleSheet("background:transparent;")
+
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(2)
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_center_title = QLabel("Laki-laki")
+        lbl_center_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_center_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lbl_center_title.setStyleSheet("color:#444; background:transparent;")
+
+        lbl_center_value = QLabel("50.6%")
+        lbl_center_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_center_value.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl_center_value.setStyleSheet("color:#222; background:transparent;")
+
+        center_layout.addWidget(lbl_center_title)
+        center_layout.addWidget(lbl_center_value)
+
+        # Pasang widget label ke tengah lingkaran
+        chart_container.set_center_label(center_widget)
+
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(25)
         shadow.setOffset(0, 3)
         shadow.setColor(QColor(0, 0, 0, 50))
-        chart_view.setGraphicsEffect(shadow)
+        chart_container.setGraphicsEffect(shadow)
 
+        def update_center_label(slice_obj):
+            lbl_center_title.setText(slice_obj.label())
+            lbl_center_value.setText(f"{slice_obj.value():.1f}%")
 
-        bar_frame = QFrame(); bar_layout = QVBoxLayout(bar_frame)
-        bar_layout.setSpacing(6); bar_layout.setContentsMargins(10,10,10,10)
+        def handle_hovered(state, slice_obj):
+            slice_obj.setExploded(state)
+            if state:
+                update_center_label(slice_obj)
+
+        for sl in series.slices():
+            sl.setExploded(False)
+            sl.setExplodeDistanceFactor(0.05)
+            sl.hovered.connect(lambda state, s=sl: handle_hovered(state, s))
+            sl.clicked.connect(lambda _checked, s=sl: update_center_label(s))
+
+        middle_row.addWidget(chart_container, 0)
+        #middle_row.addSpacing(10)
+
+        # === BAR HORIZONTAL ===
+        bar_frame = QFrame()
+        bar_layout = QVBoxLayout(bar_frame)
+        bar_layout.setSpacing(14)
+        bar_layout.setContentsMargins(5, 35, 20, 35)
+
         bars = [
-            ("Meninggal", 0.051),
-            ("Ganda", 0.002),
-            ("Di Bawah Umur", 0.000),
-            ("Pindah Domisili", 0.019),
-            ("WNA", 0.000),
-            ("TNI", 0.000),
-            ("Polri", 0.000),
-            ("Salah TPS", 0.017),
+            ("Meninggal", 0.051), ("Ganda", 0.002), ("Di Bawah Umur", 0.000),
+            ("Pindah Domisili", 0.019), ("WNA", 0.000), ("TNI", 0.000),
+            ("Polri", 0.000), ("Salah TPS", 0.017),
         ]
+
         for label, val in bars:
-            row = QHBoxLayout(); row.setSpacing(8)
-            lbl = QLabel(label); lbl.setStyleSheet("font-size:9pt; color:#555; min-width:240px;")
-            bg = QFrame(); bg.setFixedHeight(8); bg.setStyleSheet("background:#eee; border-radius:4px;")
-            fg = QFrame(bg); fg.setGeometry(0,0, max(1, int(val*1800)), 8)
-            fg.setStyleSheet("background:#ff6600; border-radius:4px;")
-            pct = QLabel(f"{val:.3%}"); pct.setStyleSheet("font-size:9pt; color:#333;")
-            row.addWidget(lbl); row.addWidget(bg, 1); row.addWidget(pct); bar_layout.addLayout(row)
+            row = QHBoxLayout()
+            row.setSpacing(0)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-size:10pt; color:#555; min-width:115px;")
+
+            bg = QFrame()
+            bg.setFixedHeight(8)
+            bg.setMaximumWidth(280)
+            bg.setStyleSheet("background:#eee; border-radius:2px;")
+
+            inner = QHBoxLayout(bg)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(0)
+
+            fg = QFrame()
+            fg.setFixedHeight(8)
+            fg.setStyleSheet("background:#ff6600; border-radius:2px;")
+
+            base_ratio = 0.9
+            stretch_val = max(1, min(int(val * 100 * base_ratio), 80))
+            inner.addWidget(fg, stretch_val)
+            inner.addStretch(100 - stretch_val)
+
+            pct = QLabel(f"{val:.3%}")
+            pct.setStyleSheet("font-size:10pt; color:#333; min-width:55px; text-align:right;")
+
+            bar_group = QHBoxLayout()
+            bar_group.setSpacing(6)
+            bar_group.addWidget(bg)
+            bar_group.addWidget(pct)
+
+            wrapper = QFrame()
+            wrapper_layout = QHBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(-35, 0, 0, 0)
+            wrapper_layout.addLayout(bar_group)
+
+            row.addWidget(lbl)
+            row.addWidget(wrapper)
+            bar_layout.addLayout(row)
 
         middle_row.addWidget(bar_frame, 2)
         dash_layout.addLayout(middle_row)
 
-        # ===== Styling: sama untuk light/dark =====
+        # === STYLE GLOBAL ===
         dash_widget.setStyleSheet("""
             QWidget { background:#f9f9f9; color:#333; font-family:'Segoe UI','Calibri'; }
             QLabel { color:#333; }
@@ -1961,27 +2245,34 @@ class MainWindow(QMainWindow):
         self._fade_anim = anim
         
     def show_data_page(self):
-        """Kembali ke halaman utama Data di dalam stack (tanpa menghapus table)."""
+        """Kembali ke halaman utama Data."""
+        from PyQt6.QtWidgets import QToolBar
+
         self._is_on_dashboard = False
 
-        # Aktifkan kembali toolbar
-        for tb in self.findChildren(QToolBar): tb.show()
-        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+        # Tampilkan lagi toolbar & status bar
+        for tb in self.findChildren(QToolBar):
+            tb.show()
+        if self.statusBar():
+            self.statusBar().show()
 
-        # Aktifkan kembali tema
-        self.action_dark.setEnabled(True); self.action_light.setEnabled(True)
+        if hasattr(self, "filter_dock") and self.filter_dock:
+            self.filter_dock.hide()
+
+        # Aktifkan lagi kontrol tema
+        self.action_dark.setEnabled(True)
+        self.action_light.setEnabled(True)
         for act in [self.action_dark, self.action_light]:
-            f = act.font(); f.setItalic(False); act.setFont(f)
+            f = act.font()
+            f.setItalic(False)
+            act.setFont(f)
 
-        # Pindah page ke Data + refresh tampilan halaman saat ini
+        # Pindah page ke Data
         self._stack_fade_to(self.data_page, duration=300)
         try:
             self.show_page(getattr(self, "_last_page_index", self.current_page))
         except Exception:
             pass
-
-        #self.statusBar().showMessage("Kembali ke halaman Pemutakhiran Data")
-
 
     # =========================================================
     # 🔸 Fungsi bantu animasi transisi
@@ -2069,7 +2360,7 @@ class MainWindow(QMainWindow):
         self.table.resizeColumnsToContents()
 
         max_widths = {
-            "CEK DATA": 200,   # cukup untuk yyyy-mm-dd
+            "CEK_DATA": 200,   # cukup untuk yyyy-mm-dd
         }
 
         for i in range(self.table.columnCount()):
@@ -2662,7 +2953,12 @@ class MainWindow(QMainWindow):
                 self._shared_cur.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
             else:
                 with sqlite3.connect(self.db_name) as conn:
-                    conn.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
+                    with sqlite3.connect(self.db_name) as conn:
+                        conn.execute(
+                            f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?",
+                            (value, nik)
+                        )
+
                     conn.commit()
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
@@ -2673,6 +2969,158 @@ class MainWindow(QMainWindow):
         eff.setOffset(dx, dy)
         eff.setColor(QColor(*rgba))
         widget.setGraphicsEffect(eff)
+
+    def cek_data(self):
+        """Validasi seluruh data (semua halaman) dengan super ultra kilat + commit batch."""
+        from datetime import datetime
+        import sqlite3
+
+        target_date = datetime(2029, 6, 26)
+        nik_seen = {}
+        nik_count = {}
+        hasil = ["Sesuai"] * len(self.all_data)  # default
+
+        # === Hitung kemunculan NIK untuk seluruh data ===
+        for d in self.all_data:
+            nik = str(d.get("NIK", "")).strip()
+            if nik:
+                nik_count[nik] = nik_count.get(nik, 0) + 1
+
+        # === Loop utama validasi semua baris di self.all_data ===
+        for i, d in enumerate(self.all_data):
+            nkk = str(d.get("NKK", "")).strip()
+            nik = str(d.get("NIK", "")).strip()
+            tgl_lhr = str(d.get("TGL_LHR", "")).strip()
+            ket = str(d.get("KET", "")).strip()
+            sts = str(d.get("STS", "")).strip()
+
+            # --- Validasi NKK ---
+            if len(nkk) != 16:
+                hasil[i] = "NKK Invalid"
+                continue
+            try:
+                dd_nkk = int(nkk[6:8])
+                mm_nkk = int(nkk[8:10])
+                if dd_nkk < 1 or dd_nkk > 31 or mm_nkk < 1 or mm_nkk > 12:
+                    hasil[i] = "Potensi NKK Invalid"
+                    continue
+            except:
+                hasil[i] = "Potensi NKK Invalid"
+                continue
+
+            # --- Validasi NIK ---
+            if len(nik) != 16:
+                hasil[i] = "NIK Invalid"
+                continue
+            try:
+                dd_nik = int(nik[6:8])
+                mm_nik = int(nik[8:10])
+                if dd_nik < 1 or dd_nik > 71 or mm_nik < 1 or mm_nik > 12:
+                    hasil[i] = "Potensi NIK Invalid"
+                    continue
+            except:
+                hasil[i] = "Potensi NIK Invalid"
+                continue
+
+            # --- Validasi umur ---
+            if "|" in tgl_lhr:
+                try:
+                    dd, mm, yy = map(int, tgl_lhr.split("|"))
+                    lahir = datetime(yy, mm, dd)
+                    umur = (target_date - lahir).days / 365.25
+                    if umur < 0 or umur < 13:
+                        hasil[i] = "Potensi Dibawah Umur"
+                        continue
+                    elif umur < 17 and sts.upper() == "B":
+                        hasil[i] = "Dibawah Umur"
+                        continue
+                except:
+                    pass
+
+            # --- Catat untuk deteksi ganda nanti ---
+            if nik and ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                nik_seen.setdefault(nik, []).append(i)
+
+        # === Tandai Ganda ===
+        for nik, idxs in nik_seen.items():
+            if len(idxs) > 1:
+                for j in idxs:
+                    ket = str(self.all_data[j].get("KET", ""))
+                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda"
+
+        # === Pemilih Baru / Pemilih Pemula ===
+        for i, d in enumerate(self.all_data):
+            ket = str(d.get("KET", "")).upper()
+            nik = str(d.get("NIK", "")).strip()
+            if ket == "B":
+                hasil[i] = "Pemilih Baru" if nik_count.get(nik, 0) > 1 else "Pemilih Pemula"
+
+        # === Simpan hasil ke self.all_data ===
+        for i, status in enumerate(hasil):
+            self.all_data[i]["CEK_DATA"] = status
+
+        # === Commit ke database (executemany super kilat) ===
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cur = conn.cursor()
+            cur.execute("PRAGMA synchronous = OFF;")
+            cur.execute("PRAGMA journal_mode = MEMORY;")
+            cur.execute("PRAGMA temp_store = MEMORY;")
+
+            data_update = [(d.get("CEK_DATA", ""), d.get("rowid")) for d in self.all_data if d.get("rowid") is not None]
+
+            cur.executemany(
+                "UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?",
+                data_update
+            )
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            show_modern_error(self, "Gagal Commit", f"Gagal menyimpan hasil ke database:\n{e}")
+            return
+
+        try:
+            if hasattr(self, "enc_path"):
+                _encrypt_file(self.db_name, self.enc_path)  # self.db_name = plaintext aktif (temp_*), enc_path = *.db.enc
+                ####print(f"[INFO] Sinkronisasi hasil pemeriksaan ke {self.enc_path} berhasil.")####
+        except Exception as e:
+            print(f"[WARN] Gagal menyinkronkan ke database terenkripsi: {e}")
+        
+        # === Refresh halaman aktif ===
+        self.show_page(self.current_page)
+        self._warnai_baris_berdasarkan_ket()
+
+        show_modern_info(
+            self,
+            "Selesai",
+            f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!"
+        )
+
+    def _warnai_baris_berdasarkan_ket(self):
+        """Warnai baris di halaman aktif berdasar kolom KET."""
+        for row in range(self.table.rowCount()):
+            ket = str(self.table.item(row, self._col_index("KET")).text()).strip()
+            if ket in ("1","2","3","4","5","6","7","8"):
+                color = QColor("red")
+            elif ket.lower() == "u":
+                color = QColor("yellow")
+            elif ket.lower() == "b":
+                color = QColor("green")
+            else:
+                color = QColor("white" if self.load_theme() == "dark" else "black")
+
+            for c in range(self.table.columnCount()):
+                item = self.table.item(row, c)
+                if item:
+                    item.setForeground(color)
+
+    def _col_index(self, name):
+        """Helper untuk ambil index kolom berdasar nama."""
+        for i in range(self.table.columnCount()):
+            if self.table.horizontalHeaderItem(i).text() == name:
+                return i
+        return -1
 
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
@@ -2761,7 +3209,7 @@ class MainWindow(QMainWindow):
                         KET TEXT,
                         TPS TEXT,
                         LastUpdate DATETIME,
-                        "CEK DATA" TEXT
+                        CEK_DATA TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -2831,82 +3279,112 @@ class MainWindow(QMainWindow):
     # Load data dari database saat login ulang
     # =================================================
     def load_data_from_db(self):
-        from datetime import datetime
         import sqlite3
+        from datetime import datetime
 
-        # ✅ Gunakan context manager biar auto-close walau ada error
+        # 1) Ambil data mentah dari DB
         with sqlite3.connect(self.db_name) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
-
-            # ✅ Pastikan tabel ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS data_pemilih (
-                    KECAMATAN TEXT,
-                    DESA TEXT,
-                    DPID TEXT,
-                    NKK TEXT,
-                    NIK TEXT,
-                    NAMA TEXT,
-                    JK TEXT,
-                    TMPT_LHR TEXT,
-                    TGL_LHR TEXT,
-                    STS TEXT,
-                    ALAMAT TEXT,
-                    RT TEXT,
-                    RW TEXT,
-                    DIS TEXT,
-                    KTPel TEXT,
-                    SUMBER TEXT,
-                    KET TEXT,
-                    TPS TEXT,
-                    LastUpdate DATETIME,
-                    "CEK DATA" TEXT
+                    KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
+                    JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
+                    RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
+                    TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                 )
             """)
-
-            # ✅ Ambil data sekaligus (langsung jadi list of dict)
             cur.execute("SELECT rowid, * FROM data_pemilih")
-            rows = [dict(row) for row in cur.fetchall()]
+            rows = [dict(r) for r in cur.fetchall()]
 
-        # ✅ Ambil semua header kolom dari tabel GUI hanya sekali
-        headers = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+        # 2) Siapkan header tabel (harus setelah self.table dibuat)
+        headers = [self.table.horizontalHeaderItem(i).text()
+                for i in range(self.table.columnCount())]
 
-        # ✅ Cache hasil konversi tanggal agar parsing tidak berulang
+        # 3) Formatter tanggal (cache biar cepat)
         _tgl_cache = {}
-
-        def format_tgl(val):
+        def format_tgl(val: str):
             if not val:
                 return ""
-            if val in _tgl_cache:  # gunakan cache jika sudah pernah diproses
+            if val in _tgl_cache:
                 return _tgl_cache[val]
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                 try:
-                    hasil = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
-                    _tgl_cache[val] = hasil
-                    return hasil
+                    from datetime import datetime as _dt
+                    s = _dt.strptime(val, fmt).strftime("%d/%m/%Y")
+                    _tgl_cache[val] = s
+                    return s
                 except:
-                    continue
+                    pass
             _tgl_cache[val] = val
             return val
 
-        # ✅ Proses massal super cepat dengan dict comprehension
+        # 4) Bangun self.all_data SEKALI (setelah headers & format_tgl ada)
         self.all_data = [
             {
-                **{col: ("" if row.get(col) is None else str(row[col])) for col in headers},
-                "_rowid_": row.get("rowid"),
+                **{col: ("" if row.get(col) is None else str(row.get(col, ""))) for col in headers},
+                "rowid": row.get("rowid"),
                 "LastUpdate": format_tgl(str(row.get("LastUpdate", "")))
             }
             for row in rows
         ]
 
-        # ✅ Hitung total halaman
+        # 5) Hitung halaman & tampilkan page 1
         total = len(self.all_data)
         self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
-
-        # ✅ Tampilkan halaman pertama
         self.show_page(1)
 
+
+    def _ensure_schema_and_migrate(self):
+        """
+        Pastikan tabel data_pemilih ada, kolom CEK_DATA tersedia,
+        dan (jika ada) salin nilai dari kolom lama 'CEK DATA' -> CEK_DATA.
+        Idempotent: aman dipanggil berulang.
+        """
+        import sqlite3
+
+        with sqlite3.connect(self.db_name) as conn:
+            cur = conn.cursor()
+
+            # 1) Buat tabel kalau belum ada (versi skema terbaru)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_pemilih (
+                    KECAMATAN  TEXT,
+                    DESA       TEXT,
+                    DPID       TEXT,
+                    NKK        TEXT,
+                    NIK        TEXT,
+                    NAMA       TEXT,
+                    JK         TEXT,
+                    TMPT_LHR   TEXT,
+                    TGL_LHR    TEXT,
+                    STS        TEXT,
+                    ALAMAT     TEXT,
+                    RT         TEXT,
+                    RW         TEXT,
+                    DIS        TEXT,
+                    KTPel      TEXT,
+                    SUMBER     TEXT,
+                    KET        TEXT,
+                    TPS        TEXT,
+                    LastUpdate DATETIME,
+                    CEK_DATA   TEXT
+                )
+            """)
+
+            # 2) Cek kolom yang ada saat ini
+            cur.execute("PRAGMA table_info(data_pemilih)")
+            cols = {row[1] for row in cur.fetchall()}  # row[1] = nama kolom
+
+            # 3) Tambahkan CEK_DATA jika belum ada
+            if "CEK_DATA" not in cols:
+                cur.execute("ALTER TABLE data_pemilih ADD COLUMN CEK_DATA TEXT")
+
+            # 4) Jika ada kolom lama "CEK DATA", salin nilainya sekali
+            if "CEK DATA" in cols:
+                cur.execute("UPDATE data_pemilih SET CEK_DATA = COALESCE(CEK_DATA, `CEK DATA`)")
+
+            conn.commit()
 
     # =================================================
     # Update status bar selected & total
@@ -3054,7 +3532,7 @@ class MainWindow(QMainWindow):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate DATETIME,
-                    CEK DATA TEXT
+                    CEK_DATA TEXT
                 )
             """)
             cur.execute("DELETE FROM data_pemilih")
@@ -3127,7 +3605,9 @@ class MainWindow(QMainWindow):
             self.table.setSpan(0, 0, 1, self.table.columnCount())
             
             self.table.blockSignals(False)
-            self.lbl_selected.setText("0 selected")
+            if hasattr(self, "lbl_selected"):
+                self.lbl_selected.setText("0 selected")
+
             self.update_statusbar()
             self.update_pagination()
             return
@@ -3208,7 +3688,9 @@ class MainWindow(QMainWindow):
                         item.setForeground(warna)
 
         self.table.blockSignals(False)
-        self.lbl_selected.setText("0 selected")
+        if hasattr(self, "lbl_selected"):
+            self.lbl_selected.setText("0 selected")
+
         self.update_statusbar()
         self.update_pagination()
         self.table.horizontalHeader().setSortIndicatorShown(False)
@@ -3379,32 +3861,39 @@ class MainWindow(QMainWindow):
 
         app = QApplication.instance()
         if app:
-            # Dipanggil saat app akan keluar "normal"
-            app.aboutToQuit.connect(lambda: self._flush_db("aboutToQuit"))
+            try:
+                app.aboutToQuit.disconnect()
+            except Exception:
+                pass
+            app.aboutToQuit.connect(lambda: self._shutdown("aboutToQuit"))
 
-        # Panggil saat proses berakhir (nyaris selalu terpanggil)
-        atexit.register(lambda: self._flush_db("atexit"))
+        # atexit (nyaris selalu terpanggil)
+        try:
+            atexit.unregister(lambda: self._shutdown("atexit"))
+        except Exception:
+            pass
+        atexit.register(lambda: self._shutdown("atexit"))
 
-        # Tangani Ctrl+C / kill jika tersedia (di Windows sebagian sinyal terbatas)
+        # Sinyal OS (Windows terbatas untuk SIGTERM)
         try:
             import signal
-            signal.signal(signal.SIGINT,  lambda s, f: self._graceful_terminate("SIGINT"))
-            signal.signal(signal.SIGTERM, lambda s, f: self._graceful_terminate("SIGTERM"))
+            signal.signal(signal.SIGINT,  lambda s, f: self._shutdown("SIGINT"))
+            signal.signal(signal.SIGTERM, lambda s, f: self._shutdown("SIGTERM"))
         except Exception:
-            pass  # aman dilewati jika tidak didukung
+            pass
 
     def _graceful_terminate(self, source):
-        """Commit dulu, lalu keluar rapi."""
+        """Commit + encrypt lalu keluar rapi."""
         try:
-            self._flush_db(source)
+            self._shutdown(source)
         finally:
             app = QApplication.instance()
             if app:
                 app.quit()
 
     def closeEvent(self, event):
-        """Klik tombol X di kanan atas juga lewat sini."""
-        self._flush_db("closeEvent")
+        """SATU-SATUNYA closeEvent di MainWindow."""
+        self._shutdown("closeEvent")
         super().closeEvent(event)
 
     def _flush_db(self, where=""):
@@ -3447,6 +3936,35 @@ class MainWindow(QMainWindow):
         except Exception as e:
             # Hindari popup saat shutdown; cukup log ke stderr
             print(f"[WARN] _flush_db({where}) error: {e}", file=sys.stderr)
+
+    def _shutdown(self, source: str = ""):
+        if getattr(self, "_did_shutdown", False):
+            return
+        self._did_shutdown = True
+
+        # 1) Pastikan transaksi beres
+        try:
+            self._flush_db(source or "_shutdown")
+        except Exception as e:
+            print(f"[WARN] _flush_db({source}) gagal: {e}")
+
+        # 2) Enkripsi plaintext -> final .enc
+        try:
+            if hasattr(self, "plain_db_path") and hasattr(self, "enc_path"):
+                if self.plain_db_path and os.path.exists(self.plain_db_path):
+                    _encrypt_file(self.plain_db_path, self.enc_path)
+                    #####print(f"[INFO] Shutdown: terenkripsi ke {self.enc_path}")#####
+        except Exception as e:
+            print(f"[WARN] Encrypt on shutdown ({source}) gagal: {e}")
+
+        # 3) Bersihkan artefak temp (plaintext & temp .enc)
+        for p in (getattr(self, "plain_db_path", ""), getattr(self, "plain_db_path", "") + ".enc"):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception as ee:
+                print(f"[WARN] Gagal menghapus artefak {p}: {ee}")
+
 
     def _init_db_pragmas(self):
         try:
@@ -3866,7 +4384,7 @@ class LoginWindow(QWidget):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate DATETIME,
-                    CEK DATA TEXT
+                    CEK_DATA TEXT
                 )
             """)
             conn.commit()
@@ -4412,7 +4930,7 @@ def hapus_semua_data():
                         KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
                         JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
                         RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
-                        TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                        TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -4432,7 +4950,7 @@ def hapus_semua_data():
                     KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
                     JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
                     RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
-                    TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                    TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                 )
             """)
             conn.commit()
