@@ -146,6 +146,24 @@ def _decrypt_file(enc_path: str, dec_path: str):
 
     _atomic_write(dec_path, db)
 # =====================================================================
+class ProtectedWindow(QMainWindow):
+    """Base class agar semua window tidak bisa ditutup lewat tombol X, 
+    kecuali lewat menu File → Keluar."""
+    def closeEvent(self, event):
+        # ✅ Jika window diberi izin keluar oleh MainWindow, izinkan
+        if hasattr(self, "_izin_keluar") and self._izin_keluar:
+            event.accept()
+            super().closeEvent(event)
+            return
+
+        # ❌ Selain itu, blokir
+        event.ignore()
+        QMessageBox.warning(
+            self,
+            "Tindakan Diblokir",
+            "Gunakan menu <b>File → Keluar</b> untuk menutup aplikasi.",
+            QMessageBox.StandardButton.Ok
+        )
 
 def show_modern_warning(parent, title, text):
     msg = QMessageBox(parent)
@@ -1123,7 +1141,7 @@ def apply_global_palette(app, mode: str):
 # =====================================================
 # Main Window (Setelah login)
 # =====================================================
-class MainWindow(QMainWindow):
+class MainWindow(ProtectedWindow):
     def __init__(self, username, kecamatan, desa, db_name, tahapan):
         super().__init__()
         self.tahapan = tahapan.upper()   # ✅ simpan jenis tahapan (DPHP/DPSHP/DPSHPA)
@@ -1291,7 +1309,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         action_keluar = QAction("  Keluar", self)
         action_keluar.setShortcut("Ctrl+W")
-        action_keluar.triggered.connect(self.close)
+        action_keluar.triggered.connect(self.keluar_aplikasi)
         file_menu.addAction(action_keluar)
 
         generate_menu = menubar.addMenu("Generate")
@@ -1474,6 +1492,24 @@ class MainWindow(QMainWindow):
         self._in_batch_mode = False
         self._warning_shown_in_batch = {}
         self._install_safe_shutdown_hooks()
+
+    def keluar_aplikasi(self):
+        """Keluar dari aplikasi lewat menu File → Keluar."""
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+
+        tanya = QMessageBox.question(
+            self,
+            "Konfirmasi Keluar",
+            "Apakah Anda yakin ingin keluar dari aplikasi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if tanya == QMessageBox.StandardButton.Yes:
+            # 🔹 Izinkan closeEvent lewat menu
+            self._izin_keluar = True
+            QApplication.quit()
+
 
     def _on_row_checkbox_changed_for_header_sync(self, item):
         # Hanya respons kalau kolom checkbox (kolom 0) yang berubah
@@ -2980,11 +3016,20 @@ class MainWindow(QMainWindow):
         nik_count = {}
         hasil = ["Sesuai"] * len(self.all_data)  # default
 
-        # === Hitung kemunculan NIK untuk seluruh data ===
+        # === Hitung kemunculan NIK dan kelompokkan NKK & KET ===
+        nkk_tps_map = {}   # {NKK: set(TPS)}
+        nik_ket_map = {}   # {NIK: set(KET)}
         for d in self.all_data:
             nik = str(d.get("NIK", "")).strip()
+            nkk = str(d.get("NKK", "")).strip()
+            tps = str(d.get("TPS", "")).strip()
+            ket = str(d.get("KET", "")).strip().upper()
+
             if nik:
                 nik_count[nik] = nik_count.get(nik, 0) + 1
+                nik_ket_map.setdefault(nik, set()).add(ket)
+            if nkk:
+                nkk_tps_map.setdefault(nkk, set()).add(tps)
 
         # === Loop utama validasi semua baris di self.all_data ===
         for i, d in enumerate(self.all_data):
@@ -2993,6 +3038,7 @@ class MainWindow(QMainWindow):
             tgl_lhr = str(d.get("TGL_LHR", "")).strip()
             ket = str(d.get("KET", "")).strip()
             sts = str(d.get("STS", "")).strip()
+            tps = str(d.get("TPS", "")).strip()
 
             # --- Validasi NKK ---
             if len(nkk) != 16:
@@ -3041,19 +3087,35 @@ class MainWindow(QMainWindow):
             if nik and ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
                 nik_seen.setdefault(nik, []).append(i)
 
-        # === Tandai Ganda ===
+        # === (1) Deteksi NKK sama – TPS berbeda ===
+        for i, d in enumerate(self.all_data):
+            nkk = str(d.get("NKK", "")).strip()
+            ket = str(d.get("KET", "")).strip()
+            if nkk and ket not in ("1","2","3","4","5","6","7","8"):
+                if len(nkk_tps_map.get(nkk, [])) > 1:
+                    hasil[i] = "Beda TPS"
+
+        # === (2) Tandai Ganda ===
         for nik, idxs in nik_seen.items():
             if len(idxs) > 1:
                 for j in idxs:
                     ket = str(self.all_data[j].get("KET", ""))
-                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda"
+                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda Aktif"
 
-        # === Pemilih Baru / Pemilih Pemula ===
+        # === (3) Pemilih Baru / Pemilih Pemula ===
         for i, d in enumerate(self.all_data):
             ket = str(d.get("KET", "")).upper()
             nik = str(d.get("NIK", "")).strip()
             if ket == "B":
                 hasil[i] = "Pemilih Baru" if nik_count.get(nik, 0) > 1 else "Pemilih Pemula"
+
+        # === (4) KET = 8 tanpa padanan B → Tidak Padan ===
+        for i, d in enumerate(self.all_data):
+            ket = str(d.get("KET", "")).strip().upper()
+            nik = str(d.get("NIK", "")).strip()
+            if ket == "8":
+                if "B" not in nik_ket_map.get(nik, set()):
+                    hasil[i] = "Tidak Padan"
 
         # === Simpan hasil ke self.all_data ===
         for i, status in enumerate(hasil):
@@ -3069,11 +3131,7 @@ class MainWindow(QMainWindow):
 
             data_update = [(d.get("CEK_DATA", ""), d.get("rowid")) for d in self.all_data if d.get("rowid") is not None]
 
-            cur.executemany(
-                "UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?",
-                data_update
-            )
-
+            cur.executemany("UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?", data_update)
             conn.commit()
             conn.close()
         except Exception as e:
@@ -3082,38 +3140,67 @@ class MainWindow(QMainWindow):
 
         try:
             if hasattr(self, "enc_path"):
-                _encrypt_file(self.db_name, self.enc_path)  # self.db_name = plaintext aktif (temp_*), enc_path = *.db.enc
-                ####print(f"[INFO] Sinkronisasi hasil pemeriksaan ke {self.enc_path} berhasil.")####
+                _encrypt_file(self.db_name, self.enc_path)
         except Exception as e:
             print(f"[WARN] Gagal menyinkronkan ke database terenkripsi: {e}")
-        
-        # === Refresh halaman aktif ===
+
+        # === Refresh tampilan ===
         self.show_page(self.current_page)
         self._warnai_baris_berdasarkan_ket()
+        self._terapkan_warna_ke_tabel_aktif()
 
-        show_modern_info(
-            self,
-            "Selesai",
-            f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!"
-        )
+        show_modern_info(self, "Selesai", f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!")
 
     def _warnai_baris_berdasarkan_ket(self):
-        """Warnai baris di halaman aktif berdasar kolom KET."""
-        for row in range(self.table.rowCount()):
-            ket = str(self.table.item(row, self._col_index("KET")).text()).strip()
-            if ket in ("1","2","3","4","5","6","7","8"):
-                color = QColor("red")
-            elif ket.lower() == "u":
-                color = QColor("yellow")
-            elif ket.lower() == "b":
-                color = QColor("green")
-            else:
-                color = QColor("white" if self.load_theme() == "dark" else "black")
+        from PyQt6.QtGui import QColor, QBrush
+        warna_cache = {
+            "biru": QBrush(QColor("blue")),
+            "merah": QBrush(QColor("red")),
+            "kuning": QBrush(QColor("yellow")),
+            "hijau": QBrush(QColor("green")),
+            "hitam": QBrush(QColor("black")),
+            "putih": QBrush(QColor("white")),
+        }
 
+        dark_mode = self.load_theme() == "dark"
+        warna_default = warna_cache["putih" if dark_mode else "hitam"]
+        idx_cekdata = self._col_index("CEK_DATA")
+        idx_ket = self._col_index("KET")
+
+        for d in self.all_data:
+            cek_data_val = str(d.get("CEK_DATA", "")).strip()
+            ket_val = str(d.get("KET", "")).strip()
+
+            if cek_data_val in (
+                "NKK Invalid", "Potensi NKK Invalid",
+                "NIK Invalid", "Potensi NIK Invalid",
+                "Potensi Dibawah Umur", "Dibawah Umur", "Ganda Aktif", "Beda TPS", "Tidak Padan"
+            ):
+                brush = warna_cache["biru"]
+            elif ket_val in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                brush = warna_cache["merah"]
+            elif ket_val.lower() == "u":
+                brush = warna_cache["kuning"]
+            elif ket_val.lower() == "b":
+                brush = warna_cache["hijau"]
+            else:
+                brush = warna_default
+
+            d["_warna_font"] = brush
+
+
+    def _terapkan_warna_ke_tabel_aktif(self):
+        from PyQt6.QtGui import QBrush
+        start_index = (self.current_page - 1) * self.rows_per_page
+        end_index = min(start_index + self.rows_per_page, len(self.all_data))
+        page_data = self.all_data[start_index:end_index]
+
+        for row, d in enumerate(page_data):
+            brush = d.get("_warna_font", QBrush())
             for c in range(self.table.columnCount()):
                 item = self.table.item(row, c)
                 if item:
-                    item.setForeground(color)
+                    item.setForeground(brush)
 
     def _col_index(self, name):
         """Helper untuk ambil index kolom berdasar nama."""
@@ -3279,13 +3366,22 @@ class MainWindow(QMainWindow):
     # Load data dari database saat login ulang
     # =================================================
     def load_data_from_db(self):
+        """Memuat seluruh data dari database ke self.all_data dengan super ultra kilat dan pewarnaan otomatis."""
         import sqlite3
         from datetime import datetime
+        from PyQt6.QtCore import QTimer
 
         # 1) Ambil data mentah dari DB
         with sqlite3.connect(self.db_name) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
+
+            # ⚙️ Optimasi kecepatan baca SQLite
+            cur.execute("PRAGMA synchronous = OFF;")
+            cur.execute("PRAGMA journal_mode = MEMORY;")
+            cur.execute("PRAGMA temp_store = MEMORY;")
+
+            # Pastikan tabel ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS data_pemilih (
                     KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
@@ -3294,6 +3390,7 @@ class MainWindow(QMainWindow):
                     TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                 )
             """)
+
             cur.execute("SELECT rowid, * FROM data_pemilih")
             rows = [dict(r) for r in cur.fetchall()]
 
@@ -3301,7 +3398,7 @@ class MainWindow(QMainWindow):
         headers = [self.table.horizontalHeaderItem(i).text()
                 for i in range(self.table.columnCount())]
 
-        # 3) Formatter tanggal (cache biar cepat)
+        # 3) Formatter tanggal (pakai cache biar super cepat)
         _tgl_cache = {}
         def format_tgl(val: str):
             if not val:
@@ -3333,6 +3430,24 @@ class MainWindow(QMainWindow):
         total = len(self.all_data)
         self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
         self.show_page(1)
+
+        # ==========================================================
+        # ⚡ Jalankan pewarnaan setelah GUI tampil (non-blocking, super cepat)
+        # ==========================================================
+        def apply_colors_safely():
+            try:
+                # Hindari hitung ulang warna jika sudah pernah
+                if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
+                    self._warnai_baris_berdasarkan_ket()
+                    self._warna_sudah_dihitung = True
+
+                # Terapkan warna ke halaman aktif (setelah GUI siap)
+                self._terapkan_warna_ke_tabel_aktif()
+            except Exception as e:
+                print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
+
+        # 🔹 Jalankan pewarnaan setelah 100ms (supaya login langsung tampil)
+        QTimer.singleShot(100, apply_colors_safely)
 
 
     def _ensure_schema_and_migrate(self):
@@ -3421,31 +3536,85 @@ class MainWindow(QMainWindow):
     # =================================================
     def sort_data(self, auto=False):
         """
-        Urutkan data berdasarkan TPS, RW, RT, NKK, dan NAMA.
-        Jika auto=True maka dijalankan tanpa konfirmasi & popup.
+        Urutkan data seluruh halaman (super cepat):
+        1️⃣ CEK_DATA = 'Beda TPS' → urut NKK, NIK, NAMA
+        2️⃣ CEK_DATA = 'Ganda Aktif' → urut NIK, NAMA
+        3️⃣ CEK_DATA = 'Potensi NKK Invalid', 'NIK Invalid', 'Potensi NIK Invalid',
+                    'Potensi Dibawah Umur', 'Dibawah Umur', 'Tidak Padan'
+            → tetap urutan normal, tapi muncul setelah (1) dan (2)
+        4️⃣ Selain itu → urut normal seperti biasa (TPS, RW, RT, NKK, NAMA)
         """
-        # ✅ Jika bukan mode otomatis, baru minta konfirmasi
+        # ✅ Konfirmasi jika bukan mode otomatis
         if not auto:
             if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
                 return
 
-        # 🔹 Lakukan pengurutan
-        self.all_data.sort(
-            key=lambda x: (
-                str(x.get("TPS", "")),
-                str(x.get("RW", "")),
-                str(x.get("RT", "")),
-                str(x.get("NKK", "")),
-                str(x.get("NAMA", ""))
-            )
-        )
+        # 🔹 Kelompok berdasarkan prioritas
+        prioritas_0 = {"Beda TPS"}
+        prioritas_1 = {"Ganda Aktif"}
+        prioritas_2 = {
+            "Potensi NKK Invalid",
+            "NIK Invalid",
+            "Potensi NIK Invalid",
+            "Potensi Dibawah Umur",
+            "Dibawah Umur",
+            "Tidak Padan"
+        }
+
+        # 🔹 Fungsi kunci sortir super cepat
+        def kunci_sortir(d):
+            cek = str(d.get("CEK_DATA", "")).strip()
+
+            # Level prioritas
+            if cek in prioritas_0:
+                prior = 0
+                subkey = (
+                    str(d.get("NKK", "")),
+                    str(d.get("NIK", "")),
+                    str(d.get("NAMA", "")),
+                )
+            elif cek in prioritas_1:
+                prior = 1
+                subkey = (
+                    str(d.get("NIK", "")),
+                    str(d.get("TPS", "")),
+                    str(d.get("NAMA", "")),
+                )
+            elif cek in prioritas_2:
+                prior = 2
+                subkey = (
+                    str(d.get("TPS", "")),
+                    str(d.get("RW", "")),
+                    str(d.get("RT", "")),
+                    str(d.get("NKK", "")),
+                    str(d.get("NAMA", "")),
+                )
+            else:
+                prior = 3
+                subkey = (
+                    str(d.get("TPS", "")),
+                    str(d.get("RW", "")),
+                    str(d.get("RT", "")),
+                    str(d.get("NKK", "")),
+                    str(d.get("NAMA", "")),
+                )
+
+            return (prior, *subkey)
+
+        # 🔹 Jalankan pengurutan (seluruh halaman, 1-pass, super cepat)
+        self.all_data.sort(key=kunci_sortir)
 
         # 🔹 Refresh tampilan
         self.show_page(1)
 
-        # ✅ Kalau manual, baru tampilkan popup sukses
+        # 🔹 Terapkan ulang warna (non-blocking)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+        # ✅ Popup selesai
         if not auto:
             show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
+
 
     # =================================================
     # Klik Header Kolom "LastUpdate" untuk sorting toggle
@@ -3698,6 +3867,7 @@ class MainWindow(QMainWindow):
         # Jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
         QTimer.singleShot(0, self.sync_header_checkbox_state)
+        self._terapkan_warna_ke_tabel_aktif()
         
     # =================================================
     # Pagination UI
@@ -3892,9 +4062,26 @@ class MainWindow(QMainWindow):
                 app.quit()
 
     def closeEvent(self, event):
-        """SATU-SATUNYA closeEvent di MainWindow."""
-        self._shutdown("closeEvent")
-        super().closeEvent(event)
+        """Cegah keluar lewat tombol X, kecuali lewat menu File → Keluar."""
+        # 🔹 Jika keluar lewat menu resmi, izinkan & jalankan shutdown
+        if hasattr(self, "_izin_keluar") and self._izin_keluar:
+            try:
+                self._shutdown("closeEvent")  # tetap jalankan proses tutup yang kamu punya
+            except Exception as e:
+                print(f"[WARN] Gagal menjalankan _shutdown: {e}")
+            event.accept()
+            super().closeEvent(event)
+            return
+
+        # 🔹 Jika bukan lewat menu, blokir
+        event.ignore()
+        QMessageBox.warning(
+            self,
+            "Tindakan Diblokir",
+            "Gunakan menu <b>File → Keluar</b> untuk menutup aplikasi.",
+            QMessageBox.StandardButton.Ok
+        )
+
 
     def _flush_db(self, where=""):
         """
