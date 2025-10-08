@@ -1814,117 +1814,310 @@ class MainWindow(QMainWindow):
     # DASHBOARD PAGE
     # =========================================================
     def show_dashboard_page(self):
-        """Tampilkan Dashboard dalam stack, nonaktifkan kontrol tema & toolbar."""
-        # siapkan/ambil dashboard page
+        """Tampilkan Dashboard elegan (dengan animasi, tanpa status bar)."""
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect, QToolBar
+        from PyQt6.QtGui import QIcon
+        import os
+
+        # === Pastikan ikon aplikasi (KPU.png) muncul di kiri atas ===
+        icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        # === Siapkan dashboard jika belum ada ===
         if not hasattr(self, "dashboard_page"):
             self.dashboard_page = self._build_dashboard_widget()
-            self.stack.addWidget(self.dashboard_page)   # index 1 = Dashboard
+            self.stack.addWidget(self.dashboard_page)
 
         self._is_on_dashboard = True
 
-        # Sembunyikan toolbar & filter
-        for tb in self.findChildren(QToolBar): tb.hide()
-        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+        # === Sembunyikan toolbar & filter ===
+        for tb in self.findChildren(QToolBar):
+            tb.hide()
+        if hasattr(self, "filter_dock") and self.filter_dock:
+            self.filter_dock.hide()
 
-        # Nonaktifkan Dark/Light (soft disabled)
-        self.action_dark.setEnabled(False); self.action_light.setEnabled(False)
+        # === Status bar tetap ada tapi hanya menampilkan versi NexVo ===
+        if self.statusBar():
+            self.statusBar().showMessage("NexVo v1.0")
+
+        # === Nonaktifkan tema sementara ===
+        self.action_dark.setEnabled(False)
+        self.action_light.setEnabled(False)
         for act in [self.action_dark, self.action_light]:
-            f = act.font(); f.setItalic(True); act.setFont(f)
+            f = act.font()
+            f.setItalic(True)
+            act.setFont(f)
 
-        # Tampilkan dashboard dengan fade
-        self._stack_fade_to(self.dashboard_page, duration=400)
-        #self.statusBar().showMessage("Dashboard ditampilkan")
+        # === Fade-in Dashboard ===
+        self._stack_fade_to(self.dashboard_page, duration=600)
+
 
     def _build_dashboard_widget(self) -> QWidget:
-        """Bangun widget Dashboard (tampilan saja; data nanti)."""
+        """Bangun halaman Dashboard modern, elegan, dan bersih."""
+        import os
+        from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
+        from PyQt6.QtWidgets import (
+            QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+            QGraphicsDropShadowEffect, QGraphicsOpacityEffect
+        )
+        from PyQt6.QtGui import QColor, QPainter, QFont, QPixmap
+        from PyQt6.QtCore import Qt, QMargins, QPropertyAnimation, QEasingCurve
+
+        # === ROOT DASHBOARD ===
         dash_widget = QWidget()
         dash_layout = QVBoxLayout(dash_widget)
-        dash_layout.setContentsMargins(30, 20, 30, 20)
+        dash_layout.setContentsMargins(30, 0, 30, 10)
         dash_layout.setSpacing(25)
 
-        # ===== Baris 1: kartu ringkasan =====
+        # === HEADER ===
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
+
+        logo_path = os.path.join(os.path.dirname(__file__), "KPU.png")
+        logo = QLabel()
+        if os.path.exists(logo_path):
+            pix = QPixmap(logo_path).scaled(
+                42, 42, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            logo.setPixmap(pix)
+        else:
+            logo.setText("🗳️")
+
+        title_lbl = QLabel("Sidalih Pilkada 2024 Desktop – Pemutakhiran Data")
+        title_lbl.setStyleSheet("font-size:14pt; font-weight:600; color:#333;")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        header.addWidget(logo)
+        header.addWidget(title_lbl)
+        header.addStretch()
+
+        header_frame = QFrame()
+        header_frame.setLayout(header)
+        dash_layout.addWidget(header_frame)
+        dash_layout.addSpacing(-50)
+
+        # === Fade-in untuk header ===
+        header_effect = QGraphicsOpacityEffect(header_frame)
+        header_frame.setGraphicsEffect(header_effect)
+        header_anim = QPropertyAnimation(header_effect, b"opacity")
+        header_anim.setDuration(800)
+        header_anim.setStartValue(0.0)
+        header_anim.setEndValue(1.0)
+        header_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        header_anim.start()
+
+        # === KARTU RINGKASAN ===
         top_row = QHBoxLayout()
         top_row.setSpacing(15)
 
         def make_card(icon, title, value):
+            """Kartu elegan tanpa border luar, semua center."""
             card = QFrame()
-            card.setMinimumWidth(140)
-            card.setStyleSheet("""
-                QFrame { background:#fff; border-radius:12px; border:1px solid #ddd; }
-                QLabel { font-family:'Segoe UI'; }
-            """)
+            card.setMinimumWidth(150)
+            card.setMaximumWidth(220)
             lay = QVBoxLayout(card)
+            lay.setContentsMargins(10, 8, 10, 8)
             lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_icon = QLabel(icon);      lbl_icon.setStyleSheet("font-size:24pt; color:#ff6600;")
-            lbl_title = QLabel(title);    lbl_title.setStyleSheet("font-size:10pt; color:#777;")
+
+            lbl_icon = QLabel(icon)
+            lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_icon.setStyleSheet("font-size:30pt; color:#ff6600;")
+
+            lbl_value = QLabel(value)
+            lbl_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_value.setStyleSheet("font-size:18pt; font-weight:700; color:#222;")
+
+            lbl_title = QLabel(title)
             lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_value = QLabel(value);    lbl_value.setStyleSheet("font-size:14pt; font-weight:bold; color:#333;")
-            for w in (lbl_icon, lbl_title, lbl_value): lay.addWidget(w)
-            # bayangan lembut
-            sh = QGraphicsDropShadowEffect(); sh.setBlurRadius(25); sh.setOffset(0,3); sh.setColor(QColor(0,0,0,60))
+            lbl_title.setStyleSheet("font-size:10pt; color:#777;")
+
+            for w in (lbl_icon, lbl_value, lbl_title):
+                lay.addWidget(w)
+
+            sh = QGraphicsDropShadowEffect()
+            sh.setBlurRadius(25)
+            sh.setOffset(0, 3)
+            sh.setColor(QColor(0, 0, 0, 40))
             card.setGraphicsEffect(sh)
+            card.setStyleSheet("background:#fff; border-radius:12px;")
             return card
 
-        top_row.addWidget(make_card("🚀", "tasikmalayakab.kpu.go.id\nAGUNG ADHISIETIONO", ""))
-        top_row.addWidget(make_card("👥", "Pemilih", "1.439.738"))
-        top_row.addWidget(make_card("👨", "Laki-laki", "728.475"))
-        top_row.addWidget(make_card("👩", "Perempuan", "711.263"))
-        top_row.addWidget(make_card("🏛️", "Kecamatan", "39"))
-        top_row.addWidget(make_card("🏠", "Kelurahan", "351"))
-        top_row.addWidget(make_card("📍", "TPS", "2.847"))
+            # 🪪🤴👸♀️♂️⚧️📠📖📚📬📫📮🗓️🏛️🏦👧🏻👦🏻📌🚩🚹🚺🚻🏠
+        cards = [
+            ("🏦", "Nama Desa", "Sukasenang"),
+            ("🚻", "Pemilih", "1.439.738"),
+            ("🚹", "Laki-laki", "728.475"),
+            ("🚺", "Perempuan", "711.263"),
+            ("🏠", "Kelurahan", "351"),
+            ("🚩", "TPS", "2.847"),
+        ]
+        for icon, title, value in cards:
+            top_row.addWidget(make_card(icon, title, value))
         dash_layout.addLayout(top_row)
 
-        # ===== Baris 2: Pie & bar horizontal =====
-        from PyQt6.QtCharts import QChart, QChartView, QPieSeries
-        from PyQt6.QtCore import QMargins
+        # === PIE DONUT + BAR ===
+        middle_row = QHBoxLayout()
+        middle_row.setSpacing(40)
 
-        middle_row = QHBoxLayout(); middle_row.setSpacing(40)
+        # === PIE DONUT ===
+        series = QPieSeries()
+        series.append("Laki-laki", 50.6)
+        series.append("Perempuan", 49.4)
 
-        series = QPieSeries(); series.append("Laki-laki", 50.6); series.append("Perempuan", 49.4)
-        series.slices()[0].setBrush(QColor("#6b4e71")); series.slices()[1].setBrush(QColor("#ff6600"))
-        for s in series.slices(): s.setLabelVisible(False)
+        series.slices()[0].setBrush(QColor("#6b4e71"))
+        series.slices()[1].setBrush(QColor("#ff6600"))
+        for s in series.slices():
+            s.setLabelVisible(False)
+            s.setBorderColor(Qt.GlobalColor.transparent)
+        series.setHoleSize(0.65)
 
-        chart = QChart(); chart.addSeries(series); chart.legend().setVisible(True)
-        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom); chart.setBackgroundVisible(False)
-        chart.setMargins(QMargins(0,0,0,0))
-        chart_view = QChartView(chart); chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        chart_view.setMinimumWidth(380)
-        middle_row.addWidget(chart_view, 1)
-        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setBackgroundVisible(False)
+        chart.legend().setVisible(True)
+        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+        chart.legend().setMarkerShape(QLegend.MarkerShape.MarkerShapeFromSeries)
+        chart.setMargins(QMargins(10, 10, 10, 10))
 
-        chart_view.setStyleSheet("background: #fff; border-radius: 12px;")
+        chart_view = QChartView(chart)
+        chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        chart_view.setMinimumSize(330, 280)
+        chart_view.setStyleSheet("background:#fff; border-radius:12px;")
+
+        class ChartContainer(QFrame):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setMinimumSize(330, 230)
+                self.setStyleSheet("background:#fff; border-radius:12px;")
+                self._center_label = None
+
+            def set_center_label(self, label: QLabel):
+                self._center_label = label
+                self._reposition_label()
+
+            def resizeEvent(self, event):
+                self._reposition_label()
+                super().resizeEvent(event)
+
+            def _reposition_label(self):
+                if self._center_label:
+                    self._center_label.setGeometry(0, 0, self.width(), self.height())
+                    self._center_label.raise_()
+
+        chart_container = ChartContainer()
+        cc_layout = QVBoxLayout(chart_container)
+        cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.addWidget(chart_view)
+
+        # === Label tengah terdiri dari dua bagian (judul + nilai)
+        center_widget = QWidget(chart_container)
+        center_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        center_widget.setStyleSheet("background:transparent;")
+
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(2)
+        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_center_title = QLabel("Laki-laki")
+        lbl_center_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_center_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        lbl_center_title.setStyleSheet("color:#444; background:transparent;")
+
+        lbl_center_value = QLabel("50.6%")
+        lbl_center_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_center_value.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl_center_value.setStyleSheet("color:#222; background:transparent;")
+
+        center_layout.addWidget(lbl_center_title)
+        center_layout.addWidget(lbl_center_value)
+
+        # Pasang widget label ke tengah lingkaran
+        chart_container.set_center_label(center_widget)
+
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(25)
         shadow.setOffset(0, 3)
         shadow.setColor(QColor(0, 0, 0, 50))
-        chart_view.setGraphicsEffect(shadow)
+        chart_container.setGraphicsEffect(shadow)
 
+        def update_center_label(slice_obj):
+            lbl_center_title.setText(slice_obj.label())
+            lbl_center_value.setText(f"{slice_obj.value():.1f}%")
 
-        bar_frame = QFrame(); bar_layout = QVBoxLayout(bar_frame)
-        bar_layout.setSpacing(6); bar_layout.setContentsMargins(10,10,10,10)
+        def handle_hovered(state, slice_obj):
+            slice_obj.setExploded(state)
+            if state:
+                update_center_label(slice_obj)
+
+        for sl in series.slices():
+            sl.setExploded(False)
+            sl.setExplodeDistanceFactor(0.05)
+            sl.hovered.connect(lambda state, s=sl: handle_hovered(state, s))
+            sl.clicked.connect(lambda _checked, s=sl: update_center_label(s))
+
+        middle_row.addWidget(chart_container, 0)
+        #middle_row.addSpacing(10)
+
+        # === BAR HORIZONTAL ===
+        bar_frame = QFrame()
+        bar_layout = QVBoxLayout(bar_frame)
+        bar_layout.setSpacing(14)
+        bar_layout.setContentsMargins(5, 35, 20, 35)
+
         bars = [
-            ("Meninggal", 0.051),
-            ("Ganda", 0.002),
-            ("Di Bawah Umur", 0.000),
-            ("Pindah Domisili", 0.019),
-            ("WNA", 0.000),
-            ("TNI", 0.000),
-            ("Polri", 0.000),
-            ("Salah TPS", 0.017),
+            ("Meninggal", 0.051), ("Ganda", 0.002), ("Di Bawah Umur", 0.000),
+            ("Pindah Domisili", 0.019), ("WNA", 0.000), ("TNI", 0.000),
+            ("Polri", 0.000), ("Salah TPS", 0.017),
         ]
+
         for label, val in bars:
-            row = QHBoxLayout(); row.setSpacing(8)
-            lbl = QLabel(label); lbl.setStyleSheet("font-size:9pt; color:#555; min-width:240px;")
-            bg = QFrame(); bg.setFixedHeight(8); bg.setStyleSheet("background:#eee; border-radius:4px;")
-            fg = QFrame(bg); fg.setGeometry(0,0, max(1, int(val*1800)), 8)
-            fg.setStyleSheet("background:#ff6600; border-radius:4px;")
-            pct = QLabel(f"{val:.3%}"); pct.setStyleSheet("font-size:9pt; color:#333;")
-            row.addWidget(lbl); row.addWidget(bg, 1); row.addWidget(pct); bar_layout.addLayout(row)
+            row = QHBoxLayout()
+            row.setSpacing(0)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-size:10pt; color:#555; min-width:115px;")
+
+            bg = QFrame()
+            bg.setFixedHeight(8)
+            bg.setMaximumWidth(280)
+            bg.setStyleSheet("background:#eee; border-radius:2px;")
+
+            inner = QHBoxLayout(bg)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(0)
+
+            fg = QFrame()
+            fg.setFixedHeight(8)
+            fg.setStyleSheet("background:#ff6600; border-radius:2px;")
+
+            base_ratio = 0.9
+            stretch_val = max(1, min(int(val * 100 * base_ratio), 80))
+            inner.addWidget(fg, stretch_val)
+            inner.addStretch(100 - stretch_val)
+
+            pct = QLabel(f"{val:.3%}")
+            pct.setStyleSheet("font-size:10pt; color:#333; min-width:55px; text-align:right;")
+
+            bar_group = QHBoxLayout()
+            bar_group.setSpacing(6)
+            bar_group.addWidget(bg)
+            bar_group.addWidget(pct)
+
+            wrapper = QFrame()
+            wrapper_layout = QHBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(-35, 0, 0, 0)
+            wrapper_layout.addLayout(bar_group)
+
+            row.addWidget(lbl)
+            row.addWidget(wrapper)
+            bar_layout.addLayout(row)
 
         middle_row.addWidget(bar_frame, 2)
         dash_layout.addLayout(middle_row)
 
-        # ===== Styling: sama untuk light/dark =====
+        # === STYLE GLOBAL ===
         dash_widget.setStyleSheet("""
             QWidget { background:#f9f9f9; color:#333; font-family:'Segoe UI','Calibri'; }
             QLabel { color:#333; }
@@ -1961,27 +2154,34 @@ class MainWindow(QMainWindow):
         self._fade_anim = anim
         
     def show_data_page(self):
-        """Kembali ke halaman utama Data di dalam stack (tanpa menghapus table)."""
+        """Kembali ke halaman utama Data."""
+        from PyQt6.QtWidgets import QToolBar
+
         self._is_on_dashboard = False
 
-        # Aktifkan kembali toolbar
-        for tb in self.findChildren(QToolBar): tb.show()
-        if hasattr(self, "filter_dock") and self.filter_dock: self.filter_dock.hide()
+        # Tampilkan lagi toolbar & status bar
+        for tb in self.findChildren(QToolBar):
+            tb.show()
+        if self.statusBar():
+            self.statusBar().show()
 
-        # Aktifkan kembali tema
-        self.action_dark.setEnabled(True); self.action_light.setEnabled(True)
+        if hasattr(self, "filter_dock") and self.filter_dock:
+            self.filter_dock.hide()
+
+        # Aktifkan lagi kontrol tema
+        self.action_dark.setEnabled(True)
+        self.action_light.setEnabled(True)
         for act in [self.action_dark, self.action_light]:
-            f = act.font(); f.setItalic(False); act.setFont(f)
+            f = act.font()
+            f.setItalic(False)
+            act.setFont(f)
 
-        # Pindah page ke Data + refresh tampilan halaman saat ini
+        # Pindah page ke Data
         self._stack_fade_to(self.data_page, duration=300)
         try:
             self.show_page(getattr(self, "_last_page_index", self.current_page))
         except Exception:
             pass
-
-        #self.statusBar().showMessage("Kembali ke halaman Pemutakhiran Data")
-
 
     # =========================================================
     # 🔸 Fungsi bantu animasi transisi
