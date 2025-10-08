@@ -1,6 +1,5 @@
 import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
 from datetime import datetime, date, timedelta
-import calendar
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
     QVBoxLayout, QMessageBox, QMainWindow, QTableWidget, QTableWidgetItem,
@@ -362,172 +361,6 @@ class ModernInputDialog(QDialog):
             return self.line_edit.text(), True
         return "", False
 
-
-# =====================================================
-# Date Range Picker Dialog for LastUpdate Filter
-# =====================================================
-class DateRangePickerDialog(QDialog):
-    """Dialog untuk memilih rentang tanggal dengan dua kalender berdampingan dan preset di kiri.
-
-    Format keluaran: (date_awal, date_akhir)
-    """
-    def __init__(self, parent=None, start_date: date | None = None, end_date: date | None = None):
-        super().__init__(parent)
-        self.setWindowTitle("Pilih Rentang Tanggal")
-        self.setModal(True)
-        self.setFixedSize(720, 360)
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.start_date: date | None = start_date
-        self.end_date: date | None = end_date
-
-        self.setStyleSheet("""
-            QDialog { background:#2b2b2b; border:1px solid #444; border-radius:10px; }
-            QLabel { color:#fff; font-family:'Segoe UI'; }
-            QPushButton { background:#444; color:#fff; border:none; border-radius:6px; padding:6px 12px; }
-            QPushButton:hover { background:#555; }
-            QPushButton.primary { background:#ff7700; font-weight:bold; }
-            QPushButton.primary:hover { background:#ff8c1a; }
-        """)
-
-        main = QHBoxLayout(self)
-        main.setContentsMargins(14,14,14,14)
-        main.setSpacing(14)
-
-        # === Preset panel ===
-        preset_panel = QVBoxLayout()
-        preset_panel.setSpacing(8)
-        lbl_preset = QLabel("Preset")
-        lbl_preset.setStyleSheet("font-weight:bold;")
-        preset_panel.addWidget(lbl_preset)
-
-        def add_preset(name, func):
-            btn = QPushButton(name)
-            btn.clicked.connect(lambda: self.apply_preset(func))
-            preset_panel.addWidget(btn)
-        today = date.today()
-        add_preset("Hari ini", lambda: (today, today))
-        add_preset("Kemarin", lambda: (today - timedelta(days=1), today - timedelta(days=1)))
-        first_day_month = today.replace(day=1)
-        last_day_month = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
-        add_preset("Bulan ini", lambda: (first_day_month, last_day_month))
-        # Bulan lalu
-        prev_year, prev_month = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
-        first_prev = date(prev_year, prev_month, 1)
-        last_prev = date(prev_year, prev_month, calendar.monthrange(prev_year, prev_month)[1])
-        add_preset("Bulan lalu", lambda: (first_prev, last_prev))
-        preset_panel.addStretch(1)
-        main.addLayout(preset_panel)
-
-        # === Dua kalender ===
-        cal_container = QHBoxLayout()
-        cal_container.setSpacing(12)
-        from PyQt6.QtWidgets import QCalendarWidget  # local import agar jelas
-        self.cal_left = QCalendarWidget()
-        self.cal_right = QCalendarWidget()
-        # Sinkronisasi agar right selalu month+1 (kecuali Desember -> Januari tahun berikutnya)
-        self.cal_left.currentPageChanged.connect(self.sync_right_calendar)
-        for cal in (self.cal_left, self.cal_right):
-            cal.setGridVisible(True)
-            cal.clicked.connect(self.on_date_clicked)
-            cal.setVerticalHeaderFormat(cal.VerticalHeaderFormat.NoVerticalHeader)
-            cal.setStyleSheet("""
-                QCalendarWidget QWidget { alternate-background-color:#333; }
-                QCalendarWidget QAbstractItemView:enabled { color:#eee; selection-background-color:#ff7700; selection-color:#fff; }
-            """)
-        # Set posisi awal
-        if self.start_date:
-            self.cal_left.setSelectedDate(self.start_date)
-        if self.end_date:
-            self.cal_right.setSelectedDate(self.end_date)
-        cal_container.addWidget(self.cal_left)
-        cal_container.addWidget(self.cal_right)
-        main.addLayout(cal_container, 1)
-
-        # === Panel kanan (info + aksi) ===
-        side = QVBoxLayout()
-        self.lbl_range = QLabel("Pilih tanggal mulai dan tanggal akhir")
-        self.lbl_range.setWordWrap(True)
-        side.addWidget(self.lbl_range)
-        side.addStretch(1)
-        btn_row = QHBoxLayout()
-        self.btn_cancel = QPushButton("Batal")
-        self.btn_ok = QPushButton("Pilih")
-        self.btn_ok.setObjectName("pilihBtn")
-        self.btn_ok.setProperty("class","primary")
-        self.btn_ok.setStyleSheet("QPushButton { background:#ff7700; } QPushButton:hover { background:#ff8c1a; }")
-        self.btn_cancel.clicked.connect(self.reject)
-        self.btn_ok.clicked.connect(self.accept_if_valid)
-
-        # Tambahkan tombol ke baris dan panel sisi
-        btn_row.addWidget(self.btn_cancel)
-        btn_row.addWidget(self.btn_ok)
-        side.addLayout(btn_row)
-        main.addLayout(side)
-
-    # ================= Helper Methods =================
-    def sync_right_calendar(self, year, month):
-        """Pastikan kalender kanan selalu menampilkan bulan setelah kalender kiri."""
-        from PyQt6.QtCore import QDate
-        if month == 12:
-            next_month = 1
-            next_year = year + 1
-        else:
-            next_month = month + 1
-            next_year = year
-        self.cal_right.blockSignals(True)
-        self.cal_right.setCurrentPage(next_year, next_month)
-        self.cal_right.blockSignals(False)
-
-    def on_date_clicked(self, qdate):
-        """Tangani klik tanggal: pilih start lalu end."""
-        from PyQt6.QtCore import QDate
-        clicked = date(qdate.year(), qdate.month(), qdate.day())
-        if self.start_date is None or (self.start_date and self.end_date):
-            # Mulai seleksi baru
-            self.start_date = clicked
-            self.end_date = None
-        else:
-            self.end_date = clicked
-            # Pastikan urutan
-            if self.end_date < self.start_date:
-                self.start_date, self.end_date = self.end_date, self.start_date
-        self.update_range_label()
-
-    def apply_preset(self, func):
-        """Terapkan preset (hari ini, kemarin, dll)."""
-        from PyQt6.QtCore import QDate
-        self.start_date, self.end_date = func()
-        self.update_range_label()
-        # Set kalender ke bulan masing-masing
-        if self.start_date:
-            self.cal_left.setSelectedDate(QDate(self.start_date.year, self.start_date.month, self.start_date.day))
-            self.cal_left.setCurrentPage(self.start_date.year, self.start_date.month)
-        if self.end_date:
-            self.cal_right.setSelectedDate(QDate(self.end_date.year, self.end_date.month, self.end_date.day))
-            self.cal_right.setCurrentPage(self.end_date.year, self.end_date.month)
-
-    def update_range_label(self):
-        if self.start_date and self.end_date:
-            self.lbl_range.setText(
-                f"{self.start_date.strftime('%d/%m/%Y')} - {self.end_date.strftime('%d/%m/%Y')}"
-            )
-        elif self.start_date and not self.end_date:
-            self.lbl_range.setText(
-                f"Pilih tanggal akhir (mulai: {self.start_date.strftime('%d/%m/%Y')})"
-            )
-        else:
-            self.lbl_range.setText("Pilih tanggal mulai dan tanggal akhir")
-
-    def accept_if_valid(self):
-        """Validasi sebelum menutup dialog."""
-        if not self.start_date or not self.end_date:
-            show_modern_warning(self, "Tidak Lengkap", "Silakan pilih tanggal mulai dan tanggal akhir.")
-            return
-        self.accept()
-
-    def get_range(self):
-        """Kembalikan tuple (start_date, end_date)."""
-        return self.start_date, self.end_date
 
 # === Enkripsi (cryptography - Fernet) ===
 from cryptography.fernet import Fernet
@@ -964,437 +797,758 @@ class CustomComboBox(QComboBox):
         painter.end()
 
 # =====================================================
-# RangeSlider sederhana untuk umur (min-max)
+# RangeSlider: Komponen Slider Ganda untuk Rentang Umur
 # =====================================================
 class RangeSlider(QWidget):
+    """
+    Widget slider dengan dua handle untuk memilih rentang nilai (min-max).
+    
+    Dirancang khusus untuk filter rentang umur dengan antarmuka yang intuitif:
+    - Dua handle yang dapat digeser untuk menentukan nilai minimum dan maksimum
+    - Label yang muncul saat hover atau sedang aktif dengan animasi fade yang halus
+    - Efek visual modern dengan glow effect saat handle aktif
+    - Persistent state untuk menjaga handle tetap aktif setelah diklik
+    - Animasi smooth untuk pergerakan handle dan transisi visual
+    
+    Fitur Interaksi:
+    - Hover: Label muncul dan handle berubah warna
+    - Click: Handle menjadi persistent (tetap aktif) sampai handle lain diklik
+    - Drag: Geser handle untuk mengubah nilai dengan animasi smooth
+    - Keyboard: Arrow keys dengan Shift untuk handle kiri, tanpa Shift untuk handle kanan
+    """
+    
     def __init__(self, minimum=0, maximum=100, parent=None):
-        super().__init__(parent)
-        self._min = minimum; self._max = maximum
-        self._lower = minimum; self._upper = maximum
-        self._bar_h = 4; self._r = 7  # handle diperkecil
-        self._active = None; self._hover_lower = False; self._hover_upper = False; self._hover_track = False; self._hover_active_track = False
-        self._persistent_lower = False; self._persistent_upper = False  # persistent active states
+        """
+        Inisialisasi RangeSlider dengan rentang nilai tertentu.
         
-        # Animation untuk smooth transitions
+        Args:
+            minimum (int): Nilai minimum slider (default: 0)
+            maximum (int): Nilai maksimum slider (default: 100)
+            parent (QWidget): Widget parent
+        """
+        super().__init__(parent)
+        
+        # === Pengaturan Nilai Rentang ===
+        self._min = minimum
+        self._max = maximum
+        self._lower = minimum  # Nilai handle kiri (minimum yang dipilih)
+        self._upper = maximum  # Nilai handle kanan (maksimum yang dipilih)
+        
+        # === Pengaturan Visual ===
+        self._bar_height = 4      # Tinggi track slider
+        self._handle_radius = 7   # Radius handle (diperkecil untuk tampilan compact)
+        
+        # === State Management ===
+        self._active_handle = None  # Handle yang sedang di-drag ('lower'/'upper'/None)
+        self._hover_lower = False   # Apakah mouse hover di handle kiri
+        self._hover_upper = False   # Apakah mouse hover di handle kanan
+        self._hover_track = False   # Apakah mouse hover di area track
+        self._hover_active_track = False  # Apakah mouse hover di area selection
+        
+        # Persistent states - handle tetap aktif setelah diklik
+        self._persistent_lower = False  # Handle kiri tetap aktif
+        self._persistent_upper = False  # Handle kanan tetap aktif
+        
+        # === Sistem Animasi untuk Pergerakan Handle ===
         self._animation_timer = QTimer(self)
-        self._animation_timer.timeout.connect(self._update_animation)
-        self._animation_timer.setInterval(16)  # 60 FPS
+        self._animation_timer.timeout.connect(self._update_handle_animation)
+        self._animation_timer.setInterval(16)  # 60 FPS untuk animasi yang smooth
         
         # Target values untuk smooth dragging
         self._target_lower = minimum
         self._target_upper = maximum
-        self._animation_speed = 0.18  # diperlambat dari 0.3 menjadi 0.18 untuk gerakan yang lebih halus
+        self._animation_speed = 0.18  # Kecepatan animasi (0.18 untuk gerakan halus)
         
-        # Label fade effect - kecepatan sedang yang seimbang
+        # === Sistem Animasi untuk Label Fade Effect ===
         self._label_fade_timer = QTimer(self)
         self._label_fade_timer.timeout.connect(self._update_label_fade)
-        self._label_fade_timer.setInterval(25)  # 40 FPS untuk balance antara smooth dan kecepatan
-        self._label_opacity = {'lower': 0.0, 'upper': 0.0}
-        self._target_opacity = {'lower': 0.0, 'upper': 0.0}
+        self._label_fade_timer.setInterval(25)  # 40 FPS untuk balance smooth dan performa
         
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._dark = False
-        self._accent = QColor('#ff9900')
-        # Tambah tinggi untuk ruang label di atas bar dengan margin lebih besar
-        self.setFixedHeight(self._r*2 + 50)
+        # Opacity values untuk fade effect label
+        self._label_opacity = {'lower': 0.0, 'upper': 0.0}     # Opacity saat ini
+        self._target_opacity = {'lower': 0.0, 'upper': 0.0}    # Target opacity
+        
+        # === Pengaturan Widget ===
+        self.setMouseTracking(True)  # Untuk mendeteksi hover tanpa click
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Untuk keyboard input
+        
+        # === Tema dan Warna ===
+        self._dark_theme = False
+        self._accent_color = QColor('#ff9900')  # Warna accent orange
+        
+        # Tinggi widget dengan ruang untuk label di atas
+        self.setFixedHeight(self._handle_radius * 2 + 50)
 
     def sizeHint(self):
-        return QSize(160, self._r*2 + 10)
+        """Memberikan ukuran yang disarankan untuk widget."""
+        return QSize(160, self._handle_radius * 2 + 10)
 
-    def setDark(self, dark: bool):
-        self._dark = dark; self.update()
-
-    def setRange(self, minimum, maximum):
-        self._min, self._max = minimum, maximum
-        self._lower = max(self._min, min(self._lower, self._max))
-        self._upper = max(self._min, min(self._upper, self._max))
-        if self._lower>self._upper: self._lower,self._upper = self._upper,self._lower
+    def setDark(self, dark_mode: bool):
+        """
+        Mengatur tema tampilan slider.
+        
+        Args:
+            dark_mode (bool): True untuk tema gelap, False untuk tema terang
+        """
+        self._dark_theme = dark_mode
         self.update()
 
-    def lowerValue(self): return self._lower
-    def upperValue(self): return self._upper
-    def values(self): return self._lower, self._upper
-    def setValues(self, low, up):
-        self._target_lower = max(self._min, min(low, up))
-        self._target_upper = min(self._max, max(up, self._target_lower))
+    def setRange(self, minimum, maximum):
+        """
+        Mengatur rentang nilai slider.
+        
+        Args:
+            minimum (int): Nilai minimum baru
+            maximum (int): Nilai maksimum baru
+        """
+        self._min, self._max = minimum, maximum
+        
+        # Pastikan nilai saat ini masih dalam rentang yang valid
+        self._lower = max(self._min, min(self._lower, self._max))
+        self._upper = max(self._min, min(self._upper, self._max))
+        
+        # Pastikan lower tidak lebih besar dari upper
+        if self._lower > self._upper:
+            self._lower, self._upper = self._upper, self._lower
+            
+        self.update()
+
+    # === Getter Methods ===
+    def lowerValue(self):
+        """Mendapatkan nilai handle kiri (minimum)."""
+        return self._lower
+        
+    def upperValue(self):
+        """Mendapatkan nilai handle kanan (maksimum)."""
+        return self._upper
+        
+    def values(self):
+        """Mendapatkan kedua nilai sebagai tuple (lower, upper)."""
+        return self._lower, self._upper
+
+    def setValues(self, lower_val, upper_val):
+        """
+        Mengatur kedua nilai slider sekaligus dengan animasi smooth.
+        
+        Args:
+            lower_val (int): Nilai baru untuk handle kiri
+            upper_val (int): Nilai baru untuk handle kanan
+        """
+        # Pastikan nilai dalam rentang yang valid
+        self._target_lower = max(self._min, min(lower_val, upper_val))
+        self._target_upper = min(self._max, max(upper_val, self._target_lower))
+        
+        # Jika animasi belum diinisialisasi, langsung set nilai
         if not hasattr(self, '_animation_timer'):
             self._lower = self._target_lower
             self._upper = self._target_upper
         else:
+            # Mulai animasi smooth
             self._animation_timer.start()
-        self.update(); self._emit()
+            
+        self.update()
+        self._emit_value_changed()
 
-    def _update_animation(self):
-        """Update smooth animation untuk handle movement"""
-        changed = False
+    def _update_handle_animation(self):
+        """
+        Update animasi smooth untuk pergerakan handle.
         
-        # Smooth interpolation untuk lower handle
-        diff_lower = self._target_lower - self._lower
-        if abs(diff_lower) > 0.1:
-            self._lower += diff_lower * self._animation_speed
-            changed = True
+        Menggunakan interpolasi linear untuk transisi yang halus dari nilai
+        saat ini ke nilai target. Animasi berhenti ketika handle sudah
+        mencapai posisi target.
+        """
+        animation_active = False
+        
+        # Smooth interpolation untuk handle kiri
+        lower_difference = self._target_lower - self._lower
+        if abs(lower_difference) > 0.1:
+            self._lower += lower_difference * self._animation_speed
+            animation_active = True
         else:
             self._lower = self._target_lower
             
-        # Smooth interpolation untuk upper handle  
-        diff_upper = self._target_upper - self._upper
-        if abs(diff_upper) > 0.1:
-            self._upper += diff_upper * self._animation_speed
-            changed = True
+        # Smooth interpolation untuk handle kanan
+        upper_difference = self._target_upper - self._upper
+        if abs(upper_difference) > 0.1:
+            self._upper += upper_difference * self._animation_speed
+            animation_active = True
         else:
             self._upper = self._target_upper
             
-        if changed:
+        # Update tampilan jika masih ada perubahan
+        if animation_active:
             self.update()
         else:
+            # Hentikan timer jika animasi selesai
             self._animation_timer.stop()
 
     def _update_label_fade(self):
-        """Update fade in/out animation untuk labels - kecepatan sedang"""
-        changed = False
-        fade_speed = 0.25  # disesuaikan dari 0.35 menjadi 0.25 untuk kecepatan sedang
+        """
+        Update animasi fade in/out untuk label nilai.
         
-        for handle in ['lower', 'upper']:
-            diff = self._target_opacity[handle] - self._label_opacity[handle]
-            if abs(diff) > 0.01:
-                self._label_opacity[handle] += diff * fade_speed
-                changed = True
+        Label akan muncul dengan fade in saat hover atau handle aktif,
+        dan fade out saat tidak ada interaksi. Kecepatan fade disesuaikan
+        untuk memberikan feedback yang responsif namun tidak mengganggu.
+        """
+        animation_active = False
+        fade_speed = 0.25  # Kecepatan fade yang seimbang
+        
+        for handle_type in ['lower', 'upper']:
+            opacity_difference = self._target_opacity[handle_type] - self._label_opacity[handle_type]
+            
+            if abs(opacity_difference) > 0.01:
+                self._label_opacity[handle_type] += opacity_difference * fade_speed
+                animation_active = True
             else:
-                self._label_opacity[handle] = self._target_opacity[handle]
+                self._label_opacity[handle_type] = self._target_opacity[handle_type]
                 
-        if changed:
+        # Update tampilan jika masih ada perubahan opacity
+        if animation_active:
             self.update()
         else:
+            # Hentikan timer jika fade selesai
             self._label_fade_timer.stop()
 
-    def _emit(self):
-        if hasattr(self.parent(), 'on_age_range_changed'):
-            try: self.parent().on_age_range_changed(int(self._lower), int(self._upper))
-            except Exception: pass
-
-    def paintEvent(self, ev):
-        p = QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w = self.width(); h = self.height()
-        cy = h//2 + 5  # geser bar ke bawah sedikit agar label tidak terpotong
-        # Tambah margin kiri/kanan manual (8px) supaya tidak mepet dock
-        margin_side = 8
-        left = margin_side + self._r
-        right = w - (margin_side + self._r)
-        # background track dengan hover effect
-        if self._hover_track:
-            # Track hover: sedikit lebih terang
-            if self._dark:
-                inactive_color = QColor('#444')  # lebih terang dari #333
-            else:
-                inactive_color = QColor('#bbb')  # lebih gelap dari #dcdcdc
-        else:
-            inactive_color = QColor('#333') if self._dark else QColor('#dcdcdc')
+    def _emit_value_changed(self):
+        """
+        Mengirim signal perubahan nilai ke parent widget.
         
-        p.setPen(Qt.PenStyle.NoPen); p.setBrush(inactive_color)
-        full_rect = QRect(left, cy - self._bar_h//2, right-left, self._bar_h)
-        p.drawRoundedRect(full_rect, 2,2)
-        # selection dengan hover effect
-        lx = self._val_to_x(self._lower,left,right); ux = self._val_to_x(self._upper,left,right)
-        active_rect = QRect(int(lx), cy - self._bar_h//2, int(ux-lx), self._bar_h)
+        Mencoba memanggil method on_age_range_changed pada parent jika tersedia.
+        Ini memungkinkan parent widget merespons perubahan nilai slider.
+        """
+        if hasattr(self.parent(), 'on_age_range_changed'):
+            try:
+                self.parent().on_age_range_changed(int(self._lower), int(self._upper))
+            except Exception:
+                # Abaikan error jika parent tidak dapat memproses callback
+                pass
+
+    def paintEvent(self, event):
+        """
+        Menggambar seluruh komponen slider termasuk track, selection, handle, dan label.
+        
+        Komponen yang digambar:
+        1. Background track dengan efek hover
+        2. Selection area (area antara dua handle)
+        3. Handle kiri dan kanan dengan efek glow saat aktif
+        4. Label nilai dengan fade effect dan bubble styling
+        """
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # === Kalkulasi Posisi dan Dimensi ===
+        widget_width = self.width()
+        widget_height = self.height()
+        center_y = widget_height // 2 + 5  # Posisi vertikal track (sedikit ke bawah untuk ruang label)
+        
+        # Margin samping untuk menghindari handle terpotong
+        side_margin = 8
+        track_left = side_margin + self._handle_radius
+        track_right = widget_width - (side_margin + self._handle_radius)
+        
+        # === Menggambar Background Track ===
+        self._draw_background_track(painter, track_left, track_right, center_y)
+        
+        # === Menggambar Selection Area ===
+        left_handle_x = self._value_to_x_position(self._lower, track_left, track_right)
+        right_handle_x = self._value_to_x_position(self._upper, track_left, track_right)
+        self._draw_selection_area(painter, left_handle_x, right_handle_x, center_y)
+        
+        # === Menggambar Handle dan Label ===
+        self._draw_handle_and_label(painter, 'lower', left_handle_x, center_y)
+        self._draw_handle_and_label(painter, 'upper', right_handle_x, center_y)
+        
+        painter.end()
+
+    def _draw_background_track(self, painter, left, right, center_y):
+        """
+        Menggambar track latar belakang dengan efek hover.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            left (int): Posisi x kiri track
+            right (int): Posisi x kanan track  
+            center_y (int): Posisi y tengah track
+        """
+        # Tentukan warna track berdasarkan state hover dan tema
+        if self._hover_track:
+            # Warna lebih terang saat hover
+            if self._dark_theme:
+                track_color = QColor('#444')  # Lebih terang dari default gelap
+            else:
+                track_color = QColor('#bbb')  # Lebih gelap dari default terang
+        else:
+            # Warna default
+            track_color = QColor('#333') if self._dark_theme else QColor('#dcdcdc')
+        
+        # Gambar track sebagai rounded rectangle
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(track_color)
+        
+        track_rect = QRect(left, center_y - self._bar_height // 2, 
+                          right - left, self._bar_height)
+        painter.drawRoundedRect(track_rect, 2, 2)
+
+    def _draw_selection_area(self, painter, left_x, right_x, center_y):
+        """
+        Menggambar area selection (antara dua handle) dengan efek hover.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            left_x (float): Posisi x handle kiri
+            right_x (float): Posisi x handle kanan
+            center_y (int): Posisi y tengah track
+        """
+        selection_rect = QRect(int(left_x), center_y - self._bar_height // 2, 
+                              int(right_x - left_x), self._bar_height)
         
         # Warna selection berdasarkan hover state
         if self._hover_active_track:
-            # Active track hover: accent color lebih terang
-            hover_accent = QColor(self._accent)
-            hover_accent.setAlpha(180)  # sedikit transparan untuk efek hover
-            p.setBrush(hover_accent)
+            # Efek hover: accent color dengan transparansi
+            hover_accent = QColor(self._accent_color)
+            hover_accent.setAlpha(180)  # Sedikit transparan untuk efek hover
+            painter.setBrush(hover_accent)
         else:
-            p.setBrush(self._accent)
+            # Warna normal
+            painter.setBrush(self._accent_color)
         
-        p.drawRoundedRect(active_rect,2,2)
-        # handles
-        font = p.font(); font.setPointSize(9); p.setFont(font)
-        for tag,x in [('lower',lx),('upper',ux)]:
-            hover = (tag=='lower' and self._hover_lower) or (tag=='upper' and self._hover_upper)
-            press = self._active==tag
-            persistent = (tag=='lower' and self._persistent_lower) or (tag=='upper' and self._persistent_upper)
-            
-            # Handle modern dengan gradasi dan outline yang jelas
-            if self._dark:
-                face_color = QColor('#2a2a2a') if not (hover or press or persistent) else QColor('#3a3a3a')
-                # Border color: orange untuk aktif, cyan biru untuk tidak aktif
-                border_color = QColor('#ff9900') if (hover or press or persistent) else QColor('#ff9900')
-            else:
-                face_color = QColor('#ffffff') if not (hover or press or persistent) else QColor('#f8f8f8')
-                # Border color: orange untuk aktif, biru tua untuk tidak aktif
-                border_color = QColor('#ff9900') if (hover or press or persistent) else QColor('#ff9900')
-            
-            # Efek glow saat press mode atau persistent active dengan efek lebih tajam
-            if press or persistent:
-                from PyQt6.QtGui import QRadialGradient
-                
-                # Glow yang lebih tajam dengan 2 layer saja
-                # Layer 1: Glow luar (lebih tajam)
-                outer_radius = self._r + 8
-                outer_rect = QRect(int(x-outer_radius), int(cy-outer_radius), 2*outer_radius, 2*outer_radius)
-                outer_gradient = QRadialGradient(x, cy, outer_radius)
-                # Gunakan warna accent orange yang sama dengan border
-                glow_color = QColor('#ff9900')  # orange sesuai warna awal
-                outer_gradient.setColorAt(0.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
-                outer_gradient.setColorAt(0.8, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 40))
-                outer_gradient.setColorAt(1.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
-                
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(outer_gradient)
-                p.drawEllipse(outer_rect)
-                
-                # Layer 2: Glow dalam (lebih terang dan tajam)
-                inner_radius = self._r + 4
-                inner_rect = QRect(int(x-inner_radius), int(cy-inner_radius), 2*inner_radius, 2*inner_radius)
-                inner_gradient = QRadialGradient(x, cy, inner_radius)
-                inner_gradient.setColorAt(0.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
-                inner_gradient.setColorAt(0.7, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80))
-                inner_gradient.setColorAt(1.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
-                
-                p.setBrush(inner_gradient)
-                p.drawEllipse(inner_rect)
-            
-            # Gambar handle dengan border tegas
-            p.setBrush(face_color)
-            pen = QPen(border_color)
-            pen.setWidth(2 if (hover or press or persistent) else 2)
-            p.setPen(pen)
-            
-            handle_rect = QRect(int(x-self._r), int(cy-self._r), 2*self._r, 2*self._r)
-            p.drawEllipse(handle_rect)
-            
-            # Titik tengah kecil untuk grip visual
-            if hover or press or persistent:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(border_color)
-                center_dot = QRect(int(x-2), int(cy-2), 4, 4)
-                p.drawEllipse(center_dot)
-            # label dengan fade effect yang smooth
-            opacity = self._label_opacity.get(tag, 0.0)
-            show_label = (hover or press or (self._active == tag) or persistent) or opacity > 0.01
-            
-            if show_label and opacity > 0.01:
-                val = int(self._lower) if tag=='lower' else int(self._upper)
-                label_text = str(val)
-                metrics = p.fontMetrics()
-                # Bubble seperti referensi: kotak rounded dengan segitiga
-                padding_h = 8; padding_v = 4
-                tw = metrics.horizontalAdvance(label_text) + padding_h
-                th = metrics.height() + padding_v
-                
-                # Posisi label jauh di atas handle/glow dengan jarak yang sangat besar
-                if press or (self._active == tag) or persistent:
-                    # Saat press, active, atau persistent: letakkan jauh di atas glow effect 
-                    distance_from_center = 35  # jarak tetap dari pusat handle
-                    top_y = int(cy - distance_from_center - th)
-                else:
-                    # Saat hover biasa: posisi di atas handle dengan jarak besar
-                    distance_from_center = 25  # jarak tetap dari pusat handle  
-                    top_y = int(cy - distance_from_center - th)
-                
-                if top_y < 2: top_y = 2
-                box_rect = QRect(int(x - tw/2), top_y, int(tw), int(th))
-                
-                # Apply fade opacity
-                alpha = int(240 * opacity)
-                
-                # Gambar bubble dengan warna gelap dan fade effect
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(60,60,60,alpha))  # warna gelap dengan alpha
-                p.drawRoundedRect(box_rect, 4, 4)  # rounded corner sedang
-                
-                # Tambahkan segitiga pointer di bawah bubble dengan fade effect
-                from PyQt6.QtGui import QPolygon
-                from PyQt6.QtCore import QPoint
-                triangle_size = 4
-                triangle_bottom_y = top_y + th
-                triangle_tip_x = int(x)  # tepat di tengah handle
-                
-                triangle = QPolygon([
-                    QPoint(triangle_tip_x - triangle_size, triangle_bottom_y),
-                    QPoint(triangle_tip_x + triangle_size, triangle_bottom_y), 
-                    QPoint(triangle_tip_x, triangle_bottom_y + triangle_size)
-                ])
-                p.setBrush(QColor(60,60,60,alpha))
-                p.drawPolygon(triangle)
-                
-                # Teks putih di tengah dengan fade effect
-                text_alpha = int(255 * opacity)
-                p.setPen(QColor(255,255,255,text_alpha))
-                font = p.font()
-                font.setBold(True)  # bold seperti referensi
-                p.setFont(font)
-                p.drawText(box_rect, Qt.AlignmentFlag.AlignCenter, label_text)
-        p.end()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(selection_rect, 2, 2)
 
-    def _val_to_x(self, val, left, right):
-        if self._max==self._min: return left
-        return left + (val - self._min) * (right-left) / (self._max-self._min)
-
-    def _x_to_val(self, x, left, right):
-        ratio = (x-left)/(right-left)
-        v = self._min + ratio*(self._max-self._min)
-        return int(round(max(self._min, min(v, self._max))))
-
-    def mousePressEvent(self, e):
-        if e.button()!=Qt.MouseButton.LeftButton: return
-        left = self._r; right = self.width()-self._r
-        lx = self._val_to_x(self._lower,left,right); ux = self._val_to_x(self._upper,left,right)
-        x = e.position().x()
+    def _draw_handle_and_label(self, painter, handle_type, x_position, center_y):
+        """
+        Menggambar handle dan label untuk satu handle (kiri atau kanan).
         
-        # Cek apakah klik di area handle (dengan toleransi)
-        click_on_lower = abs(x - lx) <= self._r + 4
-        click_on_upper = abs(x - ux) <= self._r + 4
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            handle_type (str): Tipe handle ('lower' atau 'upper')
+            x_position (float): Posisi x handle
+            center_y (int): Posisi y tengah handle
+        """
+        # Tentukan state handle
+        is_hover = (handle_type == 'lower' and self._hover_lower) or \
+                   (handle_type == 'upper' and self._hover_upper)
+        is_pressed = self._active_handle == handle_type
+        is_persistent = (handle_type == 'lower' and self._persistent_lower) or \
+                       (handle_type == 'upper' and self._persistent_upper)
         
-        if click_on_lower:
-            # Klik pada handle lower
+        is_active = is_hover or is_pressed or is_persistent
+        
+        # === Gambar Glow Effect untuk Handle Aktif ===
+        if is_pressed or is_persistent:
+            self._draw_glow_effect(painter, x_position, center_y)
+        
+        # === Gambar Handle ===
+        self._draw_handle_circle(painter, x_position, center_y, is_active)
+        
+        # === Gambar Label dengan Fade Effect ===
+        self._draw_handle_label(painter, handle_type, x_position, center_y, is_active)
+
+    def _draw_glow_effect(self, painter, x_position, center_y):
+        """
+        Menggambar efek glow di sekitar handle yang aktif.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            x_position (float): Posisi x pusat glow
+            center_y (int): Posisi y pusat glow
+        """
+        from PyQt6.QtGui import QRadialGradient
+        
+        glow_color = QColor('#ff9900')  # Warna orange sesuai accent
+        
+        # Layer 1: Glow luar (efek lebih lembut)
+        outer_radius = self._handle_radius + 8
+        outer_rect = QRect(int(x_position - outer_radius), int(center_y - outer_radius), 
+                          2 * outer_radius, 2 * outer_radius)
+        
+        outer_gradient = QRadialGradient(x_position, center_y, outer_radius)
+        outer_gradient.setColorAt(0.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        outer_gradient.setColorAt(0.8, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 40))
+        outer_gradient.setColorAt(1.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(outer_gradient)
+        painter.drawEllipse(outer_rect)
+        
+        # Layer 2: Glow dalam (efek lebih terang dan tajam)
+        inner_radius = self._handle_radius + 4
+        inner_rect = QRect(int(x_position - inner_radius), int(center_y - inner_radius), 
+                          2 * inner_radius, 2 * inner_radius)
+        
+        inner_gradient = QRadialGradient(x_position, center_y, inner_radius)
+        inner_gradient.setColorAt(0.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        inner_gradient.setColorAt(0.7, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 80))
+        inner_gradient.setColorAt(1.0, QColor(glow_color.red(), glow_color.green(), glow_color.blue(), 0))
+        
+        painter.setBrush(inner_gradient)
+        painter.drawEllipse(inner_rect)
+
+    def _draw_handle_circle(self, painter, x_position, center_y, is_active):
+        """
+        Menggambar lingkaran handle dengan styling yang sesuai state.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            x_position (float): Posisi x pusat handle
+            center_y (int): Posisi y pusat handle
+            is_active (bool): Apakah handle dalam state aktif
+        """
+        # Tentukan warna berdasarkan tema dan state
+        if self._dark_theme:
+            face_color = QColor('#3a3a3a') if is_active else QColor('#2a2a2a')
+        else:
+            face_color = QColor('#f8f8f8') if is_active else QColor('#ffffff')
+            
+        border_color = QColor('#ff9900')  # Selalu orange untuk konsistensi
+        
+        # Gambar handle dengan border
+        painter.setBrush(face_color)
+        
+        border_pen = QPen(border_color)
+        border_pen.setWidth(2)  # Border selalu tebal untuk visibility
+        painter.setPen(border_pen)
+        
+        handle_rect = QRect(int(x_position - self._handle_radius), 
+                           int(center_y - self._handle_radius),
+                           2 * self._handle_radius, 2 * self._handle_radius)
+        painter.drawEllipse(handle_rect)
+        
+        # Titik tengah untuk grip visual saat aktif
+        if is_active:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(border_color)
+            center_dot = QRect(int(x_position - 2), int(center_y - 2), 4, 4)
+            painter.drawEllipse(center_dot)
+
+    def _draw_handle_label(self, painter, handle_type, x_position, center_y, is_active):
+        """
+        Menggambar label nilai handle dengan bubble styling dan fade effect.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            handle_type (str): Tipe handle ('lower' atau 'upper')
+            x_position (float): Posisi x handle
+            center_y (int): Posisi y handle
+            is_active (bool): Apakah handle dalam state aktif
+        """
+        opacity = self._label_opacity.get(handle_type, 0.0)
+        should_show_label = is_active or opacity > 0.01
+        
+        if not should_show_label or opacity <= 0.01:
+            return
+            
+        # Dapatkan nilai untuk ditampilkan
+        value = int(self._lower) if handle_type == 'lower' else int(self._upper)
+        label_text = str(value)
+        
+        # Setup font
+        font = painter.font()
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        
+        # Kalkulasi dimensi bubble
+        font_metrics = painter.fontMetrics()
+        padding_horizontal = 8
+        padding_vertical = 4
+        text_width = font_metrics.horizontalAdvance(label_text) + padding_horizontal
+        text_height = font_metrics.height() + padding_vertical
+        
+        # Posisi label di atas handle
+        distance_from_center = 35 if (is_active and self._active_handle == handle_type) else 25
+        label_top_y = int(center_y - distance_from_center - text_height)
+        
+        # Pastikan label tidak keluar dari area widget
+        if label_top_y < 2:
+            label_top_y = 2
+            
+        bubble_rect = QRect(int(x_position - text_width / 2), label_top_y, 
+                           int(text_width), int(text_height))
+        
+        # Alpha untuk fade effect
+        alpha = int(240 * opacity)
+        
+        # Gambar bubble background
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(60, 60, 60, alpha))  # Dark background dengan alpha
+        painter.drawRoundedRect(bubble_rect, 4, 4)
+        
+        # Gambar segitiga pointer
+        self._draw_label_pointer(painter, x_position, label_top_y + text_height, alpha)
+        
+        # Gambar teks
+        text_alpha = int(255 * opacity)
+        painter.setPen(QColor(255, 255, 255, text_alpha))  # White text dengan alpha
+        painter.drawText(bubble_rect, Qt.AlignmentFlag.AlignCenter, label_text)
+
+    def _draw_label_pointer(self, painter, x_position, bottom_y, alpha):
+        """
+        Menggambar segitiga pointer di bawah bubble label.
+        
+        Args:
+            painter (QPainter): Object painter untuk menggambar
+            x_position (float): Posisi x pusat segitiga
+            bottom_y (int): Posisi y dasar bubble
+            alpha (int): Nilai alpha untuk transparansi
+        """
+        from PyQt6.QtGui import QPolygon
+        from PyQt6.QtCore import QPoint
+        
+        triangle_size = 4
+        triangle_tip_x = int(x_position)
+        
+        triangle = QPolygon([
+            QPoint(triangle_tip_x - triangle_size, bottom_y),
+            QPoint(triangle_tip_x + triangle_size, bottom_y), 
+            QPoint(triangle_tip_x, bottom_y + triangle_size)
+        ])
+        
+        painter.setBrush(QColor(60, 60, 60, alpha))
+        painter.drawPolygon(triangle)
+
+    def _value_to_x_position(self, value, left_bound, right_bound):
+        """
+        Konversi nilai slider ke posisi x pada widget.
+        
+        Args:
+            value (float): Nilai yang akan dikonversi
+            left_bound (int): Batas kiri area track
+            right_bound (int): Batas kanan area track
+            
+        Returns:
+            float: Posisi x yang sesuai dengan nilai
+        """
+        if self._max == self._min:
+            return left_bound
+        
+        ratio = (value - self._min) / (self._max - self._min)
+        return left_bound + ratio * (right_bound - left_bound)
+
+    def _x_position_to_value(self, x_position, left_bound, right_bound):
+        """
+        Konversi posisi x pada widget ke nilai slider.
+        
+        Args:
+            x_position (float): Posisi x yang akan dikonversi
+            left_bound (int): Batas kiri area track
+            right_bound (int): Batas kanan area track
+            
+        Returns:
+            int: Nilai slider yang sesuai dengan posisi x
+        """
+        ratio = (x_position - left_bound) / (right_bound - left_bound)
+        value = self._min + ratio * (self._max - self._min)
+        return int(round(max(self._min, min(value, self._max))))
+
+    def mousePressEvent(self, event):
+        """
+        Menangani event klik mouse untuk aktivasi dan toggle handle.
+        
+        Logika click:
+        - Klik pada handle yang sudah persistent: matikan persistent state
+        - Klik pada handle yang tidak persistent: aktifkan handle tersebut
+        - Klik di area track: aktifkan handle terdekat dengan posisi klik
+        - Klik di luar area: matikan semua persistent state
+        """
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+            
+        # Kalkulasi area track
+        left_bound = self._handle_radius
+        right_bound = self.width() - self._handle_radius
+        
+        # Posisi handle saat ini
+        left_handle_x = self._value_to_x_position(self._lower, left_bound, right_bound)
+        right_handle_x = self._value_to_x_position(self._upper, left_bound, right_bound)
+        
+        mouse_x = event.position().x()
+        mouse_y = event.position().y()
+        
+        # Toleransi untuk area klik handle
+        click_tolerance = self._handle_radius + 4
+        
+        # Cek klik pada handle
+        clicked_on_lower = abs(mouse_x - left_handle_x) <= click_tolerance
+        clicked_on_upper = abs(mouse_x - right_handle_x) <= click_tolerance
+        
+        if clicked_on_lower:
+            # Toggle persistent state untuk handle kiri
             if self._persistent_lower:
-                # Jika sudah persistent, matikan
                 self._persistent_lower = False
-                self._active = None
+                self._active_handle = None
             else:
-                # Aktifkan handle lower
-                self._active = 'lower'
-                self._persistent_upper = False  # matikan persistent handle lain
-        elif click_on_upper:
-            # Klik pada handle upper
+                self._active_handle = 'lower'
+                self._persistent_upper = False  # Matikan handle lain
+                
+        elif clicked_on_upper:
+            # Toggle persistent state untuk handle kanan
             if self._persistent_upper:
-                # Jika sudah persistent, matikan
                 self._persistent_upper = False
-                self._active = None
+                self._active_handle = None
             else:
-                # Aktifkan handle upper
-                self._active = 'upper'
-                self._persistent_lower = False  # matikan persistent handle lain
+                self._active_handle = 'upper'
+                self._persistent_lower = False  # Matikan handle lain
+                
         else:
-            # Klik di luar handle - cek apakah di area track
-            cy = self.height()//2 + 5
-            margin_side = 8
-            track_left = margin_side + self._r
-            track_right = self.width() - (margin_side + self._r)
+            # Klik di area track atau di luar
+            center_y = self.height() // 2 + 5
+            side_margin = 8
+            track_left = side_margin + self._handle_radius
+            track_right = self.width() - (side_margin + self._handle_radius)
             
-            if (track_left <= x <= track_right) and (abs(e.position().y() - cy) <= 15):
-                # Klik di area track - matikan persistent states dan aktifkan handle terdekat
+            is_in_track = (track_left <= mouse_x <= track_right) and (abs(mouse_y - center_y) <= 15)
+            
+            if is_in_track:
+                # Klik di area track - aktifkan handle terdekat
                 self._persistent_lower = False
                 self._persistent_upper = False
                 
-                # Tentukan handle mana yang lebih dekat dengan posisi klik
-                if abs(x - lx) < abs(x - ux):
-                    self._active = 'lower'
+                # Tentukan handle terdekat
+                if abs(mouse_x - left_handle_x) < abs(mouse_x - right_handle_x):
+                    self._active_handle = 'lower'
                 else:
-                    self._active = 'upper'
+                    self._active_handle = 'upper'
             else:
-                # Klik di luar track - hanya matikan persistent states
+                # Klik di luar area - matikan semua persistent state
                 self._persistent_lower = False
                 self._persistent_upper = False
-                self._active = None
+                self._active_handle = None
         
-        if self._active:
-            self.mouseMoveEvent(e)
+        # Mulai drag jika ada handle aktif
+        if self._active_handle:
+            self.mouseMoveEvent(event)
+            
         self.update()
 
-    def mouseMoveEvent(self, e):
-        left = self._r; right = self.width()-self._r
-        lx = self._val_to_x(self._lower,left,right); ux = self._val_to_x(self._upper,left,right)
-        x = e.position().x()
-        y = e.position().y()
+    def mouseMoveEvent(self, event):
+        """
+        Menangani event pergerakan mouse untuk hover effect dan dragging.
+        
+        Fitur:
+        - Deteksi hover pada handle dan track untuk visual feedback
+        - Smooth dragging dengan animasi
+        - Update cursor sesuai area (pointing hand untuk handle, arrow untuk lainnya)
+        - Kontrol fade in/out label berdasarkan interaksi
+        """
+        # Kalkulasi area dan posisi
+        left_bound = self._handle_radius
+        right_bound = self.width() - self._handle_radius
+        left_handle_x = self._value_to_x_position(self._lower, left_bound, right_bound)
+        right_handle_x = self._value_to_x_position(self._upper, left_bound, right_bound)
+        
+        mouse_x = event.position().x()
+        mouse_y = event.position().y()
         
         # Reset hover states
         prev_hover_lower = self._hover_lower
         prev_hover_upper = self._hover_upper
-        self._hover_lower = False; self._hover_upper = False; self._hover_track = False; self._hover_active_track = False
+        self._hover_lower = False
+        self._hover_upper = False
+        self._hover_track = False
+        self._hover_active_track = False
         
-        # Expanded hit area untuk lebih responsif
-        hit_radius = self._r + 6  # area hit lebih besar
+        # Area hit yang diperluas untuk responsivitas lebih baik
+        hit_radius = self._handle_radius + 6
         
-        # Hanya deteksi di area handle (pointing hand + label)
-        if abs(x-lx) <= hit_radius:
+        # Deteksi hover pada handle
+        if abs(mouse_x - left_handle_x) <= hit_radius:
             self._hover_lower = True
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self._target_opacity['lower'] = 1.0
-            # Soft instant show untuk responsivitas yang tidak terlalu agresif
+            
+            # Soft instant show untuk feedback responsif
             if self._label_opacity['lower'] < 0.3:
-                self._label_opacity['lower'] = 0.4  # langsung muncul 40% untuk feedback yang lebih halus
-        elif abs(x-ux) <= hit_radius:
+                self._label_opacity['lower'] = 0.4
+                
+        elif abs(mouse_x - right_handle_x) <= hit_radius:
             self._hover_upper = True
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self._target_opacity['upper'] = 1.0
-            # Soft instant show untuk responsivitas yang tidak terlalu agresif
-            if self._label_opacity['upper'] < 0.3:
-                self._label_opacity['upper'] = 0.4  # langsung muncul 40% untuk feedback yang lebih halus
-        else:
-            # Deteksi hover pada track area
-            cy = self.height()//2 + 5
-            margin_side = 8
-            track_left = margin_side + self._r
-            track_right = self.width() - (margin_side + self._r)
             
-            if (track_left <= x <= track_right) and (abs(y - cy) <= 20):  # area hover track diperbesar
-                # Jika hover di area track mana pun, aktifkan kedua area
+            # Soft instant show untuk feedback responsif
+            if self._label_opacity['upper'] < 0.3:
+                self._label_opacity['upper'] = 0.4
+                
+        else:
+            # Deteksi hover pada track
+            center_y = self.height() // 2 + 5
+            side_margin = 8
+            track_left = side_margin + self._handle_radius
+            track_right = self.width() - (side_margin + self._handle_radius)
+            
+            if (track_left <= mouse_x <= track_right) and (abs(mouse_y - center_y) <= 20):
                 self._hover_track = True
                 self._hover_active_track = True
                 self.setCursor(Qt.CursorShape.ArrowCursor)
             else:
-                # Di luar area handle dan track - cursor normal
                 self.setCursor(Qt.CursorShape.ArrowCursor)
         
-        # Update target opacity untuk labels dengan fade effect
-        if not self._hover_lower and not (self._active == 'lower') and not self._persistent_lower:
+        # Update target opacity untuk fade effect
+        if not self._hover_lower and not (self._active_handle == 'lower') and not self._persistent_lower:
             self._target_opacity['lower'] = 0.0
-        if not self._hover_upper and not (self._active == 'upper') and not self._persistent_upper:
+        if not self._hover_upper and not (self._active_handle == 'upper') and not self._persistent_upper:
             self._target_opacity['upper'] = 0.0
             
-        # Persistent states tetap menampilkan label
+        # Maintain opacity untuk persistent handles
         if self._persistent_lower:
             self._target_opacity['lower'] = 1.0
         if self._persistent_upper:
             self._target_opacity['upper'] = 1.0
             
-        # Start fade animation jika ada perubahan opacity
+        # Start fade animation jika ada perubahan hover state
         if (prev_hover_lower != self._hover_lower or prev_hover_upper != self._hover_upper):
             if not self._label_fade_timer.isActive():
                 self._label_fade_timer.start()
         
-        # Jika sedang drag handle, aktifkan hover untuk kedua track (luar dan dalam)
-        if self._active:
+        # Handle dragging dengan hover effect
+        if self._active_handle:
             self._hover_track = True
             self._hover_active_track = True
+            
             # Maintain label visibility saat drag
-            if self._active == 'lower':
+            if self._active_handle == 'lower':
                 self._target_opacity['lower'] = 1.0
-            elif self._active == 'upper':
+            elif self._active_handle == 'upper':
                 self._target_opacity['upper'] = 1.0
         
-        # Force update untuk memastikan hover effect muncul/hilang dengan smooth
         self.update()
         
-        # Smooth dragging dengan improved precision dan gerakan lebih halus
-        if self._active:
-            val = self._x_to_val(x,left,right)
-            if self._active=='lower': 
-                new_val = min(val, self._upper)
-                if abs(new_val - self._target_lower) > 0.3:  # threshold diperkecil untuk gerakan lebih halus
-                    self._target_lower = new_val
+        # Smooth dragging dengan precision yang diperbaiki
+        if self._active_handle:
+            new_value = self._x_position_to_value(mouse_x, left_bound, right_bound)
+            
+            if self._active_handle == 'lower': 
+                clamped_value = min(new_value, self._upper)
+                if abs(clamped_value - self._target_lower) > 0.3:  # Threshold untuk gerakan halus
+                    self._target_lower = clamped_value
                     self._animation_timer.start()
             else: 
-                new_val = max(val, self._lower)
-                if abs(new_val - self._target_upper) > 0.3:  # threshold diperkecil untuk gerakan lebih halus
-                    self._target_upper = new_val
+                clamped_value = max(new_value, self._lower)
+                if abs(clamped_value - self._target_upper) > 0.3:
+                    self._target_upper = clamped_value
                     self._animation_timer.start()
-            self._emit()
+                    
+            self._emit_value_changed()
 
-    def mouseReleaseEvent(self, e): 
+    def mouseReleaseEvent(self, event): 
+        """
+        Menangani event pelepasan mouse untuk set persistent state.
+        
+        Setelah drag selesai, handle yang di-drag akan menjadi persistent
+        (tetap aktif) sampai handle lain diklik atau area di luar diklik.
+        """
         # Set persistent state berdasarkan handle yang sedang aktif
-        if self._active == 'lower':
+        if self._active_handle == 'lower':
             self._persistent_lower = True
             self._persistent_upper = False
-            self._target_opacity['lower'] = 1.0  # maintain label visibility
-        elif self._active == 'upper':
+            self._target_opacity['lower'] = 1.0  # Maintain label visibility
+        elif self._active_handle == 'upper':
             self._persistent_upper = True
             self._persistent_lower = False
-            self._target_opacity['upper'] = 1.0  # maintain label visibility
-        self._active = None
+            self._target_opacity['upper'] = 1.0  # Maintain label visibility
+            
+        self._active_handle = None
         
         # Start fade animation untuk smooth transition
         if not self._label_fade_timer.isActive():
@@ -1402,8 +1556,16 @@ class RangeSlider(QWidget):
         
         self.update()
         
-    def leaveEvent(self, e): 
-        self._hover_lower=self._hover_upper=self._hover_track=self._hover_active_track=False
+    def leaveEvent(self, event): 
+        """
+        Menangani event mouse meninggalkan widget.
+        
+        Reset semua hover states dan fade out label yang tidak persistent.
+        """
+        self._hover_lower = False
+        self._hover_upper = False
+        self._hover_track = False
+        self._hover_active_track = False
         
         # Fade out labels kecuali yang persistent
         if not self._persistent_lower:
@@ -1430,235 +1592,963 @@ class RangeSlider(QWidget):
         else: super().keyPressEvent(e)
 
 # =====================================================
-# Filter Sidebar (right dock)
+# Panel Filter Samping (dock kanan)
 # =====================================================
 class FilterSidebar(QWidget):
+    """Panel filter sidebar yang memungkinkan pengguna melakukan pencarian
+    dan penyaringan data dengan berbagai kriteria seperti tanggal, nama, 
+    NIK, umur, dan parameter lainnya.
+    
+    Panel ini dirancang dengan lebar tetap dan dapat di-scroll untuk 
+    menampung semua kontrol filter dengan rapi.
+    """
+    
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Konstanta layout agar konsisten dan lebih ramping
-        self._dock_width = 260  # harus selaras dengan FixedDockWidget
-        gap = 6  # diperkecil dari 8
-        side_margin = 2  # diperkecil dari 12
-
-        # Container utama
+        
+        # Konfigurasi dimensi dan spacing untuk tampilan yang rapi
+        self._dock_width = 260  # Lebar dock harus selaras dengan FixedDockWidget
+        gap = 6  # Jarak antar elemen yang pas - tidak terlalu rapat
+        side_margin = 2  # Margin samping yang minimal namun tetap memberikan ruang
+        
+        # Setup container utama
         main_container_layout = QVBoxLayout(self)
         main_container_layout.setContentsMargins(0, 0, 0, 0)
         main_container_layout.setSpacing(0)
-
-        # Scroll area
+        
+        # Buat area scroll untuk menampung semua kontrol filter
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
+        
+        # Widget konten yang akan di-scroll
         scroll_content = QWidget()
         main_layout = QVBoxLayout(scroll_content)
-        # Tambah margin kiri/kanan agar field tidak terlalu mepet sisi dock
+        # Berikan margin yang cukup agar field tidak menempel ke sisi dock
         main_layout.setContentsMargins(side_margin, 10, side_margin, 10)
         main_layout.setSpacing(gap)
-
-        # Blok input atas
+        
+        # === Bagian Input Utama ===
+        # Kelompok field input yang paling sering digunakan
         inputs_layout = QVBoxLayout()
         inputs_layout.setContentsMargins(0, 0, 0, 0)
         inputs_layout.setSpacing(gap)
-
-        # ====== Tanggal Update (Date Range Picker) ======
-        # Ganti: hilangkan tombol terpisah, jadikan field ini klik-able untuk buka dialog
+        
+        # Field Tanggal Update dengan date picker
+        self._setup_date_filter(inputs_layout)
+        
+        # Field pencarian teks
+        self._setup_text_fields(inputs_layout, gap)
+        
+        # Kontrol slider umur
+        self._setup_age_slider(inputs_layout, gap)
+        
+        main_layout.addLayout(inputs_layout)
+        
+        # === Grid Dropdown ===
+        # Kelompok dropdown untuk kategori data
+        grid_layout = QGridLayout()
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setHorizontalSpacing(gap)
+        grid_layout.setVerticalSpacing(gap)
+        
+        self._setup_dropdown_grid(grid_layout)
+        main_layout.addSpacing(gap)
+        main_layout.addLayout(grid_layout)
+        
+        # === Checkbox Options ===
+        # Opsi checkbox untuk filter tambahan
+        checkbox_layout = QGridLayout()
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        checkbox_layout.setHorizontalSpacing(gap)
+        checkbox_layout.setVerticalSpacing(gap)
+        
+        self._setup_checkboxes(checkbox_layout)
+        main_layout.addSpacing(gap)
+        main_layout.addLayout(checkbox_layout)
+        
+        # === Radio Button Options ===
+        # Pilihan tipe data (Reguler/Khusus)
+        radio_layout = QHBoxLayout()
+        radio_layout.setContentsMargins(0, 0, 0, 0)
+        radio_layout.setSpacing(2)  # Spacing yang rapat untuk radio button
+        
+        self._setup_radio_buttons(radio_layout)
+        main_layout.addSpacing(gap)
+        main_layout.addLayout(radio_layout)
+        
+        # === Tombol Aksi ===
+        # Tombol untuk reset dan apply filter
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 4, 0, 4)
+        btn_layout.setSpacing(gap)
+        
+        self._setup_action_buttons(btn_layout)
+        main_layout.addSpacing(gap)
+        main_layout.addLayout(btn_layout)
+        
+        # Finalisasi setup
+        scroll_area.setWidget(scroll_content)
+        main_container_layout.addWidget(scroll_area)
+        
+        # Terapkan ukuran yang konsisten untuk semua input
+        self._apply_consistent_sizing()
+        
+        # Terapkan lebar internal yang tepat
+        self._apply_internal_widths(gap, side_margin)
+    
+    def _setup_date_filter(self, layout):
+        """Setup field filter tanggal dengan compact popup date range picker."""
         self.tgl_update = QLineEdit()
         self.tgl_update.setPlaceholderText("Tanggal Update")
         self.tgl_update.setReadOnly(True)
         self.tgl_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tgl_update.setToolTip("Klik untuk memilih rentang tanggal")
-        def _tgl_update_click(ev, orig=self.tgl_update):
-            if ev.button() == Qt.MouseButton.LeftButton:
+        self.tgl_update.setStyleSheet(
+            """
+            QLineEdit {
+                background:#2f2f2f; border:1px solid #444; border-radius:6px;
+                padding:6px 10px; color:#eee; font-size:10pt;
+            }
+            QLineEdit:hover { border-color:#ff8800; }
+            QLineEdit:focus { border-color:#ff8800; }
+            """
+        )
+
+        layout.addWidget(self.tgl_update)
+
+        # --- Popup Date Range Picker (compact) ---------------------------------
+        class CompactDateRangePopup(QFrame):
+            def __init__(self, parent_field: QLineEdit, theme_mode: str = "light"):
+                super().__init__(parent_field)
+                self.parent_field = parent_field
+                self.theme_mode = theme_mode.lower()
+                self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+                self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                self.setObjectName("CompactDateRangePopup")
+
+                # --- Dynamic color palette based on theme ---
+                accent = "#ff8800"
+                if self.theme_mode == "dark":
+                    bg = "#1e1e1e"
+                    text = "#dddddd"
+                    subtext = "#aaaaaa"
+                    border = "#444444"
+                    # Gunakan satu warna hover konsisten seperti preset
+                    preset_hover_bg = "#252525"
+                    hover_bg = preset_hover_bg
+                    sel_bg = accent
+                    sel_text = "#ffffff"
+                    # Samakan range dengan gaya preset hover (tidak pakai tint khusus)
+                    range_bg = preset_hover_bg
+                    range_text = text
+                    clear_color = "#bbbbbb"
+                else:  # light
+                    bg = "#ffffff"
+                    text = "#222222"
+                    subtext = "#555555"
+                    border = "#d6d6d6"
+                    # Satukan warna hover kalender dengan hover preset
+                    preset_hover_bg = "#f7f7f7"
+                    hover_bg = preset_hover_bg
+                    sel_bg = accent
+                    sel_text = "#ffffff"
+                    # Range kini sama dengan hover preset agar konsisten
+                    range_bg = preset_hover_bg
+                    range_text = text
+                    clear_color = "#666666"
+
+                # Simpan warna penting untuk dipakai ulang (highlight preset & today)
+                self.accent = accent
+                self.sel_bg = sel_bg
+                self.sel_text = sel_text
+                self.text_color = text
+                self.subtext_color = subtext
+
+                self.setStyleSheet(f"""
+                    QFrame#CompactDateRangePopup {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}
+                    QFrame#PresetItem {{ background:{bg}; border-radius:4px; }}
+                    QFrame#PresetItem:hover {{ background:{preset_hover_bg}; }}
+                    QLabel {{ color:{text}; font-size:9pt; background:transparent; }}
+                    QLabel.title {{ font-weight:600; font-size:9pt; letter-spacing:.3px; }}
+                    QPushButton.day {{ background:transparent; border:0; border-radius:4px; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
+                    QPushButton.day:hover {{ background:{hover_bg}; }}
+                    QPushButton.day.sel {{ background:{sel_bg}; color:{sel_text}; }}
+                    QPushButton.day.range {{ background:{range_bg}; color:{range_text}; }}
+                    /* Today (non-selected) border highlight */
+                    QPushButton[today="true"] {{ border:1px solid {accent}; }}
+                    /* Selected today keeps selection background */
+                    QPushButton.day.sel[today="true"] {{ border:0; }}
+                    QPushButton.nav {{ background:transparent; border:0; font-size:11pt; padding:2px 6px; color:{text}; }}
+                    QPushButton.nav:hover {{ background:{hover_bg}; border-radius:4px; }}
+                    QPushButton#applyBtn {{ background:{accent}; color:#fff; font-weight:600; border:0; border-radius:6px; padding:6px 14px; }}
+                    QPushButton#applyBtn:hover {{ background:#ff9a26; }}
+                    QPushButton#clearBtn {{ background:transparent; color:{clear_color}; border:0; padding:6px 10px; }}
+                    QPushButton#clearBtn:hover {{ color:{accent}; }}
+                    QScrollArea {{ border:0; }}
+                """)
+
+                self.start_date: date | None = None
+                self.end_date: date | None = None
+                self.base_month = date.today().replace(day=1)
+
+                # Root layout changed to vertical to allow a unified bottom action bar spanning both columns
+                root = QVBoxLayout(self)
+                # Tightened outer margins & spacing (was 10,10,10,10 and spacing 12)
+                # Add horizontal margins for better breathing room (was 0,8,0,0)
+                root.setContentsMargins(8, 8, 8, 0)
+                root.setSpacing(6)
+                top_row = QHBoxLayout()
+                top_row.setSpacing(8)
+                # Reduce overall width (was 560) to shrink horizontal footprint
+                self.setFixedSize(520, 260)  # compact size
+
+                # LEFT PRESETS (revised)
+                preset_container = QVBoxLayout(); preset_container.setSpacing(2)  # match calendar month vertical spacing
+                today = date.today()
+
+                # Formatter (English default)
+                def fmt(d: date):
+                    return d.strftime('%a %d %b %Y')
+
+                presets: list[tuple[str, date, date]] = [
+                    ("Today", today, today),
+                    ("Yesterday", today - timedelta(days=1), today - timedelta(days=1)),
+                    ("This month", today.replace(day=1), today),
+                    ("This year", today.replace(month=1, day=1), today),
+                    ("Last month", (today.replace(day=1) - timedelta(days=1)).replace(day=1), today.replace(day=1) - timedelta(days=1)),
+                ]
+
+                # Komponen preset kustom agar teks tidak berantakan (tanpa HTML mentah di QPushButton)
+                class PresetItem(QFrame):
+                    def __init__(self, raw_label: str, s_d: date, e_d: date, cb_apply):
+                        super().__init__()
+                        self.s_d = s_d; self.e_d = e_d; self.cb_apply = cb_apply
+                        self.setObjectName("PresetItem")
+                        self.setCursor(Qt.CursorShape.PointingHandCursor)
+                        self.setFixedWidth(120)
+                        wrap = QVBoxLayout(self)
+                        wrap.setContentsMargins(4, 2, 4, 2)
+                        wrap.setSpacing(0)
+
+                        def short(d: date):
+                            p = d.strftime('%a %d %b %Y').split()
+                            return f"{p[1]} {p[2]} {p[3]}"
+
+                        title_lbl = QLabel(raw_label)
+                        # Title color matches primary text via stylesheet inheritance; override only weight/size
+                        title_lbl.setStyleSheet("font-size:8pt; font-weight:600; margin:0; padding:0;")
+                        wrap.addWidget(title_lbl)
+
+                        if s_d == e_d:
+                            sd = short(s_d)
+                            dates_text = f"{sd} - {sd}"
+                        else:
+                            dates_text = f"{short(s_d)} - {short(e_d)}"
+                        dates_lbl = QLabel(dates_text)
+                        # Subtext color adapt (inline for clarity)
+                        dates_lbl.setStyleSheet(f"font-size:6pt; color:{subtext}; margin-top:1px;")
+                        dates_lbl.setWordWrap(True)
+                        wrap.addWidget(dates_lbl)
+                        self.setStyleSheet("QFrame#PresetItem { border-radius:4px; }")
+
+                    def setSelected(self, selected: bool, sel_bg: str, sel_text: str, text_color: str, subtext_color: str):
+                        # Ambil dua label anak
+                        if selected:
+                            # Gunakan warna accent background & ubah semua label ke kontras
+                            self.setStyleSheet(
+                                f"QFrame#PresetItem {{ background:{sel_bg}; border-radius:4px; }}\n"
+                                f"QFrame#PresetItem:hover {{ background:{sel_bg}; }}\n"
+                                f"QFrame#PresetItem QLabel {{ color:{sel_text}; }}\n"
+                                f"QFrame#PresetItem QLabel:last-child {{ color:{sel_text}; font-size:6pt; }}"
+                            )
+                        else:
+                            # Kembali ke default
+                            self.setStyleSheet(
+                                "QFrame#PresetItem { border-radius:4px; }"
+                            )
+
+                    def mousePressEvent(self, ev):
+                        if ev.button() == Qt.MouseButton.LeftButton:
+                            self.cb_apply(self.s_d, self.e_d)
+                        return super().mousePressEvent(ev)
+
+                self.preset_items: list[PresetItem] = []  # collect for later dynamic height adjustment
+                for label, s, e in presets:
+                    item = PresetItem(label, s, e, self._apply_preset)
+                    preset_container.addWidget(item)
+                    self.preset_items.append(item)
+                preset_container.addStretch()
+                # (Logo moved to bottom unified action bar)
+
+                top_row.addLayout(preset_container)
+
+                # Separator vertical line
+                sep = QFrame(); sep.setFrameShape(QFrame.Shape.VLine); sep.setFrameShadow(QFrame.Shadow.Plain)
+                sep.setStyleSheet("background:#e0e0e0; width:1px;")
+                sep.setFixedWidth(1)
+                top_row.addWidget(sep)
+
+                # RIGHT - CALENDARS + ACTIONS
+                right_box = QVBoxLayout()
+                right_box.setSpacing(4)
+                cal_row = QHBoxLayout()
+                # Reduce gap between the two month calendars (was 24)
+                cal_row.setSpacing(16)
+
+                # build two month widgets
+                self.month_widgets: list[QWidget] = []
+                for offset in (0, 1):
+                    mdate = (self.base_month.replace(day=15) + timedelta(days=31*offset)).replace(day=1)
+                    cal = self._build_month(mdate, offset)
+                    self.month_widgets.append(cal)
+                    cal_row.addWidget(cal)
+
+                right_box.addLayout(cal_row)
+
+                # (Action bar moved to unified bottom bar)
+                top_row.addLayout(right_box, 1)
+                root.addLayout(top_row, 1)
+
+                # Unified bottom bar: logo | vertical divider | preview stretch | clear | apply
+                bottom_bar_frame = QFrame()
+                bottom_bar_frame.setObjectName("BottomBar")
+                bottom_bar_frame.setStyleSheet("QFrame#BottomBar { background:transparent; border:none; }")
+                bottom_bar_frame.setFixedHeight(40)  # adjust bar height
+                bottom_bar = QHBoxLayout(bottom_bar_frame)
+                # Remove left, right, and bottom margins (keep small top padding only)
+                # Full bleed bottom bar (no internal side padding)
+                bottom_bar.setContentsMargins(4, 2, 6, 2)
+                bottom_bar.setSpacing(8)
+                logo_lbl = QLabel("\uD83D\uDCC5")
+                logo_lbl.setStyleSheet(f"font-size:16px; color:{text}; margin:0 6px 0 4px; background:transparent;")
+                logo_lbl.setFixedHeight(28)
+                bottom_bar.addWidget(logo_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+                self.range_preview = QLabel("-")
+                # Transparent background, visible text color
+                self.range_preview.setStyleSheet(f"background:transparent; color:{text}; font-size:11px; margin:0 0 0 2px;")
+                self.range_preview.setFixedHeight(28)
+                bottom_bar.addWidget(self.range_preview, 1)
+                clear_btn = QPushButton("-")
+                clear_btn.setObjectName("clearBtn")
+                clear_btn.clicked.connect(self._clear)
+                clear_btn.setStyleSheet(f"background:transparent; color:{clear_color}; padding:4px 8px; border:0; font-size:10px;")
+                bottom_bar.addWidget(clear_btn)
+                apply_btn = QPushButton("Pilih")
+                apply_btn.setObjectName("applyBtn")
+                apply_btn.clicked.connect(self._apply)
+                apply_btn.setStyleSheet("background:#ff8800; color:#fff; font-weight:600; border:0; border-radius:4px; padding:6px 14px; font-size:10px;")
+                bottom_bar.addWidget(apply_btn)
+                root.addWidget(bottom_bar_frame)
+                self._update_preview()
+                # Schedule height synchronization after layout pass so calendar widgets have a sizeHint
+                QTimer.singleShot(0, self._sync_preset_heights)
+                QTimer.singleShot(0, self._update_preset_highlight)
+
+            # --- helpers ---
+            def _icon_label(self):
+                # Legacy method retained (not used after redesign); could be removed if desired.
+                lab = QLabel("\uD83D\uDCC5")  # calendar emoji
+                lab.setStyleSheet("font-size:11pt; margin-right:4px;")
+                return lab
+
+            def _apply_preset(self, s: date, e: date):
+                self.start_date, self.end_date = s, e
+                self._refresh_calendars()
+                self._update_preview()
+                self._update_preset_highlight()
+
+            def _clear(self):
+                self.start_date = None
+                self.end_date = None
+                self._refresh_calendars()
+                self._update_preview()
+                self._update_preset_highlight()
+
+            def _apply(self):
+                if self.start_date and not self.end_date:
+                    self.end_date = self.start_date
+                if self.start_date and self.end_date:
+                    txt = f"{self.start_date.strftime('%d/%m/%Y')} - {self.end_date.strftime('%d/%m/%Y')}"
+                    self.parent_field.setText(txt)
+                self.close()
+
+            def _build_month(self, month_date: date, offset: int):
+                box = QVBoxLayout()
+                box.setSpacing(2)
+                wrap = QFrame()
+                wrap.setLayout(box)
+                header = QHBoxLayout()
+                header.setSpacing(2)
+                if offset == 0:
+                    prev_btn = QPushButton("<")
+                    prev_btn.setProperty("class", "nav")
+                    prev_btn.clicked.connect(lambda: self._shift_month(-1))
+                    header.addWidget(prev_btn)
+                else:
+                    header.addSpacing(24)
+                title = QLabel(month_date.strftime("%b %Y"))
+                # Updated font size: month title to 8pt per latest request
+                title.setStyleSheet("font-weight:600; font-size:8pt;")
+                title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                header.addWidget(title, 1)
+                if offset == 1:
+                    next_btn = QPushButton(">")
+                    next_btn.setProperty("class", "nav")
+                    next_btn.clicked.connect(lambda: self._shift_month(1))
+                    header.addWidget(next_btn)
+                else:
+                    header.addSpacing(24)
+                box.addLayout(header)
+
+                # day names
+                dn = QHBoxLayout(); dn.setSpacing(0)
+                for d in ["Su","Mo","Tu","We","Th","Fr","Sa"]:
+                    lbl = QLabel(d)
+                    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    # Updated weekday header to 8pt bold per latest request
+                    lbl.setStyleSheet("color:#666; font-size:8pt; font-weight:600; min-width:30px;")
+                    dn.addWidget(lbl)
+                box.addLayout(dn)
+
+                # grid days
+                grid = QGridLayout(); grid.setSpacing(0)
+                first = month_date
+                # weekday: Monday=0..Sunday=6; we want Sunday=0
+                start_col = (first.weekday()+1) % 7
+                # days in month
+                if month_date.month == 12:
+                    next_m = month_date.replace(year=month_date.year+1, month=1)
+                else:
+                    next_m = month_date.replace(month=month_date.month+1)
+                days_in = (next_m - timedelta(days=1)).day
+                row = 0; col = 0
+                # leading blanks
+                for _ in range(start_col):
+                    spacer = QLabel(" ")
+                    spacer.setFixedSize(30, 30)
+                    grid.addWidget(spacer, row, col); col += 1
+                for day in range(1, days_in+1):
+                    btn = QPushButton(str(day))
+                    btn.setProperty("class", "day")
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setFixedSize(30,30)
+                    ddate = month_date.replace(day=day)
+                    btn.clicked.connect(lambda _=False, dd=ddate: self._pick(dd))
+                    grid.addWidget(btn, row, col)
+                    col += 1
+                    if col>6:
+                        col=0; row+=1
+                box.addLayout(grid)
+                # store for refresh
+                wrap.month_date = month_date
+                wrap.title_label = title
+                wrap.grid = grid
+                return wrap
+
+            def _pick(self, ddate: date):
+                if not self.start_date or (self.start_date and self.end_date):
+                    self.start_date = ddate; self.end_date = None
+                else:
+                    if ddate < self.start_date:
+                        self.end_date, self.start_date = self.start_date, ddate
+                    else:
+                        self.end_date = ddate
+                self._refresh_calendars(); self._update_preview()
+                self._update_preset_highlight()
+
+            def _shift_month(self, delta: int):
+                # prevent overlapping earlier than year 1970 simple guard
+                base_month_num = self.base_month.month + delta
+                year = self.base_month.year + (base_month_num-1)//12
+                month = (base_month_num-1)%12 + 1
+                self.base_month = self.base_month.replace(year=year, month=month, day=1)
+                # rebuild titles & days
+                for idx, wrap in enumerate(self.month_widgets):
+                    mdate = (self.base_month.replace(day=15) + timedelta(days=31*idx)).replace(day=1)
+                    wrap.month_date = mdate
+                    wrap.title_label.setText(mdate.strftime("%b %Y"))
+                    # clear old buttons
+                    while wrap.grid.count():
+                        item = wrap.grid.takeAt(0)
+                        if item.widget():
+                            item.widget().deleteLater()
+                    # rebuild grid
+                    first = mdate
+                    start_col = (first.weekday()+1) % 7
+                    if mdate.month == 12:
+                        next_m = mdate.replace(year=mdate.year+1, month=1)
+                    else:
+                        next_m = mdate.replace(month=mdate.month+1)
+                    days_in = (next_m - timedelta(days=1)).day
+                    row=0; col=0
+                    for _ in range(start_col):
+                        spacer = QLabel(" "); spacer.setFixedSize(30,30); wrap.grid.addWidget(spacer,row,col); col+=1
+                    for day in range(1, days_in+1):
+                        btn = QPushButton(str(day)); btn.setProperty("class","day"); btn.setCursor(Qt.CursorShape.PointingHandCursor); btn.setFixedSize(30,30)
+                        ddate = mdate.replace(day=day)
+                        btn.clicked.connect(lambda _=False, dd=ddate: self._pick(dd))
+                        wrap.grid.addWidget(btn,row,col); col+=1
+                        if col>6: col=0; row+=1
+                self._refresh_calendars()
+
+            def _refresh_calendars(self):
+                for wrap in self.month_widgets:
+                    for i in range(wrap.grid.count()):
+                        item = wrap.grid.itemAt(i)
+                        w = item.widget()
+                        if isinstance(w, QPushButton):
+                            dtext = w.text()
+                            if not dtext.isdigit():
+                                continue
+                            ddate = wrap.month_date.replace(day=int(dtext))
+                            cls = "day"
+                            if self.start_date and self.end_date and self.start_date <= ddate <= self.end_date:
+                                if ddate == self.start_date or ddate == self.end_date:
+                                    cls = "day sel"
+                                else:
+                                    cls = "day range"
+                            elif self.start_date and ddate == self.start_date:
+                                cls = "day sel"
+                            w.setProperty("class", cls)
+                            # Tandai hari ini (today) agar punya border
+                            if ddate == date.today():
+                                w.setProperty("today", True)
+                            else:
+                                w.setProperty("today", False)
+                            w.setStyleSheet("")  # trigger polish
+
+            def _update_preview(self):
+                if self.start_date and self.end_date:
+                    self.range_preview.setText(
+                        f"{self.start_date.strftime('%d %b %Y')} - {self.end_date.strftime('%d %b %Y')}"
+                    )
+                elif self.start_date:
+                    self.range_preview.setText(f"Mulai: {self.start_date.strftime('%d %b %Y')}")
+                else:
+                    self.range_preview.setText("-")
+
+            def _update_preset_highlight(self):
+                # Highlight preset yang cocok dengan start & end saat ini
+                if not hasattr(self, "preset_items"):
+                    return
+                for it in self.preset_items:
+                    match = False
+                    if self.start_date and self.end_date:
+                        match = (it.s_d == self.start_date and it.e_d == self.end_date)
+                    elif self.start_date and not self.end_date:
+                        # Saat baru pilih 1 hari belum highlight apapun
+                        match = False
+                    it.setSelected(match, self.sel_bg, self.sel_text, self.text_color, self.subtext_color)
+
+            def _sync_preset_heights(self):
+                # Dynamically distribute preset item heights to roughly match calendar vertical height
                 try:
-                    self.open_date_range_picker()
+                    if not self.preset_items:
+                        return
+                    # Use first month widget height as reference (already built)
+                    cal_ref = self.month_widgets[0]
+                    target_total = cal_ref.sizeHint().height()
+                    # Fallback if sizeHint too small
+                    if target_total < 160:
+                        target_total = 200
+                    spacing =  self.preset_items[0].parentWidget().layout().spacing() if self.preset_items[0].parentWidget() else 2
+                    n = len(self.preset_items)
+                    # Remove stretch temporarily if present at end of layout
+                    # Compute available height minus inter-item spacing
+                    total_spacing = spacing * (n - 1)
+                    available = max(100, target_total - total_spacing)
+                    per_item = int(available / n)
+                    # Clamp reasonable bounds
+                    per_item = max(30, min(46, per_item))
+                    for it in self.preset_items:
+                        it.setFixedHeight(per_item)
                 except Exception:
                     pass
-            QLineEdit.mousePressEvent(orig, ev)
-        self.tgl_update.mousePressEvent = _tgl_update_click  # type: ignore
-        inputs_layout.addWidget(self.tgl_update)
 
-        # Nama
-        self.nama = QLineEdit(); self.nama.setPlaceholderText("Nama"); inputs_layout.addWidget(self.nama)
-        # NIK & NKK dalam satu baris
-        nik_nkk_row = QHBoxLayout(); nik_nkk_row.setContentsMargins(0,0,0,0); nik_nkk_row.setSpacing(gap)
-        self.nik = QLineEdit(); self.nik.setPlaceholderText("NIK")
-        self.nkk = QLineEdit(); self.nkk.setPlaceholderText("NKK")
-        nik_nkk_row.addWidget(self.nik); nik_nkk_row.addWidget(self.nkk)
-        inputs_layout.addLayout(nik_nkk_row)
+            def show_near(self):
+                # position below field, anchor right edge of popup ke right edge field agar memanjang ke kiri
+                field_global_top_left = self.parent_field.mapToGlobal(QPoint(0, 0))
+                field_w = self.parent_field.width()
+                popup_w = self.width()
+                x = field_global_top_left.x() + field_w - popup_w  # right align
+                y = field_global_top_left.y() + self.parent_field.height() + 4
+                # jaga agar tidak keluar layar kiri
+                if x < 4:
+                    x = 4
+                self.move(x, y)
+                self.show()
+                self.raise_()
 
-        self.tgl_lahir = QLineEdit(); self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)"); inputs_layout.addWidget(self.tgl_lahir)
+            def set_theme(self, mode: str):
+                """Update palette & stylesheet tanpa membuat ulang popup."""
+                self.theme_mode = mode.lower()
+                accent = "#ff8800"
+                if self.theme_mode == "dark":
+                    bg = "#1e1e1e"; text = "#dddddd"; subtext = "#aaaaaa"; border = "#444444"; preset_hover_bg = "#252525"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; range_bg = preset_hover_bg; range_text = text; clear_color = "#bbbbbb"
+                else:
+                    bg = "#ffffff"; text = "#222222"; subtext = "#555555"; border = "#d6d6d6"; preset_hover_bg = "#f7f7f7"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; range_bg = preset_hover_bg; range_text = text; clear_color = "#666666"
+                self.accent = accent; self.sel_bg = sel_bg; self.sel_text = sel_text; self.text_color = text; self.subtext_color = subtext
+                self.setStyleSheet(f"""
+                    QFrame#CompactDateRangePopup {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}
+                    QFrame#PresetItem {{ background:{bg}; border-radius:4px; }}
+                    QFrame#PresetItem:hover {{ background:{preset_hover_bg}; }}
+                    QLabel {{ color:{text}; font-size:9pt; background:transparent; }}
+                    QLabel.title {{ font-weight:600; font-size:9pt; letter-spacing:.3px; }}
+                    QPushButton.day {{ background:transparent; border:0; border-radius:4px; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
+                    QPushButton.day:hover {{ background:{hover_bg}; }}
+                    QPushButton.day.sel {{ background:{sel_bg}; color:{sel_text}; }}
+                    QPushButton.day.range {{ background:{range_bg}; color:{range_text}; }}
+                    QPushButton[today="true"] {{ border:1px solid {accent}; }}
+                    QPushButton.day.sel[today="true"] {{ border:0; }}
+                    QPushButton.nav {{ background:transparent; border:0; font-size:11pt; padding:2px 6px; color:{text}; }}
+                    QPushButton.nav:hover {{ background:{hover_bg}; border-radius:4px; }}
+                    QPushButton#applyBtn {{ background:{accent}; color:#fff; font-weight:600; border:0; border-radius:6px; padding:6px 14px; }}
+                    QPushButton#applyBtn:hover {{ background:#ff9a26; }}
+                    QPushButton#clearBtn {{ background:transparent; color:{clear_color}; border:0; padding:6px 10px; }}
+                    QPushButton#clearBtn:hover {{ color:{accent}; }}
+                    QScrollArea {{ border:0; }}
+                """)
+                # Refresh current visual states
+                self._refresh_calendars()
+                self._update_preset_highlight()
+                self._update_preview()
 
-        # Umur (diturunkan 4px dengan top margin)
-        umur_container = QVBoxLayout(); umur_container.setContentsMargins(0,8,0,0); umur_container.setSpacing(gap)
+        # ---------------------------------------------------------------
+        def open_popup():
+            # Tutup popup lama jika masih ada
+            if hasattr(self, "_date_popup") and self._date_popup is not None:
+                try:
+                    self._date_popup.close()
+                except Exception:
+                    pass
+            # Gunakan mode tema saat ini bila tersedia
+            current_mode = getattr(self, "_current_theme_mode", "light")
+            self._date_popup = CompactDateRangePopup(self.tgl_update, theme_mode=current_mode)
+            self._date_popup.show_near()
+
+        # Override click
+        def mousePressEvent(ev):
+            if ev.button() == Qt.MouseButton.LeftButton:
+                open_popup()
+            else:
+                QLineEdit.mousePressEvent(self.tgl_update, ev)
+        self.tgl_update.mousePressEvent = mousePressEvent
+    
+    def _setup_text_fields(self, layout, gap):
+        """Setup field input teks untuk pencarian nama, NIK, NKK, dll."""
+        # Field nama
+        self.nama = QLineEdit()
+        self.nama.setPlaceholderText("Nama")
+        layout.addWidget(self.nama)
+        
+        # Baris NIK & NKK dalam satu baris untuk efisiensi ruang
+        nik_nkk_row = QHBoxLayout()
+        nik_nkk_row.setContentsMargins(0, 0, 0, 0)
+        nik_nkk_row.setSpacing(gap)
+        
+        self.nik = QLineEdit()
+        self.nik.setPlaceholderText("NIK")
+        self.nkk = QLineEdit()
+        self.nkk.setPlaceholderText("NKK")
+        
+        nik_nkk_row.addWidget(self.nik)
+        nik_nkk_row.addWidget(self.nkk)
+        layout.addLayout(nik_nkk_row)
+        
+        # Field tanggal lahir
+        self.tgl_lahir = QLineEdit()
+        self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
+        layout.addWidget(self.tgl_lahir)
+    
+    def _setup_age_slider(self, layout, gap):
+        """Setup slider rentang umur dengan label yang interaktif."""
+        umur_container = QVBoxLayout()
+        umur_container.setContentsMargins(0, 8, 0, 0)  # Beri jarak dari elemen di atas
+        umur_container.setSpacing(gap)
+        
+        # Label umur
         lbl_umur = QLabel("Umur")
-        umur_layout = QHBoxLayout(); umur_layout.setContentsMargins(0,0,0,0); umur_layout.setSpacing(0)
-        self.umur_slider = RangeSlider(0,100, parent=self)
-        # Tidak ada label samping; label individual muncul di atas setiap handle
-        def _on_age(low, up):
-            pass  # label ditangani langsung oleh RangeSlider
-        self.on_age_range_changed = _on_age
+        
+        # Container untuk slider
+        umur_layout = QHBoxLayout()
+        umur_layout.setContentsMargins(0, 0, 0, 0)
+        umur_layout.setSpacing(0)
+        
+        # Slider rentang umur (0-100 tahun)
+        self.umur_slider = RangeSlider(0, 100, parent=self)
+        
+        # Callback untuk perubahan nilai umur (opsional)
+        def _handle_age_change(min_age, max_age):
+            # Label individual ditangani langsung oleh RangeSlider
+            pass
+        
+        self.on_age_range_changed = _handle_age_change
         umur_layout.addWidget(self.umur_slider)
-        umur_container.addWidget(lbl_umur); umur_container.addLayout(umur_layout)
-        inputs_layout.addLayout(umur_container)
-
-        main_layout.addLayout(inputs_layout)
-
-        # Dropdown grid
-        grid_layout = QGridLayout(); grid_layout.setContentsMargins(0,0,0,0)
-        grid_layout.setHorizontalSpacing(gap); grid_layout.setVerticalSpacing(gap)
-        self.keterangan = CustomComboBox(); self.kelamin = CustomComboBox(); self.kawin = CustomComboBox()
-        self.disabilitas = CustomComboBox(); self.ktp_el = CustomComboBox(); self.sumber = CustomComboBox(); self.rank = CustomComboBox()
-        self.alamat = QLineEdit(); self.alamat.setPlaceholderText("Alamat")
-        self.keterangan.addItems(["Keterangan","1 (Meninggal)","2 (Ganda)","3 (Di Bawah Umur)","4 (Pindah Domisili)","5 (WNA)","6 (TNI)","7 (Polri)","8 (Salah TPS)","U (Ubah)","90 (Keluar Loksus)","91 (Meninggal)","92 (Ganda)","93 (Di Bawah Umur)","94 (Pindah Domisili)","95 (WNA)","96 (TNI)","97 (Polri)"])
-        self.kelamin.addItems(["Kelamin","L","P"])
-        self.kawin.addItems(["Kawin","S","B","P"])
-        self.disabilitas.addItems(["Disabilitas","0 (Normal)","1 (Fisik)","2 (Intelektual)","3 (Mental)","4 (Sensorik Wicara)","5 (Sensorik Rungu)","6 (Sensorik Netra)"])
-        self.ktp_el.addItems(["KTP-el","B","S"])
-        # Sumber data (ditambah sesuai permintaan)
-        # Pastikan opsi pertama adalah label placeholder agar filter bisa dianggap kosong saat posisi index 0
-        self.sumber.addItems([
-            "Sumber",
-            "dp4",
-            "trw3_2025",
-            "tms_trw 2 _2025",
-            "kemendagri",
-            "coklit",
-            "trw2_2025",
-            "ubah_trw 2 _2025",
-            "ganda kab",
-            "ganda prov",
-            "loksus",
-            "masyarakat",
-            "dpk"
+        
+        umur_container.addWidget(lbl_umur)
+        umur_container.addLayout(umur_layout)
+        layout.addLayout(umur_container)
+    
+    def _setup_dropdown_grid(self, grid_layout):
+        """Setup grid dropdown untuk berbagai kategori filter."""
+        # Inisialisasi semua dropdown
+        self.keterangan = CustomComboBox()
+        self.kelamin = CustomComboBox()
+        self.kawin = CustomComboBox()
+        self.disabilitas = CustomComboBox()
+        self.ktp_el = CustomComboBox()
+        self.sumber = CustomComboBox()
+        self.rank = CustomComboBox()
+        
+        # Field alamat
+        self.alamat = QLineEdit()
+        self.alamat.setPlaceholderText("Alamat")
+        
+        # Populate dropdown dengan opsi yang relevan
+        self._populate_dropdown_options()
+        
+        # Susun dalam grid 3 kolom untuk efisiensi ruang
+        grid_layout.addWidget(self.keterangan, 0, 0)
+        grid_layout.addWidget(self.kelamin, 0, 1)
+        grid_layout.addWidget(self.kawin, 0, 2)
+        grid_layout.addWidget(self.disabilitas, 1, 0)
+        grid_layout.addWidget(self.ktp_el, 1, 1)
+        grid_layout.addWidget(self.sumber, 1, 2)
+        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)  # Alamat span 2 kolom
+        grid_layout.addWidget(self.rank, 2, 2)
+    
+    def _populate_dropdown_options(self):
+        """Mengisi dropdown dengan opsi-opsi yang tersedia."""
+        # Dropdown keterangan dengan kode TMS
+        self.keterangan.addItems([
+            "Keterangan", "1 (Meninggal)", "2 (Ganda)", "3 (Di Bawah Umur)", 
+            "4 (Pindah Domisili)", "5 (WNA)", "6 (TNI)", "7 (Polri)", 
+            "8 (Salah TPS)", "U (Ubah)", "90 (Keluar Loksus)", "91 (Meninggal)", 
+            "92 (Ganda)", "93 (Di Bawah Umur)", "94 (Pindah Domisili)", 
+            "95 (WNA)", "96 (TNI)", "97 (Polri)"
         ])
-        self.rank.addItems(["Rank","Aktif","Ubah","TMS","Baru"])
-        grid_layout.addWidget(self.keterangan,0,0); grid_layout.addWidget(self.kelamin,0,1); grid_layout.addWidget(self.kawin,0,2)
-        grid_layout.addWidget(self.disabilitas,1,0); grid_layout.addWidget(self.ktp_el,1,1); grid_layout.addWidget(self.sumber,1,2)
-        grid_layout.addWidget(self.alamat,2,0,1,2); grid_layout.addWidget(self.rank,2,2)
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(grid_layout)
-
-        # Checkboxes
-        checkbox_layout = QGridLayout(); checkbox_layout.setContentsMargins(0,0,0,0)
-        checkbox_layout.setHorizontalSpacing(gap); checkbox_layout.setVerticalSpacing(gap)
-        self.cb_ganda = CustomCheckBox("Ganda"); self.cb_invalid_tgl = CustomCheckBox("Invalid Tgl")
-        self.cb_nkk_terpisah = CustomCheckBox("NKK Terpisah"); self.cb_analisis_tms = CustomCheckBox("Analisis TMS 8")
-        for cb in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
-            cb.setFixedHeight(22)
-        checkbox_layout.addWidget(self.cb_ganda,0,0); checkbox_layout.addWidget(self.cb_invalid_tgl,0,1)
-        checkbox_layout.addWidget(self.cb_nkk_terpisah,1,0); checkbox_layout.addWidget(self.cb_analisis_tms,1,1)
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(checkbox_layout)
-
-        # Radio buttons (dirapatkan)
-        radio_layout = QHBoxLayout(); radio_layout.setContentsMargins(0,0,0,0); radio_layout.setSpacing(2)  # spacing dirapatkan lagi
-        self.rb_reguler = QRadioButton("Reguler"); self.rb_khusus = QRadioButton("Khusus"); self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
+        
+        # Dropdown jenis kelamin
+        self.kelamin.addItems(["Kelamin", "L", "P"])
+        
+        # Dropdown status perkawinan
+        self.kawin.addItems(["Kawin", "S", "B", "P"])
+        
+        # Dropdown disabilitas
+        self.disabilitas.addItems([
+            "Disabilitas", "0 (Normal)", "1 (Fisik)", "2 (Intelektual)", 
+            "3 (Mental)", "4 (Sensorik Wicara)", "5 (Sensorik Rungu)", 
+            "6 (Sensorik Netra)"
+        ])
+        
+        # Dropdown KTP Elektronik
+        self.ktp_el.addItems(["KTP-el", "B", "S"])
+        
+        # Dropdown sumber data - berisi berbagai sumber pemutakhiran
+        self.sumber.addItems([
+            "Sumber", "dp4", "trw3_2025", "tms_trw 2 _2025", "kemendagri", 
+            "coklit", "trw2_2025", "ubah_trw 2 _2025", "ganda kab", 
+            "ganda prov", "loksus", "masyarakat", "dpk"
+        ])
+        
+        # Dropdown rank status pemilih
+        self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
+    
+    def _setup_checkboxes(self, layout):
+        """Setup checkbox untuk opsi filter tambahan."""
+        # Inisialisasi checkbox dengan label yang jelas
+        self.cb_ganda = CustomCheckBox("Ganda")
+        self.cb_invalid_tgl = CustomCheckBox("Invalid Tgl")
+        self.cb_nkk_terpisah = CustomCheckBox("NKK Terpisah")
+        self.cb_analisis_tms = CustomCheckBox("Analisis TMS 8")
+        
+        # Set tinggi yang konsisten untuk semua checkbox
+        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+            checkbox.setFixedHeight(22)
+        
+        # Susun dalam grid 2x2 untuk tampilan yang rapi
+        layout.addWidget(self.cb_ganda, 0, 0)
+        layout.addWidget(self.cb_invalid_tgl, 0, 1)
+        layout.addWidget(self.cb_nkk_terpisah, 1, 0)
+        layout.addWidget(self.cb_analisis_tms, 1, 1)
+    
+    def _setup_radio_buttons(self, layout):
+        """Setup radio button untuk memilih tipe TPS."""
+        self.rb_reguler = QRadioButton("Reguler")
+        self.rb_khusus = QRadioButton("Khusus")
+        self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
+        
+        # Set default ke "Reguler & Khusus" untuk menampilkan semua data
         self.rb_reguler_khusus.setChecked(True)
-        for rb in [self.rb_reguler, self.rb_khusus, self.rb_reguler_khusus]:
-            radio_layout.addWidget(rb)
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(radio_layout)
-
-        # Buttons
-        btn_layout = QHBoxLayout(); btn_layout.setContentsMargins(0,4,0,4); btn_layout.setSpacing(gap)
-        self.btn_reset = QPushButton("Reset"); self.btn_reset.setObjectName("resetBtn"); self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_filter = QPushButton("Filter"); self.btn_filter.setObjectName("filterBtn"); self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Tambahkan semua radio button ke layout
+        for radio_button in [self.rb_reguler, self.rb_khusus, self.rb_reguler_khusus]:
+            layout.addWidget(radio_button)
+    
+    def _setup_action_buttons(self, layout):
+        """Setup tombol aksi untuk reset dan apply filter."""
+        # Tombol reset untuk mengembalikan semua filter ke default
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setObjectName("resetBtn")
+        self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reset.clicked.connect(self.reset_filters)
-        btn_layout.addStretch(); btn_layout.addWidget(self.btn_reset); btn_layout.addWidget(self.btn_filter); btn_layout.addStretch()
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(btn_layout)
-
-        # Finalize
-        scroll_area.setWidget(scroll_content)
-        main_container_layout.addWidget(scroll_area)
-
-        # Tinggi input & combo
-        desired_height = 34  # sedikit dipendekkan agar tampilan lebih compact
-        for w in [self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, self.alamat,
-                  self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
-            w.setFixedHeight(desired_height)
-
-        # Terapkan lebar internal yang lebih kecil per kolom
-        self._apply_internal_widths(gap, side_margin)
-
+        
+        # Tombol filter untuk menerapkan semua filter yang telah diset
+        self.btn_filter = QPushButton("Filter")
+        self.btn_filter.setObjectName("filterBtn")
+        self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Layout tombol dengan spacer untuk posisi center
+        layout.addStretch()
+        layout.addWidget(self.btn_reset)
+        layout.addWidget(self.btn_filter)
+        layout.addStretch()
+    
+    def _apply_consistent_sizing(self):
+        """Terapkan ukuran yang konsisten untuk semua field input."""
+        desired_height = 34  # Tinggi yang pas untuk tampilan compact
+        
+        # Daftar semua widget yang perlu ukuran konsisten
+        input_widgets = [
+            self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, 
+            self.alamat, self.keterangan, self.kelamin, self.kawin, 
+            self.disabilitas, self.ktp_el, self.sumber, self.rank
+        ]
+        
+        # Terapkan tinggi yang sama untuk semua widget
+        for widget in input_widgets:
+            widget.setFixedHeight(desired_height)
+    
     def _apply_internal_widths(self, gap: int, side_margin: int):
-        """Hitung dan terapkan lebar agar tidak ada overshoot horizontal."""
-        total_inner = self._dock_width - (side_margin * 2)
-        # 3 kolom => 2 gap horizontal
-        col_width = int((total_inner - (gap * 2)) / 3)
-        double_col_width = (col_width * 2) + gap
-
-        # Single full width widgets
-        for w in [self.tgl_update, self.nama, self.tgl_lahir]:
-            w.setFixedWidth(total_inner)
-        # Dua kolom (NIK/NKK)
-        half_width = int((total_inner - gap) / 2)
+        """Hitung dan terapkan lebar yang tepat agar tidak ada overflow horizontal.
+        
+        Args:
+            gap: Jarak antar elemen dalam grid
+            side_margin: Margin kiri dan kanan
+        """
+        # Hitung lebar yang tersedia setelah dikurangi margin
+        total_inner_width = self._dock_width - (side_margin * 2)
+        
+        # Untuk grid 3 kolom: ada 2 gap horizontal antar kolom
+        column_width = int((total_inner_width - (gap * 2)) / 3)
+        double_column_width = (column_width * 2) + gap
+        
+        # Field yang menggunakan lebar penuh
+        full_width_fields = [self.tgl_update, self.nama, self.tgl_lahir]
+        for field in full_width_fields:
+            field.setFixedWidth(total_inner_width)
+        
+        # Field NIK/NKK yang berbagi satu baris (2 kolom)
+        half_width = int((total_inner_width - gap) / 2)
         self.nik.setFixedWidth(half_width)
         self.nkk.setFixedWidth(half_width)
-        # Grid 3 kolom
-        for w in [self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
-            w.setFixedWidth(col_width)
-        # Alamat span 2 kolom
-        self.alamat.setFixedWidth(double_col_width)
-
+        
+        # Field dalam grid 3 kolom
+        grid_fields = [
+            self.keterangan, self.kelamin, self.kawin, 
+            self.disabilitas, self.ktp_el, self.sumber, self.rank
+        ]
+        for field in grid_fields:
+            field.setFixedWidth(column_width)
+        
+        # Field alamat yang span 2 kolom
+        self.alamat.setFixedWidth(double_column_width)
+    
     def resizeEvent(self, event):  # type: ignore
-        """Pastikan saat dock (jika berubah) tetap jaga proporsi tanpa horizontal scroll."""
+        """Handle perubahan ukuran widget untuk menjaga proporsi layout.
+        
+        Args:
+            event: Event resize dari Qt
+        """
         try:
-            # Jika suatu saat dock width berubah, adaptif ulang
-            parent = self.parent()
-            if parent and parent.width() != self._dock_width:
-                self._dock_width = parent.width()
-                # Re-apply dengan margin/gap standar yang kita pakai
+            # Jika lebar dock berubah, sesuaikan ulang proporsi
+            parent_widget = self.parent()
+            if parent_widget and parent_widget.width() != self._dock_width:
+                self._dock_width = parent_widget.width()
+                # Terapkan ulang dengan konfigurasi margin/gap standar
                 self._apply_internal_widths(gap=6, side_margin=6)
         except Exception:
+            # Abaikan error jika terjadi masalah dalam resize
             pass
         super().resizeEvent(event)
-
+    
     # ==========================
-    # Method: Reset Filters
+    # Metode: Reset Semua Filter
     # ==========================
     def reset_filters(self):
-        self.tgl_update.clear()
-        self.nama.clear()
-        self.nik.clear()
-        self.nkk.clear()
-        self.tgl_lahir.clear()
-        self.alamat.clear()
-        self.keterangan.setCurrentIndex(0)
-        self.kelamin.setCurrentIndex(0)
-        self.kawin.setCurrentIndex(0)
-        self.disabilitas.setCurrentIndex(0)
-        self.ktp_el.setCurrentIndex(0)
-        self.sumber.setCurrentIndex(0)
-        self.rank.setCurrentIndex(0)
-        self.cb_ganda.setChecked(False)
-        self.cb_invalid_tgl.setChecked(False)
-        self.cb_nkk_terpisah.setChecked(False)
-        self.cb_analisis_tms.setChecked(False)
+        """Reset semua field filter ke nilai default/kosong."""
+        # Reset semua field input teks
+        text_fields = [
+            self.tgl_update, self.nama, self.nik, self.nkk, 
+            self.tgl_lahir, self.alamat
+        ]
+        for field in text_fields:
+            field.clear()
+        
+        # Reset semua dropdown ke pilihan pertama (placeholder)
+        dropdown_fields = [
+            self.keterangan, self.kelamin, self.kawin, self.disabilitas, 
+            self.ktp_el, self.sumber, self.rank
+        ]
+        for dropdown in dropdown_fields:
+            dropdown.setCurrentIndex(0)
+        
+        # Reset semua checkbox ke unchecked
+        checkboxes = [
+            self.cb_ganda, self.cb_invalid_tgl, 
+            self.cb_nkk_terpisah, self.cb_analisis_tms
+        ]
+        for checkbox in checkboxes:
+            checkbox.setChecked(False)
+        
+        # Reset radio button ke default (Reguler & Khusus)
         self.rb_reguler_khusus.setChecked(True)
-        self.umur_slider.setValues(0,100)
-
+        
+        # Reset slider umur ke rentang penuh (0-100)
+        self.umur_slider.setValues(0, 100)
+    
     def update_umur_label(self, value):
-        # Tidak dipakai (kompatibilitas lama)
+        """Metode kompatibilitas untuk update label umur (tidak digunakan aktif).
+        
+        Args:
+            value: Nilai umur (untuk kompatibilitas)
+        """
+        # Metode ini disediakan untuk kompatibilitas dengan versi lama
+        # Label umur sekarang ditangani langsung oleh RangeSlider
         return
-
+    
     def get_filters(self):
+        """Ambil semua nilai filter yang telah diset pengguna.
+        
+        Returns:
+            dict: Dictionary berisi semua nilai filter yang aktif
+        """
+        # Proses nilai keterangan (ambil kode angka/huruf saja)
         keterangan_text = self.keterangan.currentText()
         keterangan_value = keterangan_text.split(' ')[0] if keterangan_text != "Keterangan" else ""
+        
+        # Proses nilai disabilitas (ambil kode angka saja)
         disabilitas_text = self.disabilitas.currentText()
         disabilitas_value = disabilitas_text.split(' ')[0] if disabilitas_text != "Disabilitas" else ""
+        
+        # Proses nilai rank
         rank_text = self.rank.currentText()
         rank_value = rank_text if rank_text != "Rank" else ""
-        # Parse rentang tanggal update (format: DD/MM/YYYY - DD/MM/YYYY)
-        last_update_start = ""; last_update_end = ""
-        raw_range = self.tgl_update.text().strip()
-        if raw_range and ' - ' in raw_range:
-            part_start, part_end = raw_range.split(' - ', 1)
-            if self._valid_date(part_start) and self._valid_date(part_end):
-                last_update_start, last_update_end = part_start, part_end
+        
+        # Parse rentang tanggal update dari field yang berformat "DD/MM/YYYY - DD/MM/YYYY"
+        last_update_start = ""
+        last_update_end = ""
+        raw_date_range = self.tgl_update.text().strip()
+        
+        if raw_date_range and ' - ' in raw_date_range:
+            start_part, end_part = raw_date_range.split(' - ', 1)
+            if self._is_valid_date(start_part) and self._is_valid_date(end_part):
+                last_update_start = start_part
+                last_update_end = end_part
+        
+        # Kembalikan dictionary dengan semua nilai filter
         return {
             "nama": self.nama.text().strip(),
             "nik": self.nik.text().strip(),
@@ -1676,437 +2566,332 @@ class FilterSidebar(QWidget):
             "last_update_start": last_update_start,
             "last_update_end": last_update_end
         }
-
-    def open_date_range_picker(self):
-        # Jika sudah ada nilai sebelumnya, parse agar pramuat
-        start = end = None
-        txt = self.tgl_update.text().strip()
-        if txt and ' - ' in txt:
-            s,e = txt.split(' - ',1)
-            try:
-                start = datetime.strptime(s, "%d/%m/%Y").date()
-                end = datetime.strptime(e, "%d/%m/%Y").date()
-            except ValueError:
-                start = end = None
-        dlg = DateRangePickerDialog(self, start, end)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            s,e = dlg.get_range()
-            if s and e:
-                self.tgl_update.setText(f"{s.strftime('%d/%m/%Y')} - {e.strftime('%d/%m/%Y')}")
-
-    def _valid_date(self, s: str) -> bool:
+    def _is_valid_date(self, date_string: str) -> bool:
+        """Validasi apakah string merupakan tanggal yang valid.
+        
+        Args:
+            date_string: String tanggal yang akan divalidasi
+            
+        Returns:
+            bool: True jika valid, False jika tidak
+        """
         try:
-            datetime.strptime(s, "%d/%m/%Y")
+            datetime.strptime(date_string, "%d/%m/%Y")
             return True
         except ValueError:
             return False
-
+    
     def apply_theme(self, mode):
-        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+        """Terapkan tema tampilan (gelap atau terang) ke semua elemen filter.
+        
+        Args:
+            mode: Mode tema ('dark' atau 'light')
+        """
+        # Simpan mode untuk dipakai popup date range
+        self._current_theme_mode = mode
+        # Terapkan tema ke custom checkbox
+        custom_checkboxes = [
+            self.cb_ganda, self.cb_invalid_tgl, 
+            self.cb_nkk_terpisah, self.cb_analisis_tms
+        ]
+        for checkbox in custom_checkboxes:
             checkbox.setTheme(mode)
-        for combo in [self.keterangan, self.kelamin, self.kawin, self.disabilitas, self.ktp_el, self.sumber, self.rank]:
-            combo.setTheme(mode)
+        
+        # Terapkan tema ke custom combobox
+        custom_comboxes = [
+            self.keterangan, self.kelamin, self.kawin, 
+            self.disabilitas, self.ktp_el, self.sumber, self.rank
+        ]
+        for combobox in custom_comboxes:
+            combobox.setTheme(mode)
+        
+        # Terapkan stylesheet sesuai mode tema
         if mode == "dark":
-            self.setStyleSheet("""
-                QWidget { font-family: 'Segoe UI', 'Calibri'; font-size: 9px; background: #1e1e1e; color: #d4d4d4; }
-                QScrollArea { border: none; background: #1e1e1e; }
-                QScrollBar:vertical { border: none; background: #3e3e42; width: 6px; margin: 0px; }
-                QScrollBar::handle:vertical { background: #666666; border-radius: 3px; min-height: 20px; }
-                QScrollBar::handle:vertical:hover { background: #888888; }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-                QLineEdit, QComboBox { padding: 8px 10px; border: 1px solid #555; border-radius: 4px; background: #2d2d30; min-height: 34px; color: #d4d4d4; font-size: 10px; }
-                QLineEdit:focus, QComboBox:focus { border: 1px solid #888; }
-                QComboBox QListView { background: #2d2d30; border: 1px solid #555; outline: 0; padding: 4px; }
-                QComboBox QListView::item { padding: 4px 8px; border-radius: 5px; margin: 2px 2px; }
-                QComboBox QListView::item:hover { background: #ff9800; color: #1e1e1e; border-radius: 5px; margin: 2px 2px; }
-                QComboBox QListView::item:selected { background: #ff9800; color: #1e1e1e; border-radius: 5px; margin: 2px 2px; }
-                QSlider::groove:horizontal { height: 6px; background: #2d2d30; border-radius: 3px; }
-                QSlider::handle:horizontal { background: #007acc; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
-                QPushButton#resetBtn { background: #444; border: 1px solid #666; border-radius: 4px; padding: 6px 14px; }
-                QPushButton#resetBtn:hover { background: #555; }
-                QPushButton#filterBtn { background: #0e639c; border: 1px solid #1177bb; border-radius: 4px; padding: 6px 14px; }
-                QPushButton#filterBtn:hover { background: #1177bb; }
-            """)
+            self._apply_dark_theme()
         else:
-            self.setStyleSheet("""
-                QWidget { font-family: 'Segoe UI', 'Calibri'; font-size: 9px; background: #f2f2f2; color: #222; }
-                QScrollArea { border: none; background: #f2f2f2; }
-                QScrollBar:vertical { border: none; background: #d0d0d0; width: 6px; margin: 0px; }
-                QScrollBar::handle:vertical { background: #999; border-radius: 3px; min-height: 20px; }
-                QScrollBar::handle:vertical:hover { background: #777; }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-                QLineEdit, QComboBox { padding: 8px 10px; border: 1px solid #bbb; border-radius: 4px; background: #ffffff; min-height: 34px; color: #222; font-size: 10px; }
-                QLineEdit:focus, QComboBox:focus { border: 1px solid #888; }
-                QComboBox QListView { background: #ffffff; border: 1px solid #bbb; outline: 0; padding: 4px; }
-                QComboBox QListView::item { padding: 4px 8px; border-radius: 5px; margin: 2px 2px; }
-                QComboBox QListView::item:hover { background: #ff9800; color: #ffffff; border-radius: 5px; margin: 2px 2px; }
-                QComboBox QListView::item:selected { background: #ff9800; color: #ffffff; border-radius: 5px; margin: 2px 2px; }
-                QSlider::groove:horizontal { height: 6px; background: #d0d0d0; border-radius: 3px; }
-                QSlider::handle:horizontal { background: #0e639c; width: 14px; height: 14px; margin: -4px 0; border-radius: 7px; }
-                QPushButton#resetBtn { background: #e0e0e0; border: 1px solid #ccc; border-radius: 4px; padding: 6px 14px; }
-                QPushButton#resetBtn:hover { background: #dadada; }
-                QPushButton#filterBtn { background: #0e639c; border: 1px solid #1177bb; border-radius: 4px; padding: 6px 14px; color: #fff; }
-                QPushButton#filterBtn:hover { background: #1177bb; }
-            """)
+            self._apply_light_theme()
+        # Update popup jika sedang terbuka
+        if hasattr(self, "_date_popup") and self._date_popup is not None:
+            try:
+                self._date_popup.set_theme(mode)
+            except Exception:
+                pass
+    
+    def _apply_dark_theme(self):
+        """Terapkan stylesheet untuk tema gelap."""
+        self.setStyleSheet("""
+            /* Styling umum untuk widget */
+            QWidget {
+                font-family: 'Segoe UI', 'Calibri';
+                font-size: 9px;
+                background: #1e1e1e;
+                color: #d4d4d4;
+            }
+            
+            /* Scroll area styling */
+            QScrollArea {
+                border: none;
+                background: #1e1e1e;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #3e3e42;
+                width: 6px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #666666;
+                border-radius: 3px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #888888;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            /* Input field styling */
+            QLineEdit, QComboBox {
+                padding: 8px 10px;
+                border: 1px solid #555;
+                border-radius: 4px;
+                background: #2d2d30;
+                min-height: 34px;
+                color: #d4d4d4;
+                font-size: 10px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #888;
+            }
+            QComboBox QListView {
+                background: #2d2d30;
+                border: 1px solid #555;
+                outline: 0;
+                padding: 4px;
+            }
+            QComboBox QListView::item {
+                padding: 4px 8px;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            QComboBox QListView::item:hover {
+                background: #ff9800;
+                color: #1e1e1e;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            QComboBox QListView::item:selected {
+                background: #ff9800;
+                color: #1e1e1e;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            
+            /* Slider styling */
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #2d2d30;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #007acc;
+                width: 14px;
+                height: 14px;
+                margin: -4px 0;
+                border-radius: 7px;
+            }
+            
+            /* Button styling */
+            QPushButton#resetBtn {
+                background: #444;
+                border: 1px solid #666;
+                border-radius: 4px;
+                padding: 6px 14px;
+            }
+            QPushButton#resetBtn:hover {
+                background: #555;
+            }
+            QPushButton#filterBtn {
+                background: #0e639c;
+                border: 1px solid #1177bb;
+                border-radius: 4px;
+                padding: 6px 14px;
+            }
+            QPushButton#filterBtn:hover {
+                background: #1177bb;
+            }
+        """)
+    
+    def _apply_light_theme(self):
+        """Terapkan stylesheet untuk tema terang."""
+        self.setStyleSheet("""
+            /* Styling umum untuk widget */
+            QWidget {
+                font-family: 'Segoe UI', 'Calibri';
+                font-size: 9px;
+                background: #f2f2f2;
+                color: #222;
+            }
+            
+            /* Scroll area styling */
+            QScrollArea {
+                border: none;
+                background: #f2f2f2;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #d0d0d0;
+                width: 6px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #999;
+                border-radius: 3px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #777;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            
+            /* Input field styling */
+            QLineEdit, QComboBox {
+                padding: 8px 10px;
+                border: 1px solid #bbb;
+                border-radius: 4px;
+                background: #ffffff;
+                min-height: 34px;
+                color: #222;
+                font-size: 10px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #888;
+            }
+            QComboBox QListView {
+                background: #ffffff;
+                border: 1px solid #bbb;
+                outline: 0;
+                padding: 4px;
+            }
+            QComboBox QListView::item {
+                padding: 4px 8px;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            QComboBox QListView::item:hover {
+                background: #ff9800;
+                color: #ffffff;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            QComboBox QListView::item:selected {
+                background: #ff9800;
+                color: #ffffff;
+                border-radius: 5px;
+                margin: 2px 2px;
+            }
+            
+            /* Slider styling */
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #d0d0d0;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #0e639c;
+                width: 14px;
+                height: 14px;
+                margin: -4px 0;
+                border-radius: 7px;
+            }
+            
+            /* Button styling */
+            QPushButton#resetBtn {
+                background: #e0e0e0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 6px 14px;
+            }
+            QPushButton#resetBtn:hover {
+                background: #dadada;
+            }
+            QPushButton#filterBtn {
+                background: #0e639c;
+                border: 1px solid #1177bb;
+                border-radius: 4px;
+                padding: 6px 14px;
+                color: #fff;
+            }
+            QPushButton#filterBtn:hover {
+                background: #1177bb;
+            }
+        """)
+
 
 # =====================================================
-# FixedDockWidget untuk mencegah resize lebar sidebar
+# Widget Dock dengan Lebar Tetap
 # =====================================================
 class FixedDockWidget(QDockWidget):
+    """Dock widget dengan lebar tetap yang tidak dapat diubah ukurannya.
+    
+    Widget ini digunakan untuk sidebar filter agar memiliki lebar yang 
+    konsisten dan tidak bisa di-resize oleh pengguna.
+    """
+    
     def __init__(self, title: str, parent=None, fixed_width: int = 320):
+        """Inisialisasi dock widget dengan lebar tetap.
+        
+        Args:
+            title: Judul yang ditampilkan di header dock
+            parent: Widget parent
+            fixed_width: Lebar tetap dalam pixel
+        """
         super().__init__(title, parent)
         self._fixed_width = fixed_width
+        
+        # Hanya bisa di-dock di sisi kanan
         self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
-        # Hanya bisa di-close, tidak bisa di-float / ubah size
+        
+        # Hanya bisa di-close, tidak bisa di-float atau resize
         self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+        
+        # Set lebar minimum dan maksimum yang sama untuk mengunci ukuran
         self.setMinimumWidth(fixed_width)
         self.setMaximumWidth(fixed_width)
-
+    
     def setWidget(self, widget: QWidget) -> None:  # type: ignore
+        """Override setWidget untuk memastikan widget child juga memiliki lebar tetap.
+        
+        Args:
+            widget: Widget yang akan diset sebagai konten dock
+        """
         super().setWidget(widget)
         widget.setFixedWidth(self._fixed_width)
-
+    
     def sizeHint(self):  # type: ignore
-        sz = super().sizeHint()
-        sz.setWidth(self._fixed_width)
-        return sz
-            
-        if mode == "dark":
-            self.setStyleSheet("""
-                QWidget {
-                    font-family: 'Segoe UI', 'Calibri';
-                    font-size: 9px;
-                    background: #1e1e1e;
-                    color: #d4d4d4;
-                }
-                QScrollArea {
-                    border: none;
-                    background: #1e1e1e;
-                }
-                QScrollBar:vertical {
-                    border: none;
-                    background: #3e3e42;
-                    width: 6px;
-                    margin: 0px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #666666;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #888888;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    border: none;
-                    background: none;
-                    height: 0px;
-                }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
-                }
-                QLineEdit, QComboBox {
-                    padding: 8px 10px;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    background: #2d2d30;
-                    min-height: 34px; /* disesuaikan dengan tinggi baru */
-                    color: #d4d4d4;
-                    font-size: 10px;
-                }
-                QLineEdit:focus, QComboBox:focus {
-                    border: 1px solid #ff9800;
-                    outline: none;
-                }
-                QLineEdit::placeholder {
-                    color: #888;
-                }
-                QLabel {
-                    font-weight: normal;
-                    color: #d4d4d4;
-                    padding: 1px;
-                    background: transparent;
-                    font-size: 9px;
-                }
-                QPushButton {
-                    padding: 8px 20px;
-                    border: none;
-                    border-radius: 3px;
-                    font-weight: bold;
-                    min-width: 70px;
-                    font-size: 10px;
-                    color: white;
-                }
-                QPushButton#resetBtn {
-                    background: #ff9800;
-                }
-                QPushButton#filterBtn {
-                    background: #ff9800;
-                }
-                QPushButton#resetBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton#filterBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton:pressed {
-                    background: #f57c00;
-                }
-                QRadioButton {
-                    spacing: 2px;
-                    padding: 1px;
-                    color: #d4d4d4;
-                    background: transparent;
-                    font-size: 8px;
-                }
-                QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #bbb; /* kontras di dark */
-                    border-radius: 6px;
-                    background: #1e1e1e;
-                }
-                QRadioButton::indicator:hover {
-                    border-color: #ff9900;
-                }
-                QRadioButton::indicator:pressed {
-                    border-color: #ff9900;
-                    background: #33240d;
-                }
-                QRadioButton::indicator:checked {
-                    background: #ff9900;
-                    border-color: #ff9900;
-                }
-                QRadioButton::indicator:checked:hover {
-                    background: #ffad33;
-                    border-color: #ff9900;
-                }
-                QRadioButton::indicator:disabled {
-                    border-color: #555;
-                    background: #2d2d30;
-                }
-                QSlider::groove:horizontal {
-                    border: none;
-                    height: 3px;
-                    background: #555;
-                    margin: 0px;
-                    border-radius: 2px;
-                }
-                QSlider::handle:horizontal {
-                    background: #ff9800;
-                    border: 2px solid #2d2d30;
-                    width: 14px;
-                    height: 14px;
-                    margin: -6px 0;
-                    border-radius: 8px;
-                }
-                QSlider::handle:horizontal:hover {
-                    background: #fb8c00;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 6px;
-                    width: 16px;
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                }
-                QComboBox::down-arrow {
-                    image: none;
-                    width: 0;
-                    height: 0;
-                }
-                QComboBox:hover {
-                    border: 1px solid #ff9800;
-                }
-                QFrame[frameShape="4"] {
-                    color: #555;
-                    background-color: #555;
-                }
-            """)
-        else:  # light theme
-            self.setStyleSheet("""
-                QWidget {
-                    font-family: 'Segoe UI', 'Calibri';
-                    font-size: 9px;
-                    background: white;
-                }
-                QScrollArea {
-                    border: none;
-                    background: white;
-                }
-                QScrollBar:vertical {
-                    border: none;
-                    background: #f0f0f0;
-                    width: 6px;
-                    margin: 0px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #cccccc;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #aaaaaa;
-                }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    border: none;
-                    background: none;
-                    height: 0px;
-                }
-                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                    background: none;
-                }
-                QLineEdit, QComboBox {
-                    padding: 8px 10px;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    background: white;
-                    min-height: 34px; /* disesuaikan dengan tinggi baru */
-                    color: #333;
-                    font-size: 10px;
-                }
-                QLineEdit:focus, QComboBox:focus {
-                    border: 1px solid #ff9800;
-                    outline: none;
-                }
-                QLineEdit::placeholder {
-                    color: #999;
-                }
-                QLabel {
-                    font-weight: normal;
-                    color: #666;
-                    padding: 1px;
-                    background: transparent;
-                    font-size: 9px;
-                }
-                QPushButton {
-                    padding: 8px 20px;
-                    border: none;
-                    border-radius: 3px;
-                    font-weight: bold;
-                    min-width: 70px;
-                    font-size: 10px;
-                    color: white;
-                }
-                QPushButton#resetBtn {
-                    background: #ff9800;
-                }
-                QPushButton#filterBtn {
-                    background: #ff9800;
-                }
-                QPushButton#resetBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton#filterBtn:hover {
-                    background: #fb8c00;
-                }
-                QPushButton:pressed {
-                    background: #f57c00;
-                }
-                QCheckBox {
-                    padding: 2px;
-                    spacing: 4px;
-                    color: #333;
-                    background: transparent;
-                    font-size: 9px;
-                }
-                QCheckBox::indicator {
-                    width: 14px;
-                    height: 14px;
-                    border: 1px solid #888;
-                    border-radius: 4px;
-                    background: transparent;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #ff9900;
-                    border: 1px solid #ff9900;
-                }
-                QCheckBox::indicator:checked::after {
-                    content: "✓";
-                    color: white;
-                    font-weight: bold;
-                    font-size: 10px;
-                    text-align: center;
-                    line-height: 14px;
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #ff9900;
-                }
-                QRadioButton {
-                    spacing: 2px;
-                    padding: 1px;
-                    color: #333;
-                    background: transparent;
-                    font-size: 8px;
-                }
-                QRadioButton::indicator {
-                    width: 12px;
-                    height: 12px;
-                    border: 2px solid #666; /* kontras light */
-                    border-radius: 6px;
-                    background: #ffffff;
-                }
-                QRadioButton::indicator:pressed {
-                    border-color: #ff9900;
-                    background: #ffe9cc;
-                }
-                QRadioButton::indicator:disabled {
-                    border-color: #c5c5c5;
-                    background: #f2f2f2;
-                }
-                QRadioButton::indicator:hover {
-                    border-color: #ff9900;
-                }
-                QRadioButton::indicator:checked {
-                    background: #ff9900; /* samakan dengan checkbox */
-                    border-color: #ff9900;
-                }
-                QRadioButton::indicator:checked:hover {
-                    background: #ffad33;
-                    border-color: #ff9900;
-                }
-                QSlider::groove:horizontal {
-                    border: none;
-                    height: 3px;
-                    background: #e0e0e0;
-                    margin: 0px;
-                    border-radius: 2px;
-                }
-                QSlider::handle:horizontal {
-                    background: #2196F3;
-                    border: 2px solid white;
-                    width: 14px;
-                    height: 14px;
-                    margin: -6px 0;
-                    border-radius: 8px;
-                }
-                QSlider::handle:horizontal:hover {
-                    background: #1976D2;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    padding-right: 6px;
-                    width: 16px;
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                }
-                QComboBox::down-arrow {
-                    image: none;
-                    width: 0;
-                    height: 0;
-                }
-                QComboBox:hover {
-                    border: 1px solid #ff9800;
-                }
-                QFrame[frameShape="4"] {
-                    color: #e0e0e0;
-                    background-color: #e0e0e0;
-                }
-            """)
+        """Override sizeHint untuk memberikan ukuran yang tepat.
+        
+        Returns:
+            QSize: Ukuran yang disarankan untuk dock widget
+        """
+        size = super().sizeHint()
+        size.setWidth(self._fixed_width)
+        return size
 
-# =========================================================
+# =========================================================        
 # 🔹 FUNGSI GLOBAL: PALET TEMA
 # =========================================================
 from PyQt6.QtGui import QPalette, QColor
