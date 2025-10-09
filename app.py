@@ -1319,14 +1319,14 @@ class MainWindow(ProtectedWindow):
         # ============================================================
         # 🧭 Tema Dark & Light — dengan style elegan & soft disabled
         # ============================================================
-        self.action_dark = QAction("  Dark", self, shortcut="Ctrl+D")
+        ##self.action_dark = QAction("  Dark", self, shortcut="Ctrl+D")
         self.action_light = QAction("  Light", self, shortcut="Ctrl+L")
 
         # Hubungkan ke fungsi apply_theme
-        self.action_dark.triggered.connect(lambda: self.apply_theme("dark"))
+        ##self.action_dark.triggered.connect(lambda: self.apply_theme("dark"))
         self.action_light.triggered.connect(lambda: self.apply_theme("light"))
 
-        view_menu.addAction(self.action_dark)
+        ##view_menu.addAction(self.action_dark)
         view_menu.addAction(self.action_light)
 
         # 🎨 Style menu agar efek disabled tampak lembut & modern
@@ -1969,9 +1969,9 @@ class MainWindow(ProtectedWindow):
             self.statusBar().showMessage("NexVo v1.0")
 
         # === Nonaktifkan tema sementara ===
-        self.action_dark.setEnabled(False)
+        #self.action_dark.setEnabled(False)
         self.action_light.setEnabled(False)
-        for act in [self.action_dark, self.action_light]:
+        for act in [self.action_light]:
             f = act.font()
             f.setItalic(True)
             act.setFont(f)
@@ -2296,9 +2296,9 @@ class MainWindow(ProtectedWindow):
             self.filter_dock.hide()
 
         # Aktifkan lagi kontrol tema
-        self.action_dark.setEnabled(True)
+        ##self.action_dark.setEnabled(True)
         self.action_light.setEnabled(True)
-        for act in [self.action_dark, self.action_light]:
+        for act in [self.action_light]:
             f = act.font()
             f.setItalic(False)
             act.setFont(f)
