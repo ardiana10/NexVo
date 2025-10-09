@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStyle, QStyleOptionButton
 )
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
-from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QSize, QPoint
+from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QSize, QPoint, QVariantAnimation, QEasingCurve, QAbstractAnimation
 from io import BytesIO
 
 # ===================================================
@@ -703,6 +703,11 @@ class CustomComboBox(QComboBox):
         self._max_popup_width = 500
         # Force always downward popup as requested
         self._popup_direction_mode = 'down'
+        # Track popup open state to flip chevron
+        self._popup_open = False
+        # Animated arrow (rotation angle 0..180)
+        self._arrow_angle = 0.0
+        self._arrow_anim: QVariantAnimation | None = None
 
     def setPopupDirection(self, mode: str):
         if mode in ("down", "up", "auto"):
@@ -712,17 +717,22 @@ class CustomComboBox(QComboBox):
         view = self.view()
         if view is None:
             super().showPopup()
+            self._popup_open = True
+            self._animate_arrow(True)
+            self.update()
             return
         try:
             fm = view.fontMetrics()
             max_text_width = max((fm.horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
-            padding = 56  # beri ruang lebih supaya tidak cepat terpotong
+            padding = 56
             popup_width = max(self.width(), min(max_text_width + padding, self._max_popup_width))
         except Exception:
             popup_width = self.width()
         super().showPopup()
+        self._popup_open = True
+        self._animate_arrow(True)
+        self.update()
         try:
-            # Hilangkan elide agar teks panjang tidak jadi 'Sens...'
             try:
                 view.setTextElideMode(Qt.TextElideMode.ElideNone)  # type: ignore
             except Exception:
@@ -731,7 +741,6 @@ class CustomComboBox(QComboBox):
             view.setMaximumWidth(int(max(popup_width, self.width())))
         except Exception:
             pass
-        # Do NOT reposition upward when mode is 'down'
         if self._popup_direction_mode != 'down':
             try:
                 combo_rect = self.rect()
@@ -761,6 +770,34 @@ class CustomComboBox(QComboBox):
                     view.setGeometry(geo)
             except Exception:
                 pass
+
+    def hidePopup(self):  # type: ignore
+        try:
+            super().hidePopup()
+        finally:
+            self._popup_open = False
+            self._animate_arrow(False)
+            self.update()
+
+    def _animate_arrow(self, opening: bool):
+        start = self._arrow_angle
+        end = 180.0 if opening else 0.0
+        if self._arrow_anim and self._arrow_anim.state() == QAbstractAnimation.State.Running:
+            self._arrow_anim.stop()
+        self._arrow_anim = QVariantAnimation(self)
+        self._arrow_anim.setStartValue(start)
+        self._arrow_anim.setEndValue(end)
+        self._arrow_anim.setDuration(160)
+        self._arrow_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._arrow_anim.valueChanged.connect(self._on_arrow_anim_value)
+        self._arrow_anim.start()
+
+    def _on_arrow_anim_value(self, val):
+        try:
+            self._arrow_angle = float(val)
+            self.update()
+        except Exception:
+            pass
 
     def setTheme(self, theme):
         self.theme = theme
@@ -792,8 +829,14 @@ class CustomComboBox(QComboBox):
         pen = QPen(QColor(color), 1.6)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        painter.drawLine(center_x - arrow_size, center_y - (arrow_size // 2), center_x, center_y + (arrow_size // 2))
-        painter.drawLine(center_x, center_y + (arrow_size // 2), center_x + arrow_size, center_y - (arrow_size // 2))
+        painter.save()
+        painter.translate(center_x, center_y)
+        painter.rotate(self._arrow_angle)
+        # Base 'V' pointing down at 0 degrees
+        half = arrow_size
+        painter.drawLine(int(-half), int(-half/2), 0, int(half/2))
+        painter.drawLine(0, int(half/2), int(half), int(-half/2))
+        painter.restore()
         painter.end()
 
 # =====================================================
@@ -1705,18 +1748,14 @@ class FilterSidebar(QWidget):
         self.tgl_update.setReadOnly(True)
         self.tgl_update.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tgl_update.setToolTip("Klik untuk memilih rentang tanggal")
-        self.tgl_update.setStyleSheet(
-            """
-            QLineEdit {
-                background:#2f2f2f; border:1px solid #444; border-radius:6px;
-                padding:6px 10px; color:#eee; font-size:10pt;
-            }
-            QLineEdit:hover { border-color:#ff8800; }
-            QLineEdit:focus { border-color:#ff8800; }
-            """
-        )
+        # Gunakan objectName khusus agar bisa dioverride oleh tema tanpa mengganggu QLineEdit lain
+        self.tgl_update.setObjectName("DateRangeField")
 
         layout.addWidget(self.tgl_update)
+
+        # Terapkan styling awal sesuai mode tema yang sudah terset (default light)
+        initial_mode = getattr(self, "_current_theme_mode", "light")
+        self._style_date_field(initial_mode)
 
         # --- Popup Date Range Picker (compact) ---------------------------------
         class CompactDateRangePopup(QFrame):
@@ -1727,6 +1766,10 @@ class FilterSidebar(QWidget):
                 self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
                 self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
                 self.setObjectName("CompactDateRangePopup")
+                # Triangle (notch) configuration
+                self._notch_width = 18
+                self._notch_height = 9
+                self._anchor_x = 40  # will be adjusted in show_near
 
                 # --- Dynamic color palette based on theme ---
                 accent = "#ff8800"
@@ -1735,13 +1778,14 @@ class FilterSidebar(QWidget):
                     text = "#dddddd"
                     subtext = "#aaaaaa"
                     border = "#444444"
-                    # Gunakan satu warna hover konsisten seperti preset
-                    preset_hover_bg = "#252525"
+                    # Hover lebih tebal (sedikit lebih terang + border accent di rule umum nanti)
+                    preset_hover_bg = "#303030"
                     hover_bg = preset_hover_bg
                     sel_bg = accent
                     sel_text = "#ffffff"
-                    # Samakan range dengan gaya preset hover (tidak pakai tint khusus)
-                    range_bg = preset_hover_bg
+                    # Warna mid range (tint hangat gelap)
+                    mid_bg = "#3a2d20"
+                    mid_hover_bg = "#4a3a28"
                     range_text = text
                     clear_color = "#bbbbbb"
                 else:  # light
@@ -1749,13 +1793,14 @@ class FilterSidebar(QWidget):
                     text = "#222222"
                     subtext = "#555555"
                     border = "#d6d6d6"
-                    # Satukan warna hover kalender dengan hover preset
-                    preset_hover_bg = "#f7f7f7"
+                    # Hover lebih tebal (lebih gelap dibanding sebelumnya)
+                    preset_hover_bg = "#ebebeb"  # sebelumnya #f7f7f7
                     hover_bg = preset_hover_bg
                     sel_bg = accent
                     sel_text = "#ffffff"
-                    # Range kini sama dengan hover preset agar konsisten
-                    range_bg = preset_hover_bg
+                    # Mid range tint terang
+                    mid_bg = "#ffe9d1"
+                    mid_hover_bg = "#ffdcb8"
                     range_text = text
                     clear_color = "#666666"
 
@@ -1766,20 +1811,31 @@ class FilterSidebar(QWidget):
                 self.text_color = text
                 self.subtext_color = subtext
 
+                # Border will be custom-painted (avoid double border stacking)
                 self.setStyleSheet(f"""
-                    QFrame#CompactDateRangePopup {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}
+                    QFrame#CompactDateRangePopup {{ background:{bg}; border:0; border-radius:8px; }}
                     QFrame#PresetItem {{ background:{bg}; border-radius:4px; }}
                     QFrame#PresetItem:hover {{ background:{preset_hover_bg}; }}
+                    QFrame#PresetItem:hover > QLabel:first-child {{ font-weight:700; }}
+                    QFrame#MonthWrap {{ background:{bg}; border-radius:6px; }}
                     QLabel {{ color:{text}; font-size:9pt; background:transparent; }}
                     QLabel.title {{ font-weight:600; font-size:9pt; letter-spacing:.3px; }}
-                    QPushButton.day {{ background:transparent; border:0; border-radius:4px; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
+                    QPushButton.day {{ background:transparent; border:0; border-radius:0; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
                     QPushButton.day:hover {{ background:{hover_bg}; }}
+                    /* Pill styling */
+                    QPushButton[state="start"] {{ background:{sel_bg}; color:{sel_text}; border-top-left-radius:6px; border-bottom-left-radius:6px; border-top-right-radius:0; border-bottom-right-radius:0; }}
+                    QPushButton[state="end"] {{ background:{sel_bg}; color:{sel_text}; border-top-right-radius:6px; border-bottom-right-radius:6px; border-top-left-radius:0; border-bottom-left-radius:0; }}
+                    QPushButton[state="single"] {{ background:{sel_bg}; color:{sel_text}; border-radius:6px; }}
+                    QPushButton[state="mid"] {{ background:{mid_bg}; color:{range_text}; border-radius:0; }}
+                    QPushButton[state="mid"]:hover {{ background:{mid_hover_bg}; }}
+                    /* Legacy fallback */
+                    QPushButton.day.start, QPushButton.day.end {{ background:{sel_bg}; color:{sel_text}; }}
+                    QPushButton.day.single {{ background:{sel_bg}; color:{sel_text}; border-radius:6px; }}
+                    QPushButton.day.mid {{ background:{mid_bg}; color:{range_text}; }}
+                    QPushButton.day.mid:hover {{ background:{mid_hover_bg}; }}
                     QPushButton.day.sel {{ background:{sel_bg}; color:{sel_text}; }}
-                    QPushButton.day.range {{ background:{range_bg}; color:{range_text}; }}
-                    /* Today (non-selected) border highlight */
-                    QPushButton[today="true"] {{ border:1px solid {accent}; }}
-                    /* Selected today keeps selection background */
-                    QPushButton.day.sel[today="true"] {{ border:0; }}
+                    QPushButton.day.range {{ background:{mid_bg}; color:{range_text}; }}
+                    /* Removed today border highlight intentionally */
                     QPushButton.nav {{ background:transparent; border:0; font-size:11pt; padding:2px 6px; color:{text}; }}
                     QPushButton.nav:hover {{ background:{hover_bg}; border-radius:4px; }}
                     QPushButton#applyBtn {{ background:{accent}; color:#fff; font-weight:600; border:0; border-radius:6px; padding:6px 14px; }}
@@ -1789,6 +1845,9 @@ class FilterSidebar(QWidget):
                     QScrollArea {{ border:0; }}
                 """)
 
+                # Store colors for custom painting (notch) reuse
+                self._popup_bg_color = bg
+                self._popup_border_color = border
                 self.start_date: date | None = None
                 self.end_date: date | None = None
                 self.base_month = date.today().replace(day=1)
@@ -1797,12 +1856,17 @@ class FilterSidebar(QWidget):
                 root = QVBoxLayout(self)
                 # Tightened outer margins & spacing (was 10,10,10,10 and spacing 12)
                 # Add horizontal margins for better breathing room (was 0,8,0,0)
-                root.setContentsMargins(8, 8, 8, 0)
+                # Increase top margin to reserve space for notch area
+                root.setContentsMargins(8, 8 + self._notch_height, 8, 0)
                 root.setSpacing(6)
                 top_row = QHBoxLayout()
                 top_row.setSpacing(8)
                 # Reduce overall width (was 560) to shrink horizontal footprint
-                self.setFixedSize(520, 260)  # compact size
+                # Adjust width to allow day button horizontal gaps so rounded pill edges aren't visually clipped
+                self.setFixedSize(620, 268)
+                # Configurable day cell metrics
+                self.day_size = 30
+                self.day_gap = 3  # gap between day buttons (both directions)
 
                 # LEFT PRESETS (revised)
                 preset_container = QVBoxLayout(); preset_container.setSpacing(2)  # match calendar month vertical spacing
@@ -1886,7 +1950,7 @@ class FilterSidebar(QWidget):
 
                 # Separator vertical line
                 sep = QFrame(); sep.setFrameShape(QFrame.Shape.VLine); sep.setFrameShadow(QFrame.Shadow.Plain)
-                sep.setStyleSheet("background:#e0e0e0; width:1px;")
+                sep.setStyleSheet(f"background:{border}; width:1px;")
                 sep.setFixedWidth(1)
                 top_row.addWidget(sep)
 
@@ -1974,32 +2038,30 @@ class FilterSidebar(QWidget):
                     self.parent_field.setText(txt)
                 self.close()
 
-            def _build_month(self, month_date: date, offset: int):
+            def _build_month(self, month_date: date, index: int):
                 box = QVBoxLayout()
                 box.setSpacing(2)
                 wrap = QFrame()
+                wrap.setObjectName("MonthWrap")
                 wrap.setLayout(box)
                 header = QHBoxLayout()
                 header.setSpacing(2)
-                if offset == 0:
-                    prev_btn = QPushButton("<")
-                    prev_btn.setProperty("class", "nav")
-                    prev_btn.clicked.connect(lambda: self._shift_month(-1))
-                    header.addWidget(prev_btn)
-                else:
-                    header.addSpacing(24)
+                # Tambahkan tombol prev dan next di kedua bulan agar user bisa geser dari mana saja
+                prev_btn = QPushButton("<")
+                prev_btn.setProperty("class", "nav")
+                prev_btn.clicked.connect(lambda _=False, idx=index: self._shift_single_month(idx, -1))
+                header.addWidget(prev_btn)
+
                 title = QLabel(month_date.strftime("%b %Y"))
                 # Updated font size: month title to 8pt per latest request
                 title.setStyleSheet("font-weight:600; font-size:8pt;")
                 title.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 header.addWidget(title, 1)
-                if offset == 1:
-                    next_btn = QPushButton(">")
-                    next_btn.setProperty("class", "nav")
-                    next_btn.clicked.connect(lambda: self._shift_month(1))
-                    header.addWidget(next_btn)
-                else:
-                    header.addSpacing(24)
+
+                next_btn = QPushButton(">")
+                next_btn.setProperty("class", "nav")
+                next_btn.clicked.connect(lambda _=False, idx=index: self._shift_single_month(idx, 1))
+                header.addWidget(next_btn)
                 box.addLayout(header)
 
                 # day names
@@ -2013,7 +2075,10 @@ class FilterSidebar(QWidget):
                 box.addLayout(dn)
 
                 # grid days
-                grid = QGridLayout(); grid.setSpacing(0)
+                grid = QGridLayout()
+                # Horizontal & vertical spacing to create visible margins around each day cell
+                grid.setHorizontalSpacing(self.day_gap)
+                grid.setVerticalSpacing(self.day_gap)
                 first = month_date
                 # weekday: Monday=0..Sunday=6; we want Sunday=0
                 start_col = (first.weekday()+1) % 7
@@ -2033,7 +2098,7 @@ class FilterSidebar(QWidget):
                     btn = QPushButton(str(day))
                     btn.setProperty("class", "day")
                     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                    btn.setFixedSize(30,30)
+                    btn.setFixedSize(self.day_size, self.day_size)
                     ddate = month_date.replace(day=day)
                     btn.clicked.connect(lambda _=False, dd=ddate: self._pick(dd))
                     grid.addWidget(btn, row, col)
@@ -2058,39 +2123,52 @@ class FilterSidebar(QWidget):
                 self._refresh_calendars(); self._update_preview()
                 self._update_preset_highlight()
 
-            def _shift_month(self, delta: int):
-                # prevent overlapping earlier than year 1970 simple guard
-                base_month_num = self.base_month.month + delta
-                year = self.base_month.year + (base_month_num-1)//12
-                month = (base_month_num-1)%12 + 1
-                self.base_month = self.base_month.replace(year=year, month=month, day=1)
-                # rebuild titles & days
-                for idx, wrap in enumerate(self.month_widgets):
-                    mdate = (self.base_month.replace(day=15) + timedelta(days=31*idx)).replace(day=1)
-                    wrap.month_date = mdate
-                    wrap.title_label.setText(mdate.strftime("%b %Y"))
-                    # clear old buttons
-                    while wrap.grid.count():
-                        item = wrap.grid.takeAt(0)
-                        if item.widget():
-                            item.widget().deleteLater()
-                    # rebuild grid
-                    first = mdate
-                    start_col = (first.weekday()+1) % 7
-                    if mdate.month == 12:
-                        next_m = mdate.replace(year=mdate.year+1, month=1)
-                    else:
-                        next_m = mdate.replace(month=mdate.month+1)
-                    days_in = (next_m - timedelta(days=1)).day
-                    row=0; col=0
-                    for _ in range(start_col):
-                        spacer = QLabel(" "); spacer.setFixedSize(30,30); wrap.grid.addWidget(spacer,row,col); col+=1
-                    for day in range(1, days_in+1):
-                        btn = QPushButton(str(day)); btn.setProperty("class","day"); btn.setCursor(Qt.CursorShape.PointingHandCursor); btn.setFixedSize(30,30)
-                        ddate = mdate.replace(day=day)
-                        btn.clicked.connect(lambda _=False, dd=ddate: self._pick(dd))
-                        wrap.grid.addWidget(btn,row,col); col+=1
-                        if col>6: col=0; row+=1
+            def _add_months(self, mdate: date, delta: int) -> date:
+                # Utility untuk geser bulan dengan aman (set day=1)
+                total = (mdate.year * 12 + (mdate.month - 1)) + delta
+                year = total // 12
+                month = total % 12 + 1
+                return date(year, month, 1)
+
+            def _rebuild_month_grid(self, wrap: QFrame):
+                # Bersihkan grid lama dan bangun ulang berdasarkan wrap.month_date
+                mdate = wrap.month_date
+                # clear old buttons
+                while wrap.grid.count():
+                    item = wrap.grid.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
+                first = mdate
+                start_col = (first.weekday()+1) % 7
+                if mdate.month == 12:
+                    next_m = mdate.replace(year=mdate.year+1, month=1)
+                else:
+                    next_m = mdate.replace(month=mdate.month+1)
+                days_in = (next_m - timedelta(days=1)).day
+                row=0; col=0
+                for _ in range(start_col):
+                    spacer = QLabel(" ")
+                    spacer.setFixedSize(self.day_size, self.day_size)
+                    wrap.grid.addWidget(spacer,row,col)
+                    col+=1
+                for day in range(1, days_in+1):
+                    btn = QPushButton(str(day))
+                    btn.setProperty("class","day")
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setFixedSize(self.day_size, self.day_size)
+                    ddate = mdate.replace(day=day)
+                    btn.clicked.connect(lambda _=False, dd=ddate: self._pick(dd))
+                    wrap.grid.addWidget(btn,row,col); col+=1
+                    if col>6: col=0; row+=1
+
+            def _shift_single_month(self, index: int, delta: int):
+                # Geser hanya bulan dengan index tertentu
+                if index < 0 or index >= len(self.month_widgets):
+                    return
+                wrap = self.month_widgets[index]
+                wrap.month_date = self._add_months(wrap.month_date, delta)
+                wrap.title_label.setText(wrap.month_date.strftime("%b %Y"))
+                self._rebuild_month_grid(wrap)
                 self._refresh_calendars()
 
             def _refresh_calendars(self):
@@ -2103,21 +2181,28 @@ class FilterSidebar(QWidget):
                             if not dtext.isdigit():
                                 continue
                             ddate = wrap.month_date.replace(day=int(dtext))
+                            state = ""  # dynamic property 'state'
                             cls = "day"
                             if self.start_date and self.end_date and self.start_date <= ddate <= self.end_date:
-                                if ddate == self.start_date or ddate == self.end_date:
-                                    cls = "day sel"
+                                if self.start_date == self.end_date:
+                                    if ddate == self.start_date:
+                                        state = "single"; cls = "day single"
                                 else:
-                                    cls = "day range"
-                            elif self.start_date and ddate == self.start_date:
-                                cls = "day sel"
-                            w.setProperty("class", cls)
-                            # Tandai hari ini (today) agar punya border
-                            if ddate == date.today():
-                                w.setProperty("today", True)
-                            else:
-                                w.setProperty("today", False)
-                            w.setStyleSheet("")  # trigger polish
+                                    if ddate == self.start_date:
+                                        state = "start"; cls = "day start"
+                                    elif ddate == self.end_date:
+                                        state = "end"; cls = "day end"
+                                    else:
+                                        state = "mid"; cls = "day mid"
+                            elif self.start_date and not self.end_date and ddate == self.start_date:
+                                state = "start"; cls = "day start"
+                            w.setProperty("class", cls)  # legacy fallback
+                            w.setProperty("state", state)
+                            # Today border highlight removed per request; property omitted
+                            # Re-polish so new dynamic properties take effect
+                            w.style().unpolish(w)
+                            w.style().polish(w)
+                            w.update()
 
             def _update_preview(self):
                 if self.start_date and self.end_date:
@@ -2178,30 +2263,48 @@ class FilterSidebar(QWidget):
                 if x < 4:
                     x = 4
                 self.move(x, y)
+                # Place notch near the right edge (ujung kanan) aligned with field's right side
+                try:
+                    half_notch = self._notch_width / 2
+                    pad = 10  # minimal padding from rounded corner
+                    self._anchor_x = popup_w - (pad + half_notch)
+                    # Safety clamp
+                    self._anchor_x = max(pad + half_notch, min(popup_w - pad - half_notch, self._anchor_x))
+                except Exception:
+                    pass
                 self.show()
                 self.raise_()
+                self.update()
 
             def set_theme(self, mode: str):
                 """Update palette & stylesheet tanpa membuat ulang popup."""
                 self.theme_mode = mode.lower()
                 accent = "#ff8800"
                 if self.theme_mode == "dark":
-                    bg = "#1e1e1e"; text = "#dddddd"; subtext = "#aaaaaa"; border = "#444444"; preset_hover_bg = "#252525"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; range_bg = preset_hover_bg; range_text = text; clear_color = "#bbbbbb"
+                    bg = "#1e1e1e"; text = "#dddddd"; subtext = "#aaaaaa"; border = "#444444"; preset_hover_bg = "#252525"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; mid_bg = "#3a2d20"; mid_hover_bg = "#4a3a28"; range_text = text; clear_color = "#bbbbbb"
                 else:
-                    bg = "#ffffff"; text = "#222222"; subtext = "#555555"; border = "#d6d6d6"; preset_hover_bg = "#f7f7f7"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; range_bg = preset_hover_bg; range_text = text; clear_color = "#666666"
+                    bg = "#ffffff"; text = "#222222"; subtext = "#555555"; border = "#d6d6d6"; preset_hover_bg = "#f7f7f7"; hover_bg = preset_hover_bg; sel_bg = accent; sel_text = "#ffffff"; mid_bg = "#ffe9d1"; mid_hover_bg = "#ffdcb8"; range_text = text; clear_color = "#666666"
                 self.accent = accent; self.sel_bg = sel_bg; self.sel_text = sel_text; self.text_color = text; self.subtext_color = subtext
+                # Remove native border; custom paint handles border + notch
                 self.setStyleSheet(f"""
-                    QFrame#CompactDateRangePopup {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}
+                    QFrame#CompactDateRangePopup {{ background:{bg}; border:0; border-radius:8px; }}
                     QFrame#PresetItem {{ background:{bg}; border-radius:4px; }}
                     QFrame#PresetItem:hover {{ background:{preset_hover_bg}; }}
                     QLabel {{ color:{text}; font-size:9pt; background:transparent; }}
                     QLabel.title {{ font-weight:600; font-size:9pt; letter-spacing:.3px; }}
-                    QPushButton.day {{ background:transparent; border:0; border-radius:4px; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
+                    QPushButton.day {{ background:transparent; border:0; border-radius:0; min-width:30px; min-height:30px; font-size:8pt; color:{text}; }}
                     QPushButton.day:hover {{ background:{hover_bg}; }}
+                    QPushButton[state="start"] {{ background:{sel_bg}; color:{sel_text}; border-top-left-radius:6px; border-bottom-left-radius:6px; border-top-right-radius:0; border-bottom-right-radius:0; }}
+                    QPushButton[state="end"] {{ background:{sel_bg}; color:{sel_text}; border-top-right-radius:6px; border-bottom-right-radius:6px; border-top-left-radius:0; border-bottom-left-radius:0; }}
+                    QPushButton[state="single"] {{ background:{sel_bg}; color:{sel_text}; border-radius:6px; }}
+                    QPushButton[state="mid"] {{ background:{mid_bg}; color:{range_text}; border-radius:0; }}
+                    QPushButton[state="mid"]:hover {{ background:{mid_hover_bg}; }}
+                    QPushButton.day.start, QPushButton.day.end {{ background:{sel_bg}; color:{sel_text}; }}
+                    QPushButton.day.single {{ background:{sel_bg}; color:{sel_text}; border-radius:6px; }}
+                    QPushButton.day.mid {{ background:{mid_bg}; color:{range_text}; }}
+                    QPushButton.day.mid:hover {{ background:{mid_hover_bg}; }}
                     QPushButton.day.sel {{ background:{sel_bg}; color:{sel_text}; }}
-                    QPushButton.day.range {{ background:{range_bg}; color:{range_text}; }}
-                    QPushButton[today="true"] {{ border:1px solid {accent}; }}
-                    QPushButton.day.sel[today="true"] {{ border:0; }}
+                    QPushButton.day.range {{ background:{mid_bg}; color:{range_text}; }}
                     QPushButton.nav {{ background:transparent; border:0; font-size:11pt; padding:2px 6px; color:{text}; }}
                     QPushButton.nav:hover {{ background:{hover_bg}; border-radius:4px; }}
                     QPushButton#applyBtn {{ background:{accent}; color:#fff; font-weight:600; border:0; border-radius:6px; padding:6px 14px; }}
@@ -2213,6 +2316,53 @@ class FilterSidebar(QWidget):
                 # Refresh current visual states
                 self._refresh_calendars()
                 self._update_preset_highlight()
+
+            def paintEvent(self, event):
+                # Custom paint to add an upward triangle notch pointing to field
+                try:
+                    from PyQt6.QtGui import QPainter, QPainterPath, QPen, QColor
+                except Exception:
+                    return super().paintEvent(event)
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                w = self.width()
+                h = self.height()
+                notch_w = self._notch_width
+                notch_h = self._notch_height
+                ax = self._anchor_x
+                radius = 8.0
+                top_content_y = notch_h  # area below notch
+                path = QPainterPath()
+                # Start top-left after radius
+                path.moveTo(radius, top_content_y)
+                notch_left = ax - notch_w/2
+                notch_right = ax + notch_w/2
+                # Top edge up to notch
+                path.lineTo(notch_left, top_content_y)
+                # Notch apex
+                path.lineTo(ax, 0)
+                path.lineTo(notch_right, top_content_y)
+                # Continue to top-right corner
+                path.lineTo(w - radius, top_content_y)
+                path.quadTo(w, top_content_y, w, top_content_y + radius)
+                path.lineTo(w, h - radius)
+                path.quadTo(w, h, w - radius, h)
+                path.lineTo(radius, h)
+                path.quadTo(0, h, 0, h - radius)
+                path.lineTo(0, top_content_y + radius)
+                path.quadTo(0, top_content_y, radius, top_content_y)
+                # Fill
+                fill_color = QColor(self._popup_bg_color)
+                painter.fillPath(path, fill_color)
+                # Border
+                pen = QPen(QColor(self._popup_border_color))
+                pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.drawPath(path)
+                painter.end()
+                # Let default painting draw children only (avoid overpainting background again)
+                # Skip base class background by not calling super().paintEvent for QFrame to preserve custom shape
                 self._update_preview()
 
         # ---------------------------------------------------------------
@@ -2227,6 +2377,21 @@ class FilterSidebar(QWidget):
             current_mode = getattr(self, "_current_theme_mode", "light")
             self._date_popup = CompactDateRangePopup(self.tgl_update, theme_mode=current_mode)
             self._date_popup.show_near()
+            # Tandai field punya popup terbuka agar border bawah transparan
+            try:
+                self.tgl_update.setProperty("popupOpen", True)
+                self.tgl_update.style().unpolish(self.tgl_update)
+                self.tgl_update.style().polish(self.tgl_update)
+                self.tgl_update.update()
+                # Hubungkan close event untuk reset property
+                def _reset_popup_prop():
+                    self.tgl_update.setProperty("popupOpen", False)
+                    self.tgl_update.style().unpolish(self.tgl_update)
+                    self.tgl_update.style().polish(self.tgl_update)
+                    self.tgl_update.update()
+                self._date_popup.destroyed.connect(lambda *_: _reset_popup_prop())
+            except Exception:
+                pass
 
         # Override click
         def mousePressEvent(ev):
@@ -2610,12 +2775,33 @@ class FilterSidebar(QWidget):
             self._apply_dark_theme()
         else:
             self._apply_light_theme()
+        # Style khusus date range field
+        self._style_date_field(mode)
         # Update popup jika sedang terbuka
         if hasattr(self, "_date_popup") and self._date_popup is not None:
             try:
                 self._date_popup.set_theme(mode)
             except Exception:
                 pass
+
+    def _style_date_field(self, mode: str):
+        """Set stylesheet khusus field tanggal agar konsisten dengan tema.
+        Args:
+            mode: 'dark' atau 'light'
+        """
+        accent = "#ff8800"
+        if mode == "dark":
+            bg = "#2d2d30"; border = "#555"; text = "#d4d4d4"; hover_border = accent
+        else:
+            bg = "#ffffff"; border = "#bbb"; text = "#222"; hover_border = accent
+        self.tgl_update.setStyleSheet(f"""
+            QLineEdit#DateRangeField {{
+                background:{bg}; border:1px solid {border}; border-radius:6px;
+                padding:6px 10px; color:{text}; font-size:10px;
+            }}
+            QLineEdit#DateRangeField:focus {{ border-color:{hover_border}; }}
+            QLineEdit#DateRangeField[popupOpen="true"] {{ border-bottom-color: transparent; }}
+        """)
     
     def _apply_dark_theme(self):
         """Terapkan stylesheet untuk tema gelap."""
@@ -2667,7 +2853,7 @@ class FilterSidebar(QWidget):
                 font-size: 10px;
             }
             QLineEdit:focus, QComboBox:focus {
-                border: 1px solid #888;
+                border: 1px solid #ff8800; /* accent border on focus */
             }
             QComboBox QListView {
                 background: #2d2d30;
@@ -2778,7 +2964,7 @@ class FilterSidebar(QWidget):
                 font-size: 10px;
             }
             QLineEdit:focus, QComboBox:focus {
-                border: 1px solid #888;
+                border: 1px solid #ff8800; /* accent border on focus */
             }
             QComboBox QListView {
                 background: #ffffff;
