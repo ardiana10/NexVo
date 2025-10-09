@@ -8,48 +8,88 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
     QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget, QInputDialog
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator, QPalette
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
 from io import BytesIO
 from cryptography.fernet import Fernet
 
+
 # ===================== ENKRIPSI/DEKRIPSI DB (pakai nexvo.key) =====================
-import os, hashlib, tempfile
-from cryptography.fernet import Fernet
 
 # --- Konstanta format file terenkripsi ---
-MAGIC = b"NEXVOENC1"          # header format/versi berkas terenkripsi
-SQLITE_HEADER = b"SQLite format 3"  # header DB SQLite
+MAGIC = b"NEXVOENC1"                 # header format/versi berkas terenkripsi
+SQLITE_HEADER = b"SQLite format 3"   # header DB SQLite
 
-# --- Lokasi file kunci. Pastikan fungsi generate_key() & load_key() tersedia ---
-KEY_FILE = "nexvo.key"
+# --- Manajemen lokasi key (portable + per-user) ---
+APP_NAME = "NexVo"
+KEY_FILENAME = "nexvo.key"
 
-def generate_key():
-    """Buat key baru dan simpan ke file jika belum ada."""
+def _user_key_dir() -> str:
+    """Folder default untuk menyimpan key yang pasti writable per-user."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+        return os.path.join(base, APP_NAME)
+    elif sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~/Library/Application Support"), APP_NAME)
+    else:
+        return os.path.join(os.path.expanduser("~/.config"), APP_NAME)
+
+def _portable_key_path() -> str:
+    """Coba cari nexvo.key di lokasi yang sama dengan EXE/skrip (portable mode)."""
+    base = os.path.dirname(getattr(sys, "frozen", False) and sys.executable or os.path.abspath(__file__))
+    return os.path.join(base, KEY_FILENAME)
+
+def _default_key_path() -> str:
+    """Lokasi fallback per-user (writable)."""
+    d = _user_key_dir()
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, KEY_FILENAME)
+
+def _resolve_key_path() -> str:
+    """
+    Urutan pencarian:
+      1) nexvo.key di folder EXE/skrip (portable mode)
+      2) nexvo.key di folder per-user (dibuat otomatis kalau belum ada)
+    """
+    p_portable = _portable_key_path()
+    if os.path.exists(p_portable):
+        return p_portable
+    return _default_key_path()
+
+def _generate_key_at(path: str) -> bytes:
     key = Fernet.generate_key()
-    with open(KEY_FILE, "wb") as f:
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
         f.write(key)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
     return key
 
-def load_key():
-    """Muat key dari file, atau buat baru jika belum ada."""
-    if not os.path.exists(KEY_FILE):
-        print("[INFO] Key enkripsi belum ada, membuat baru...")
-        return generate_key()
-    with open(KEY_FILE, "rb") as f:
+def load_key() -> bytes:
+    """
+    Muat key:
+      - Jika ada di folder EXE/skrip -> pakai itu (portable)
+      - Kalau tidak ada -> pakai folder per-user; buat baru jika belum ada
+    """
+    p = _resolve_key_path()
+    if not os.path.exists(p):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        #####print(f"[INFO] Key enkripsi belum ada, membuat baru di: {p}")####
+        return _generate_key_at(p)
+    with open(p, "rb") as f:
         return f.read()
 
 # --- Helper I/O atomic (aman dari file setengah jadi) ---
 def _atomic_write(path: str, data: bytes):
-    """Tulis bytes ke file secara atomic (safe replace)."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".tmp_enc_", dir=directory)
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_enc_", dir=d)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)  # atomic swap
+        os.replace(tmp, path)
     finally:
         try:
             if os.path.exists(tmp):
@@ -58,82 +98,72 @@ def _atomic_write(path: str, data: bytes):
             pass
 
 def _sha256(b: bytes) -> bytes:
-    """Kembalikan raw digest SHA-256 (32 bytes)."""
     return hashlib.sha256(b).digest()
 
 def _encrypt_file(plain_path: str, enc_path: str):
-    """
-    Enkripsi database SQLite plaintext -> file terenkripsi (.enc)
-    Format file: MAGIC (9b) | CHECKSUM(32b) | CIPHERTEXT
-    """
+    """Enkripsi DB SQLite -> file .enc (MAGIC + checksum + ciphertext)."""
     if not os.path.exists(plain_path):
         raise FileNotFoundError(f"Plain DB tidak ditemukan: {plain_path}")
-
     with open(plain_path, "rb") as f:
         db = f.read()
-
-    # Validasi: ini harus DB SQLite yang valid
     if not db.startswith(SQLITE_HEADER):
         raise ValueError("File plaintext bukan database SQLite yang valid.")
 
-    # Muat kunci dari nexvo.key (konsisten untuk encrypt/decrypt)
     key = load_key()
     fernet = Fernet(key)
+    checksum = _sha256(db)
+    ciphertext = fernet.encrypt(db)
 
-    # Hitung checksum plaintext sebelum dienkripsi
-    checksum = _sha256(db)             # 32 bytes
-    ciphertext = fernet.encrypt(db)    # bytes terenkripsi
-
-    # Payload akhir: header + checksum + ciphertext
     payload = MAGIC + checksum + ciphertext
-
-    # Tulis secara atomic agar aman
     _atomic_write(enc_path, payload)
 
 def _decrypt_file(enc_path: str, dec_path: str):
-    """
-    Dekripsi file terenkripsi (.enc) -> database plaintext SQLite.
-    Verifikasi: MAGIC, checksum plaintext, dan header SQLite.
-    """
+    """Dekripsi file .enc -> plaintext DB (verifikasi MAGIC + checksum + header)."""
     if not os.path.exists(enc_path):
         raise FileNotFoundError(f"Encrypted DB tidak ditemukan: {enc_path}")
 
     with open(enc_path, "rb") as f:
         blob = f.read()
 
-    # Cek ukuran minimal: MAGIC + 32 bytes checksum + minimal 1 byte ciphertext
     min_len = len(MAGIC) + 32 + 1
     if len(blob) < min_len:
         raise ValueError("File .enc terlalu pendek / corrupt.")
-
-    # Cek header MAGIC
     if not blob.startswith(MAGIC):
         raise ValueError("MAGIC header tidak cocok (bukan format NEXVOENC1).")
 
-    # Ambil potongan: checksum dan ciphertext
     hdr_len = len(MAGIC)
-    checksum = blob[hdr_len:hdr_len + 32]
-    ciphertext = blob[hdr_len + 32:]
+    checksum = blob[hdr_len:hdr_len+32]
+    ciphertext = blob[hdr_len+32:]
 
-    # Dekripsi memakai kunci dari nexvo.key
     key = load_key()
     fernet = Fernet(key)
-    try:
-        db = fernet.decrypt(ciphertext)
-    except Exception as e:
-        raise ValueError(f"Gagal decrypt ciphertext (salah kunci atau data rusak): {e}")
+    db = fernet.decrypt(ciphertext)
 
-    # Verifikasi checksum plaintext
     if _sha256(db) != checksum:
         raise ValueError("Checksum plaintext tidak cocok. File terenkripsi rusak.")
-
-    # Verifikasi header SQLite
     if not db.startswith(SQLITE_HEADER):
         raise ValueError("Hasil dekripsi bukan database SQLite yang valid.")
 
-    # Tulis plaintext secara atomic
     _atomic_write(dec_path, db)
-# ================================================================================
+# =====================================================================
+class ProtectedWindow(QMainWindow):
+    """Base class agar semua window tidak bisa ditutup lewat tombol X, 
+    kecuali lewat menu File → Keluar."""
+    def closeEvent(self, event):
+        # ✅ Jika window diberi izin keluar oleh MainWindow, izinkan
+        if hasattr(self, "_izin_keluar") and self._izin_keluar:
+            event.accept()
+            super().closeEvent(event)
+            return
+
+        # ❌ Selain itu, blokir
+        event.ignore()
+        QMessageBox.warning(
+            self,
+            "Tindakan Diblokir",
+            "Gunakan menu <b>File → Keluar</b> untuk menutup aplikasi.",
+            QMessageBox.StandardButton.Ok
+        )
 
 def show_modern_warning(parent, title, text):
     msg = QMessageBox(parent)
@@ -579,30 +609,11 @@ class CheckboxDelegate(QStyledItemDelegate):
         y = option.rect.y() + (option.rect.height() - size) // 2
         return QRect(x, y, size, size)
 
-# === Enkripsi (cryptography - Fernet) ===
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-
-# ====== KONFIGURASI KUNCI ENKRIPSI ======
-APP_PASSPHRASE = "9@%RM79hiQt%^@7BneHFtRS&9k9*fJ"   # <<< WAJIB kamu ubah
-APP_SALT = b"698z*#$&moK&g6^c43WFkS4#3@Ks%&"
-
-_kdf = PBKDF2HMAC(
-    algorithm=hashes.SHA256(),
-    length=32,
-    salt=APP_SALT,
-    iterations=390000,
-)
-_KEY = base64.urlsafe_b64encode(_kdf.derive(APP_PASSPHRASE.encode("utf-8")))
-_fernet = Fernet(_KEY)
-
 # === Lokasi folder NexVo (tempat app.py) ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # === DB utama ===
 DB_NAME = os.path.join(BASE_DIR, "app.db")
-
 
 #####################################*************########################################
 #####################################*************########################################
@@ -1130,7 +1141,7 @@ def apply_global_palette(app, mode: str):
 # =====================================================
 # Main Window (Setelah login)
 # =====================================================
-class MainWindow(QMainWindow):
+class MainWindow(ProtectedWindow):
     def __init__(self, username, kecamatan, desa, db_name, tahapan):
         super().__init__()
         self.tahapan = tahapan.upper()   # ✅ simpan jenis tahapan (DPHP/DPSHP/DPSHPA)
@@ -1143,9 +1154,7 @@ class MainWindow(QMainWindow):
         self.desa_login = desa.upper()
         self.username = username
 
-        # Path database absolut
         self.db_name = db_name
-        self._init_db_pragmas()
 
         # ==== Enkripsi: siapkan path encrypted & plaintext sementara ====
         base = os.path.basename(self.db_name)
@@ -1164,7 +1173,8 @@ class MainWindow(QMainWindow):
             conn.close()
 
         self.db_name = self.plain_db_path
-
+        self._init_db_pragmas()
+        self._ensure_schema_and_migrate()
         self.all_data = []
 
         self.sort_lastupdate_asc = True  # ✅ toggle: True = dari terbaru ke lama, False = sebaliknya
@@ -1299,7 +1309,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         action_keluar = QAction("  Keluar", self)
         action_keluar.setShortcut("Ctrl+W")
-        action_keluar.triggered.connect(self.close)
+        action_keluar.triggered.connect(self.keluar_aplikasi)
         file_menu.addAction(action_keluar)
 
         generate_menu = menubar.addMenu("Generate")
@@ -1456,9 +1466,8 @@ class MainWindow(QMainWindow):
         self.status.addWidget(self.lbl_selected)
         self.status.addWidget(self.lbl_total)
         self.status.addPermanentWidget(self.lbl_version)
-
-        self.update_pagination()
         self.load_data_from_db()
+        self.update_pagination()
         self.apply_column_visibility()
 
         # ✅ Load theme terakhir dari database
@@ -1478,13 +1487,29 @@ class MainWindow(QMainWindow):
         self.filter_sidebar = None
         self.filter_dock = None
 
-        atexit.register(self._encrypt_and_cleanup)
-
     # --- Batch flags & stats (aman dari AttributeError) ---
         self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
         self._in_batch_mode = False
         self._warning_shown_in_batch = {}
         self._install_safe_shutdown_hooks()
+
+    def keluar_aplikasi(self):
+        """Keluar dari aplikasi lewat menu File → Keluar."""
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+
+        tanya = QMessageBox.question(
+            self,
+            "Konfirmasi Keluar",
+            "Apakah Anda yakin ingin keluar dari aplikasi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if tanya == QMessageBox.StandardButton.Yes:
+            # 🔹 Izinkan closeEvent lewat menu
+            self._izin_keluar = True
+            QApplication.quit()
+
 
     def _on_row_checkbox_changed_for_header_sync(self, item):
         # Hanya respons kalau kolom checkbox (kolom 0) yang berubah
@@ -1695,18 +1720,9 @@ class MainWindow(QMainWindow):
             if col_name in settings:
                 self.table.setColumnHidden(i, settings[col_name] == 0)
 
-    def closeEvent(self, event):
-        self._encrypt_and_cleanup()
-        super().closeEvent(event)
-
     def _encrypt_and_cleanup(self):
-        try:
-            if os.path.exists(self.plain_db_path):
-                _encrypt_file(self.plain_db_path, self.enc_path)
-                os.remove(self.plain_db_path)
-                print(f"[INFO] Database terenkripsi ulang: {self.enc_path}")
-        except Exception as e:
-            print(f"[WARN] Gagal encrypt/cleanup: {e}")
+        # Backward-compat saja: delegasikan ke satu pintu
+        self._shutdown("_encrypt_and_cleanup")
 
     def save_theme(self, mode):
         conn = sqlite3.connect(self.db_name)
@@ -2973,7 +2989,12 @@ class MainWindow(QMainWindow):
                 self._shared_cur.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
             else:
                 with sqlite3.connect(self.db_name) as conn:
-                    conn.execute(f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?", (value, nik))
+                    with sqlite3.connect(self.db_name) as conn:
+                        conn.execute(
+                            f"UPDATE data_pemilih SET {field_name}=? WHERE NIK=?",
+                            (value, nik)
+                        )
+
                     conn.commit()
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memperbarui database:\n{e}")
@@ -2995,11 +3016,20 @@ class MainWindow(QMainWindow):
         nik_count = {}
         hasil = ["Sesuai"] * len(self.all_data)  # default
 
-        # === Hitung kemunculan NIK untuk seluruh data ===
+        # === Hitung kemunculan NIK dan kelompokkan NKK & KET ===
+        nkk_tps_map = {}   # {NKK: set(TPS)}
+        nik_ket_map = {}   # {NIK: set(KET)}
         for d in self.all_data:
             nik = str(d.get("NIK", "")).strip()
+            nkk = str(d.get("NKK", "")).strip()
+            tps = str(d.get("TPS", "")).strip()
+            ket = str(d.get("KET", "")).strip().upper()
+
             if nik:
                 nik_count[nik] = nik_count.get(nik, 0) + 1
+                nik_ket_map.setdefault(nik, set()).add(ket)
+            if nkk:
+                nkk_tps_map.setdefault(nkk, set()).add(tps)
 
         # === Loop utama validasi semua baris di self.all_data ===
         for i, d in enumerate(self.all_data):
@@ -3008,6 +3038,7 @@ class MainWindow(QMainWindow):
             tgl_lhr = str(d.get("TGL_LHR", "")).strip()
             ket = str(d.get("KET", "")).strip()
             sts = str(d.get("STS", "")).strip()
+            tps = str(d.get("TPS", "")).strip()
 
             # --- Validasi NKK ---
             if len(nkk) != 16:
@@ -3056,19 +3087,35 @@ class MainWindow(QMainWindow):
             if nik and ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
                 nik_seen.setdefault(nik, []).append(i)
 
-        # === Tandai Ganda ===
+        # === (1) Deteksi NKK sama – TPS berbeda ===
+        for i, d in enumerate(self.all_data):
+            nkk = str(d.get("NKK", "")).strip()
+            ket = str(d.get("KET", "")).strip()
+            if nkk and ket not in ("1","2","3","4","5","6","7","8"):
+                if len(nkk_tps_map.get(nkk, [])) > 1:
+                    hasil[i] = "Beda TPS"
+
+        # === (2) Tandai Ganda ===
         for nik, idxs in nik_seen.items():
             if len(idxs) > 1:
                 for j in idxs:
                     ket = str(self.all_data[j].get("KET", ""))
-                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda"
+                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda Aktif"
 
-        # === Pemilih Baru / Pemilih Pemula ===
+        # === (3) Pemilih Baru / Pemilih Pemula ===
         for i, d in enumerate(self.all_data):
             ket = str(d.get("KET", "")).upper()
             nik = str(d.get("NIK", "")).strip()
             if ket == "B":
                 hasil[i] = "Pemilih Baru" if nik_count.get(nik, 0) > 1 else "Pemilih Pemula"
+
+        # === (4) KET = 8 tanpa padanan B → Tidak Padan ===
+        for i, d in enumerate(self.all_data):
+            ket = str(d.get("KET", "")).strip().upper()
+            nik = str(d.get("NIK", "")).strip()
+            if ket == "8":
+                if "B" not in nik_ket_map.get(nik, set()):
+                    hasil[i] = "Tidak Padan"
 
         # === Simpan hasil ke self.all_data ===
         for i, status in enumerate(hasil):
@@ -3082,58 +3129,78 @@ class MainWindow(QMainWindow):
             cur.execute("PRAGMA journal_mode = MEMORY;")
             cur.execute("PRAGMA temp_store = MEMORY;")
 
-            data_update = [
-                (d["CEK_DATA"], d.get("rowid"))
-                for d in self.all_data
-                if d.get("rowid") is not None
-            ]
+            data_update = [(d.get("CEK_DATA", ""), d.get("rowid")) for d in self.all_data if d.get("rowid") is not None]
 
-            cur.executemany(
-                "UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?",
-                data_update
-            )
-
+            cur.executemany("UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?", data_update)
             conn.commit()
             conn.close()
         except Exception as e:
             show_modern_error(self, "Gagal Commit", f"Gagal menyimpan hasil ke database:\n{e}")
             return
 
-        # === Refresh halaman aktif ===
-        self.show_page(self.current_page)
-        self._warnai_baris_berdasarkan_ket()
-
-            # === Sinkronkan hasil ke file terenkripsi utama (.enc) ===
         try:
-            if hasattr(self, "enc_path") and os.path.exists(self.db_name):
+            if hasattr(self, "enc_path"):
                 _encrypt_file(self.db_name, self.enc_path)
-                print(f"[INFO] Sinkronisasi hasil pemeriksaan ke {self.enc_path} berhasil.")
         except Exception as e:
             print(f"[WARN] Gagal menyinkronkan ke database terenkripsi: {e}")
 
-        show_modern_info(
-            self,
-            "Selesai",
-            f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!"
-        )
+        # === Refresh tampilan ===
+        self.show_page(self.current_page)
+        self._warnai_baris_berdasarkan_ket()
+        self._terapkan_warna_ke_tabel_aktif()
+
+        show_modern_info(self, "Selesai", f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!")
 
     def _warnai_baris_berdasarkan_ket(self):
-        """Warnai baris di halaman aktif berdasar kolom KET."""
-        for row in range(self.table.rowCount()):
-            ket = str(self.table.item(row, self._col_index("KET")).text()).strip()
-            if ket in ("1","2","3","4","5","6","7","8"):
-                color = QColor("red")
-            elif ket.lower() == "u":
-                color = QColor("yellow")
-            elif ket.lower() == "b":
-                color = QColor("green")
-            else:
-                color = QColor("white" if self.load_theme() == "dark" else "black")
+        from PyQt6.QtGui import QColor, QBrush
+        warna_cache = {
+            "biru": QBrush(QColor("blue")),
+            "merah": QBrush(QColor("red")),
+            "kuning": QBrush(QColor("yellow")),
+            "hijau": QBrush(QColor("green")),
+            "hitam": QBrush(QColor("black")),
+            "putih": QBrush(QColor("white")),
+        }
 
+        dark_mode = self.load_theme() == "dark"
+        warna_default = warna_cache["putih" if dark_mode else "hitam"]
+        idx_cekdata = self._col_index("CEK_DATA")
+        idx_ket = self._col_index("KET")
+
+        for d in self.all_data:
+            cek_data_val = str(d.get("CEK_DATA", "")).strip()
+            ket_val = str(d.get("KET", "")).strip()
+
+            if cek_data_val in (
+                "NKK Invalid", "Potensi NKK Invalid",
+                "NIK Invalid", "Potensi NIK Invalid",
+                "Potensi Dibawah Umur", "Dibawah Umur", "Ganda Aktif", "Beda TPS", "Tidak Padan"
+            ):
+                brush = warna_cache["biru"]
+            elif ket_val in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                brush = warna_cache["merah"]
+            elif ket_val.lower() == "u":
+                brush = warna_cache["kuning"]
+            elif ket_val.lower() == "b":
+                brush = warna_cache["hijau"]
+            else:
+                brush = warna_default
+
+            d["_warna_font"] = brush
+
+
+    def _terapkan_warna_ke_tabel_aktif(self):
+        from PyQt6.QtGui import QBrush
+        start_index = (self.current_page - 1) * self.rows_per_page
+        end_index = min(start_index + self.rows_per_page, len(self.all_data))
+        page_data = self.all_data[start_index:end_index]
+
+        for row, d in enumerate(page_data):
+            brush = d.get("_warna_font", QBrush())
             for c in range(self.table.columnCount()):
                 item = self.table.item(row, c)
                 if item:
-                    item.setForeground(color)
+                    item.setForeground(brush)
 
     def _col_index(self, name):
         """Helper untuk ambil index kolom berdasar nama."""
@@ -3299,82 +3366,140 @@ class MainWindow(QMainWindow):
     # Load data dari database saat login ulang
     # =================================================
     def load_data_from_db(self):
-        from datetime import datetime
+        """Memuat seluruh data dari database ke self.all_data dengan super ultra kilat dan pewarnaan otomatis."""
         import sqlite3
+        from datetime import datetime
+        from PyQt6.QtCore import QTimer
 
-        # ✅ Gunakan context manager biar auto-close walau ada error
+        # 1) Ambil data mentah dari DB
         with sqlite3.connect(self.db_name) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
 
-            # ✅ Pastikan tabel ada
+            # ⚙️ Optimasi kecepatan baca SQLite
+            cur.execute("PRAGMA synchronous = OFF;")
+            cur.execute("PRAGMA journal_mode = MEMORY;")
+            cur.execute("PRAGMA temp_store = MEMORY;")
+
+            # Pastikan tabel ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS data_pemilih (
-                    KECAMATAN TEXT,
-                    DESA TEXT,
-                    DPID TEXT,
-                    NKK TEXT,
-                    NIK TEXT,
-                    NAMA TEXT,
-                    JK TEXT,
-                    TMPT_LHR TEXT,
-                    TGL_LHR TEXT,
-                    STS TEXT,
-                    ALAMAT TEXT,
-                    RT TEXT,
-                    RW TEXT,
-                    DIS TEXT,
-                    KTPel TEXT,
-                    SUMBER TEXT,
-                    KET TEXT,
-                    TPS TEXT,
-                    LastUpdate DATETIME,
-                    CEK_DATA TEXT
+                    KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
+                    JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
+                    RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
+                    TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                 )
             """)
 
-            # ✅ Ambil data sekaligus (langsung jadi list of dict)
             cur.execute("SELECT rowid, * FROM data_pemilih")
-            rows = [dict(row) for row in cur.fetchall()]
+            rows = [dict(r) for r in cur.fetchall()]
 
-        # ✅ Ambil semua header kolom dari tabel GUI hanya sekali
-        headers = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+        # 2) Siapkan header tabel (harus setelah self.table dibuat)
+        headers = [self.table.horizontalHeaderItem(i).text()
+                for i in range(self.table.columnCount())]
 
-        # ✅ Cache hasil konversi tanggal agar parsing tidak berulang
+        # 3) Formatter tanggal (pakai cache biar super cepat)
         _tgl_cache = {}
-
-        def format_tgl(val):
+        def format_tgl(val: str):
             if not val:
                 return ""
-            if val in _tgl_cache:  # gunakan cache jika sudah pernah diproses
+            if val in _tgl_cache:
                 return _tgl_cache[val]
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                 try:
-                    hasil = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
-                    _tgl_cache[val] = hasil
-                    return hasil
+                    from datetime import datetime as _dt
+                    s = _dt.strptime(val, fmt).strftime("%d/%m/%Y")
+                    _tgl_cache[val] = s
+                    return s
                 except:
-                    continue
+                    pass
             _tgl_cache[val] = val
             return val
 
-        # ✅ Proses massal super cepat dengan dict comprehension
+        # 4) Bangun self.all_data SEKALI (setelah headers & format_tgl ada)
         self.all_data = [
             {
-                **{col: ("" if row.get(col) is None else str(row[col])) for col in headers},
-                "_rowid_": row.get("rowid"),
+                **{col: ("" if row.get(col) is None else str(row.get(col, ""))) for col in headers},
+                "rowid": row.get("rowid"),
                 "LastUpdate": format_tgl(str(row.get("LastUpdate", "")))
             }
             for row in rows
         ]
 
-        # ✅ Hitung total halaman
+        # 5) Hitung halaman & tampilkan page 1
         total = len(self.all_data)
         self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
-
-        # ✅ Tampilkan halaman pertama
         self.show_page(1)
 
+        # ==========================================================
+        # ⚡ Jalankan pewarnaan setelah GUI tampil (non-blocking, super cepat)
+        # ==========================================================
+        def apply_colors_safely():
+            try:
+                # Hindari hitung ulang warna jika sudah pernah
+                if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
+                    self._warnai_baris_berdasarkan_ket()
+                    self._warna_sudah_dihitung = True
+
+                # Terapkan warna ke halaman aktif (setelah GUI siap)
+                self._terapkan_warna_ke_tabel_aktif()
+            except Exception as e:
+                print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
+
+        # 🔹 Jalankan pewarnaan setelah 100ms (supaya login langsung tampil)
+        QTimer.singleShot(100, apply_colors_safely)
+
+
+    def _ensure_schema_and_migrate(self):
+        """
+        Pastikan tabel data_pemilih ada, kolom CEK_DATA tersedia,
+        dan (jika ada) salin nilai dari kolom lama 'CEK DATA' -> CEK_DATA.
+        Idempotent: aman dipanggil berulang.
+        """
+        import sqlite3
+
+        with sqlite3.connect(self.db_name) as conn:
+            cur = conn.cursor()
+
+            # 1) Buat tabel kalau belum ada (versi skema terbaru)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_pemilih (
+                    KECAMATAN  TEXT,
+                    DESA       TEXT,
+                    DPID       TEXT,
+                    NKK        TEXT,
+                    NIK        TEXT,
+                    NAMA       TEXT,
+                    JK         TEXT,
+                    TMPT_LHR   TEXT,
+                    TGL_LHR    TEXT,
+                    STS        TEXT,
+                    ALAMAT     TEXT,
+                    RT         TEXT,
+                    RW         TEXT,
+                    DIS        TEXT,
+                    KTPel      TEXT,
+                    SUMBER     TEXT,
+                    KET        TEXT,
+                    TPS        TEXT,
+                    LastUpdate DATETIME,
+                    CEK_DATA   TEXT
+                )
+            """)
+
+            # 2) Cek kolom yang ada saat ini
+            cur.execute("PRAGMA table_info(data_pemilih)")
+            cols = {row[1] for row in cur.fetchall()}  # row[1] = nama kolom
+
+            # 3) Tambahkan CEK_DATA jika belum ada
+            if "CEK_DATA" not in cols:
+                cur.execute("ALTER TABLE data_pemilih ADD COLUMN CEK_DATA TEXT")
+
+            # 4) Jika ada kolom lama "CEK DATA", salin nilainya sekali
+            if "CEK DATA" in cols:
+                cur.execute("UPDATE data_pemilih SET CEK_DATA = COALESCE(CEK_DATA, `CEK DATA`)")
+
+            conn.commit()
 
     # =================================================
     # Update status bar selected & total
@@ -3411,31 +3536,85 @@ class MainWindow(QMainWindow):
     # =================================================
     def sort_data(self, auto=False):
         """
-        Urutkan data berdasarkan TPS, RW, RT, NKK, dan NAMA.
-        Jika auto=True maka dijalankan tanpa konfirmasi & popup.
+        Urutkan data seluruh halaman (super cepat):
+        1️⃣ CEK_DATA = 'Beda TPS' → urut NKK, NIK, NAMA
+        2️⃣ CEK_DATA = 'Ganda Aktif' → urut NIK, NAMA
+        3️⃣ CEK_DATA = 'Potensi NKK Invalid', 'NIK Invalid', 'Potensi NIK Invalid',
+                    'Potensi Dibawah Umur', 'Dibawah Umur', 'Tidak Padan'
+            → tetap urutan normal, tapi muncul setelah (1) dan (2)
+        4️⃣ Selain itu → urut normal seperti biasa (TPS, RW, RT, NKK, NAMA)
         """
-        # ✅ Jika bukan mode otomatis, baru minta konfirmasi
+        # ✅ Konfirmasi jika bukan mode otomatis
         if not auto:
             if not show_modern_question(self, "Konfirmasi", "Apakah Anda ingin mengurutkan data?"):
                 return
 
-        # 🔹 Lakukan pengurutan
-        self.all_data.sort(
-            key=lambda x: (
-                str(x.get("TPS", "")),
-                str(x.get("RW", "")),
-                str(x.get("RT", "")),
-                str(x.get("NKK", "")),
-                str(x.get("NAMA", ""))
-            )
-        )
+        # 🔹 Kelompok berdasarkan prioritas
+        prioritas_0 = {"Beda TPS"}
+        prioritas_1 = {"Ganda Aktif"}
+        prioritas_2 = {
+            "Potensi NKK Invalid",
+            "NIK Invalid",
+            "Potensi NIK Invalid",
+            "Potensi Dibawah Umur",
+            "Dibawah Umur",
+            "Tidak Padan"
+        }
+
+        # 🔹 Fungsi kunci sortir super cepat
+        def kunci_sortir(d):
+            cek = str(d.get("CEK_DATA", "")).strip()
+
+            # Level prioritas
+            if cek in prioritas_0:
+                prior = 0
+                subkey = (
+                    str(d.get("NKK", "")),
+                    str(d.get("NIK", "")),
+                    str(d.get("NAMA", "")),
+                )
+            elif cek in prioritas_1:
+                prior = 1
+                subkey = (
+                    str(d.get("NIK", "")),
+                    str(d.get("TPS", "")),
+                    str(d.get("NAMA", "")),
+                )
+            elif cek in prioritas_2:
+                prior = 2
+                subkey = (
+                    str(d.get("TPS", "")),
+                    str(d.get("RW", "")),
+                    str(d.get("RT", "")),
+                    str(d.get("NKK", "")),
+                    str(d.get("NAMA", "")),
+                )
+            else:
+                prior = 3
+                subkey = (
+                    str(d.get("TPS", "")),
+                    str(d.get("RW", "")),
+                    str(d.get("RT", "")),
+                    str(d.get("NKK", "")),
+                    str(d.get("NAMA", "")),
+                )
+
+            return (prior, *subkey)
+
+        # 🔹 Jalankan pengurutan (seluruh halaman, 1-pass, super cepat)
+        self.all_data.sort(key=kunci_sortir)
 
         # 🔹 Refresh tampilan
         self.show_page(1)
 
-        # ✅ Kalau manual, baru tampilkan popup sukses
+        # 🔹 Terapkan ulang warna (non-blocking)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+        # ✅ Popup selesai
         if not auto:
             show_modern_info(self, "Selesai", "Pengurutan data telah selesai!")
+
 
     # =================================================
     # Klik Header Kolom "LastUpdate" untuk sorting toggle
@@ -3595,7 +3774,9 @@ class MainWindow(QMainWindow):
             self.table.setSpan(0, 0, 1, self.table.columnCount())
             
             self.table.blockSignals(False)
-            self.lbl_selected.setText("0 selected")
+            if hasattr(self, "lbl_selected"):
+                self.lbl_selected.setText("0 selected")
+
             self.update_statusbar()
             self.update_pagination()
             return
@@ -3676,7 +3857,9 @@ class MainWindow(QMainWindow):
                         item.setForeground(warna)
 
         self.table.blockSignals(False)
-        self.lbl_selected.setText("0 selected")
+        if hasattr(self, "lbl_selected"):
+            self.lbl_selected.setText("0 selected")
+
         self.update_statusbar()
         self.update_pagination()
         self.table.horizontalHeader().setSortIndicatorShown(False)
@@ -3684,6 +3867,7 @@ class MainWindow(QMainWindow):
         # Jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
         QTimer.singleShot(0, self.sync_header_checkbox_state)
+        self._terapkan_warna_ke_tabel_aktif()
         
     # =================================================
     # Pagination UI
@@ -3847,33 +4031,57 @@ class MainWindow(QMainWindow):
 
         app = QApplication.instance()
         if app:
-            # Dipanggil saat app akan keluar "normal"
-            app.aboutToQuit.connect(lambda: self._flush_db("aboutToQuit"))
+            try:
+                app.aboutToQuit.disconnect()
+            except Exception:
+                pass
+            app.aboutToQuit.connect(lambda: self._shutdown("aboutToQuit"))
 
-        # Panggil saat proses berakhir (nyaris selalu terpanggil)
-        atexit.register(lambda: self._flush_db("atexit"))
+        # atexit (nyaris selalu terpanggil)
+        try:
+            atexit.unregister(lambda: self._shutdown("atexit"))
+        except Exception:
+            pass
+        atexit.register(lambda: self._shutdown("atexit"))
 
-        # Tangani Ctrl+C / kill jika tersedia (di Windows sebagian sinyal terbatas)
+        # Sinyal OS (Windows terbatas untuk SIGTERM)
         try:
             import signal
-            signal.signal(signal.SIGINT,  lambda s, f: self._graceful_terminate("SIGINT"))
-            signal.signal(signal.SIGTERM, lambda s, f: self._graceful_terminate("SIGTERM"))
+            signal.signal(signal.SIGINT,  lambda s, f: self._shutdown("SIGINT"))
+            signal.signal(signal.SIGTERM, lambda s, f: self._shutdown("SIGTERM"))
         except Exception:
-            pass  # aman dilewati jika tidak didukung
+            pass
 
     def _graceful_terminate(self, source):
-        """Commit dulu, lalu keluar rapi."""
+        """Commit + encrypt lalu keluar rapi."""
         try:
-            self._flush_db(source)
+            self._shutdown(source)
         finally:
             app = QApplication.instance()
             if app:
                 app.quit()
 
     def closeEvent(self, event):
-        """Klik tombol X di kanan atas juga lewat sini."""
-        self._flush_db("closeEvent")
-        super().closeEvent(event)
+        """Cegah keluar lewat tombol X, kecuali lewat menu File → Keluar."""
+        # 🔹 Jika keluar lewat menu resmi, izinkan & jalankan shutdown
+        if hasattr(self, "_izin_keluar") and self._izin_keluar:
+            try:
+                self._shutdown("closeEvent")  # tetap jalankan proses tutup yang kamu punya
+            except Exception as e:
+                print(f"[WARN] Gagal menjalankan _shutdown: {e}")
+            event.accept()
+            super().closeEvent(event)
+            return
+
+        # 🔹 Jika bukan lewat menu, blokir
+        event.ignore()
+        QMessageBox.warning(
+            self,
+            "Tindakan Diblokir",
+            "Gunakan menu <b>File → Keluar</b> untuk menutup aplikasi.",
+            QMessageBox.StandardButton.Ok
+        )
+
 
     def _flush_db(self, where=""):
         """
@@ -3915,6 +4123,35 @@ class MainWindow(QMainWindow):
         except Exception as e:
             # Hindari popup saat shutdown; cukup log ke stderr
             print(f"[WARN] _flush_db({where}) error: {e}", file=sys.stderr)
+
+    def _shutdown(self, source: str = ""):
+        if getattr(self, "_did_shutdown", False):
+            return
+        self._did_shutdown = True
+
+        # 1) Pastikan transaksi beres
+        try:
+            self._flush_db(source or "_shutdown")
+        except Exception as e:
+            print(f"[WARN] _flush_db({source}) gagal: {e}")
+
+        # 2) Enkripsi plaintext -> final .enc
+        try:
+            if hasattr(self, "plain_db_path") and hasattr(self, "enc_path"):
+                if self.plain_db_path and os.path.exists(self.plain_db_path):
+                    _encrypt_file(self.plain_db_path, self.enc_path)
+                    #####print(f"[INFO] Shutdown: terenkripsi ke {self.enc_path}")#####
+        except Exception as e:
+            print(f"[WARN] Encrypt on shutdown ({source}) gagal: {e}")
+
+        # 3) Bersihkan artefak temp (plaintext & temp .enc)
+        for p in (getattr(self, "plain_db_path", ""), getattr(self, "plain_db_path", "") + ".enc"):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception as ee:
+                print(f"[WARN] Gagal menghapus artefak {p}: {ee}")
+
 
     def _init_db_pragmas(self):
         try:
