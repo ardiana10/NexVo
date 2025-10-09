@@ -1,4 +1,4 @@
-﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
+﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode, hashlib, tempfile # type: ignore
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
@@ -11,6 +11,129 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
 from io import BytesIO
+from cryptography.fernet import Fernet
+
+# ===================== ENKRIPSI/DEKRIPSI DB (pakai nexvo.key) =====================
+import os, hashlib, tempfile
+from cryptography.fernet import Fernet
+
+# --- Konstanta format file terenkripsi ---
+MAGIC = b"NEXVOENC1"          # header format/versi berkas terenkripsi
+SQLITE_HEADER = b"SQLite format 3"  # header DB SQLite
+
+# --- Lokasi file kunci. Pastikan fungsi generate_key() & load_key() tersedia ---
+KEY_FILE = "nexvo.key"
+
+def generate_key():
+    """Buat key baru dan simpan ke file jika belum ada."""
+    key = Fernet.generate_key()
+    with open(KEY_FILE, "wb") as f:
+        f.write(key)
+    return key
+
+def load_key():
+    """Muat key dari file, atau buat baru jika belum ada."""
+    if not os.path.exists(KEY_FILE):
+        print("[INFO] Key enkripsi belum ada, membuat baru...")
+        return generate_key()
+    with open(KEY_FILE, "rb") as f:
+        return f.read()
+
+# --- Helper I/O atomic (aman dari file setengah jadi) ---
+def _atomic_write(path: str, data: bytes):
+    """Tulis bytes ke file secara atomic (safe replace)."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_enc_", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)  # atomic swap
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+def _sha256(b: bytes) -> bytes:
+    """Kembalikan raw digest SHA-256 (32 bytes)."""
+    return hashlib.sha256(b).digest()
+
+def _encrypt_file(plain_path: str, enc_path: str):
+    """
+    Enkripsi database SQLite plaintext -> file terenkripsi (.enc)
+    Format file: MAGIC (9b) | CHECKSUM(32b) | CIPHERTEXT
+    """
+    if not os.path.exists(plain_path):
+        raise FileNotFoundError(f"Plain DB tidak ditemukan: {plain_path}")
+
+    with open(plain_path, "rb") as f:
+        db = f.read()
+
+    # Validasi: ini harus DB SQLite yang valid
+    if not db.startswith(SQLITE_HEADER):
+        raise ValueError("File plaintext bukan database SQLite yang valid.")
+
+    # Muat kunci dari nexvo.key (konsisten untuk encrypt/decrypt)
+    key = load_key()
+    fernet = Fernet(key)
+
+    # Hitung checksum plaintext sebelum dienkripsi
+    checksum = _sha256(db)             # 32 bytes
+    ciphertext = fernet.encrypt(db)    # bytes terenkripsi
+
+    # Payload akhir: header + checksum + ciphertext
+    payload = MAGIC + checksum + ciphertext
+
+    # Tulis secara atomic agar aman
+    _atomic_write(enc_path, payload)
+
+def _decrypt_file(enc_path: str, dec_path: str):
+    """
+    Dekripsi file terenkripsi (.enc) -> database plaintext SQLite.
+    Verifikasi: MAGIC, checksum plaintext, dan header SQLite.
+    """
+    if not os.path.exists(enc_path):
+        raise FileNotFoundError(f"Encrypted DB tidak ditemukan: {enc_path}")
+
+    with open(enc_path, "rb") as f:
+        blob = f.read()
+
+    # Cek ukuran minimal: MAGIC + 32 bytes checksum + minimal 1 byte ciphertext
+    min_len = len(MAGIC) + 32 + 1
+    if len(blob) < min_len:
+        raise ValueError("File .enc terlalu pendek / corrupt.")
+
+    # Cek header MAGIC
+    if not blob.startswith(MAGIC):
+        raise ValueError("MAGIC header tidak cocok (bukan format NEXVOENC1).")
+
+    # Ambil potongan: checksum dan ciphertext
+    hdr_len = len(MAGIC)
+    checksum = blob[hdr_len:hdr_len + 32]
+    ciphertext = blob[hdr_len + 32:]
+
+    # Dekripsi memakai kunci dari nexvo.key
+    key = load_key()
+    fernet = Fernet(key)
+    try:
+        db = fernet.decrypt(ciphertext)
+    except Exception as e:
+        raise ValueError(f"Gagal decrypt ciphertext (salah kunci atau data rusak): {e}")
+
+    # Verifikasi checksum plaintext
+    if _sha256(db) != checksum:
+        raise ValueError("Checksum plaintext tidak cocok. File terenkripsi rusak.")
+
+    # Verifikasi header SQLite
+    if not db.startswith(SQLITE_HEADER):
+        raise ValueError("Hasil dekripsi bukan database SQLite yang valid.")
+
+    # Tulis plaintext secara atomic
+    _atomic_write(dec_path, db)
+# ================================================================================
 
 def show_modern_warning(parent, title, text):
     msg = QMessageBox(parent)
@@ -476,20 +599,6 @@ _fernet = Fernet(_KEY)
 
 # === Lokasi folder NexVo (tempat app.py) ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def _encrypt_file(plain_path: str, enc_path: str):
-    with open(plain_path, "rb") as f:
-        data = f.read()
-    token = _fernet.encrypt(data)
-    with open(enc_path, "wb") as f:
-        f.write(token)
-
-def _decrypt_file(enc_path: str, plain_path: str):
-    with open(enc_path, "rb") as f:
-        token = f.read()
-    data = _fernet.decrypt(token)
-    with open(plain_path, "wb") as f:
-        f.write(data)
 
 # === DB utama ===
 DB_NAME = os.path.join(BASE_DIR, "app.db")
@@ -1067,7 +1176,7 @@ class MainWindow(QMainWindow):
         self.table = QTableWidget()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK DATA"
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK_DATA"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
@@ -1103,7 +1212,7 @@ class MainWindow(QMainWindow):
             "KET": 100,
             "TPS": 80,
             "LastUpdate": 100,
-            "CEK DATA": 200
+            "CEK_DATA": 200
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
@@ -1323,6 +1432,7 @@ class MainWindow(QMainWindow):
 
         btn_cekdata = QPushButton("Cek Data")
         self.style_button(btn_cekdata)
+        btn_cekdata.clicked.connect(self.cek_data)
         toolbar.addWidget(btn_cekdata)
         add_spacer()
 
@@ -1594,6 +1704,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(self.plain_db_path):
                 _encrypt_file(self.plain_db_path, self.enc_path)
                 os.remove(self.plain_db_path)
+                print(f"[INFO] Database terenkripsi ulang: {self.enc_path}")
         except Exception as e:
             print(f"[WARN] Gagal encrypt/cleanup: {e}")
 
@@ -2269,7 +2380,7 @@ class MainWindow(QMainWindow):
         self.table.resizeColumnsToContents()
 
         max_widths = {
-            "CEK DATA": 200,   # cukup untuk yyyy-mm-dd
+            "CEK_DATA": 200,   # cukup untuk yyyy-mm-dd
         }
 
         for i in range(self.table.columnCount()):
@@ -2874,6 +2985,163 @@ class MainWindow(QMainWindow):
         eff.setColor(QColor(*rgba))
         widget.setGraphicsEffect(eff)
 
+    def cek_data(self):
+        """Validasi seluruh data (semua halaman) dengan super ultra kilat + commit batch."""
+        from datetime import datetime
+        import sqlite3
+
+        target_date = datetime(2029, 6, 26)
+        nik_seen = {}
+        nik_count = {}
+        hasil = ["Sesuai"] * len(self.all_data)  # default
+
+        # === Hitung kemunculan NIK untuk seluruh data ===
+        for d in self.all_data:
+            nik = str(d.get("NIK", "")).strip()
+            if nik:
+                nik_count[nik] = nik_count.get(nik, 0) + 1
+
+        # === Loop utama validasi semua baris di self.all_data ===
+        for i, d in enumerate(self.all_data):
+            nkk = str(d.get("NKK", "")).strip()
+            nik = str(d.get("NIK", "")).strip()
+            tgl_lhr = str(d.get("TGL_LHR", "")).strip()
+            ket = str(d.get("KET", "")).strip()
+            sts = str(d.get("STS", "")).strip()
+
+            # --- Validasi NKK ---
+            if len(nkk) != 16:
+                hasil[i] = "NKK Invalid"
+                continue
+            try:
+                dd_nkk = int(nkk[6:8])
+                mm_nkk = int(nkk[8:10])
+                if dd_nkk < 1 or dd_nkk > 31 or mm_nkk < 1 or mm_nkk > 12:
+                    hasil[i] = "Potensi NKK Invalid"
+                    continue
+            except:
+                hasil[i] = "Potensi NKK Invalid"
+                continue
+
+            # --- Validasi NIK ---
+            if len(nik) != 16:
+                hasil[i] = "NIK Invalid"
+                continue
+            try:
+                dd_nik = int(nik[6:8])
+                mm_nik = int(nik[8:10])
+                if dd_nik < 1 or dd_nik > 71 or mm_nik < 1 or mm_nik > 12:
+                    hasil[i] = "Potensi NIK Invalid"
+                    continue
+            except:
+                hasil[i] = "Potensi NIK Invalid"
+                continue
+
+            # --- Validasi umur ---
+            if "|" in tgl_lhr:
+                try:
+                    dd, mm, yy = map(int, tgl_lhr.split("|"))
+                    lahir = datetime(yy, mm, dd)
+                    umur = (target_date - lahir).days / 365.25
+                    if umur < 0 or umur < 13:
+                        hasil[i] = "Potensi Dibawah Umur"
+                        continue
+                    elif umur < 17 and sts.upper() == "B":
+                        hasil[i] = "Dibawah Umur"
+                        continue
+                except:
+                    pass
+
+            # --- Catat untuk deteksi ganda nanti ---
+            if nik and ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                nik_seen.setdefault(nik, []).append(i)
+
+        # === Tandai Ganda ===
+        for nik, idxs in nik_seen.items():
+            if len(idxs) > 1:
+                for j in idxs:
+                    ket = str(self.all_data[j].get("KET", ""))
+                    hasil[j] = "Sesuai" if ket in ("1","2","3","4","5","6","7","8") else "Ganda"
+
+        # === Pemilih Baru / Pemilih Pemula ===
+        for i, d in enumerate(self.all_data):
+            ket = str(d.get("KET", "")).upper()
+            nik = str(d.get("NIK", "")).strip()
+            if ket == "B":
+                hasil[i] = "Pemilih Baru" if nik_count.get(nik, 0) > 1 else "Pemilih Pemula"
+
+        # === Simpan hasil ke self.all_data ===
+        for i, status in enumerate(hasil):
+            self.all_data[i]["CEK_DATA"] = status
+
+        # === Commit ke database (executemany super kilat) ===
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cur = conn.cursor()
+            cur.execute("PRAGMA synchronous = OFF;")
+            cur.execute("PRAGMA journal_mode = MEMORY;")
+            cur.execute("PRAGMA temp_store = MEMORY;")
+
+            data_update = [
+                (d["CEK_DATA"], d.get("rowid"))
+                for d in self.all_data
+                if d.get("rowid") is not None
+            ]
+
+            cur.executemany(
+                "UPDATE data_pemilih SET CEK_DATA = ? WHERE rowid = ?",
+                data_update
+            )
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            show_modern_error(self, "Gagal Commit", f"Gagal menyimpan hasil ke database:\n{e}")
+            return
+
+        # === Refresh halaman aktif ===
+        self.show_page(self.current_page)
+        self._warnai_baris_berdasarkan_ket()
+
+            # === Sinkronkan hasil ke file terenkripsi utama (.enc) ===
+        try:
+            if hasattr(self, "enc_path") and os.path.exists(self.db_name):
+                _encrypt_file(self.db_name, self.enc_path)
+                print(f"[INFO] Sinkronisasi hasil pemeriksaan ke {self.enc_path} berhasil.")
+        except Exception as e:
+            print(f"[WARN] Gagal menyinkronkan ke database terenkripsi: {e}")
+
+        show_modern_info(
+            self,
+            "Selesai",
+            f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!"
+        )
+
+    def _warnai_baris_berdasarkan_ket(self):
+        """Warnai baris di halaman aktif berdasar kolom KET."""
+        for row in range(self.table.rowCount()):
+            ket = str(self.table.item(row, self._col_index("KET")).text()).strip()
+            if ket in ("1","2","3","4","5","6","7","8"):
+                color = QColor("red")
+            elif ket.lower() == "u":
+                color = QColor("yellow")
+            elif ket.lower() == "b":
+                color = QColor("green")
+            else:
+                color = QColor("white" if self.load_theme() == "dark" else "black")
+
+            for c in range(self.table.columnCount()):
+                item = self.table.item(row, c)
+                if item:
+                    item.setForeground(color)
+
+    def _col_index(self, name):
+        """Helper untuk ambil index kolom berdasar nama."""
+        for i in range(self.table.columnCount()):
+            if self.table.horizontalHeaderItem(i).text() == name:
+                return i
+        return -1
+
     # =================================================
     # Import CSV Function (sekarang benar jadi method)
     # =================================================
@@ -2961,7 +3229,7 @@ class MainWindow(QMainWindow):
                         KET TEXT,
                         TPS TEXT,
                         LastUpdate DATETIME,
-                        "CEK DATA" TEXT
+                        CEK_DATA TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -3061,7 +3329,7 @@ class MainWindow(QMainWindow):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate DATETIME,
-                    "CEK DATA" TEXT
+                    CEK_DATA TEXT
                 )
             """)
 
@@ -3254,7 +3522,7 @@ class MainWindow(QMainWindow):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate DATETIME,
-                    CEK DATA TEXT
+                    CEK_DATA TEXT
                 )
             """)
             cur.execute("DELETE FROM data_pemilih")
@@ -4066,7 +4334,7 @@ class LoginWindow(QWidget):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate DATETIME,
-                    CEK DATA TEXT
+                    CEK_DATA TEXT
                 )
             """)
             conn.commit()
@@ -4612,7 +4880,7 @@ def hapus_semua_data():
                         KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
                         JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
                         RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
-                        TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                        TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                     )
                 """)
                 cur.execute("DELETE FROM data_pemilih")
@@ -4632,7 +4900,7 @@ def hapus_semua_data():
                     KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
                     JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
                     RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
-                    TPS TEXT, LastUpdate DATETIME, "CEK DATA" TEXT
+                    TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
                 )
             """)
             conn.commit()

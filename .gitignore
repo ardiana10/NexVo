@@ -9,6 +9,7 @@
 *.enc
 *.env
 .env.*
+nexvo.key
 config.json
 secrets.json
 
