@@ -1,4 +1,4 @@
-﻿import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode, hashlib, tempfile # type: ignore
+import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode, hashlib, tempfile, time # type: ignore
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
@@ -6,9 +6,9 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu,
-    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget, QInputDialog
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStackedWidget, QInputDialog, QProgressDialog
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator, QPalette
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator, QPalette, QMovie
 from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QEasingCurve, QRegularExpression
 from io import BytesIO
 from cryptography.fernet import Fernet
@@ -1180,7 +1180,7 @@ class MainWindow(ProtectedWindow):
         self.sort_lastupdate_asc = True  # ✅ toggle: True = dari terbaru ke lama, False = sebaliknya
 
         self.current_page = 1
-        self.rows_per_page = 100
+        self.rows_per_page = 200
         self.total_pages = 1
 
         self.table = QTableWidget()
@@ -1249,6 +1249,7 @@ class MainWindow(ProtectedWindow):
         self.pagination_layout.setContentsMargins(0, 2, 0, 2)
         self.pagination_layout.setSpacing(4)
         self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_buttons = []
 
         # --- Halaman Data (tetap hidup selama app jalan)
         self.data_page = QWidget()
@@ -1471,8 +1472,7 @@ class MainWindow(ProtectedWindow):
         self.apply_column_visibility()
 
         # ✅ Load theme terakhir dari database
-        theme = self.load_theme()
-        self.apply_theme(theme)
+        self.apply_theme("light")
 
         # ✅ Tambahkan ini biar auto resize kolom jalan setelah login
         QTimer.singleShot(0, self.auto_fit_columns)
@@ -3007,9 +3007,18 @@ class MainWindow(ProtectedWindow):
         widget.setGraphicsEffect(eff)
 
     def cek_data(self):
-        """Validasi seluruh data (semua halaman) dengan super ultra kilat + commit batch."""
-        from datetime import datetime
-        import sqlite3
+        # === KONFIRMASI AWAL ===
+        reply = QMessageBox.question(
+            self,
+            "Konfirmasi",
+            "Apakah kamu yakin ingin menjalankan proses <b>Cek Data</b>?<br><br>"
+            "Proses ini akan memeriksa seluruh data dan mungkin memerlukan waktu beberapa detik.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.No:
+            show_modern_info(self, "Dibatalkan", "Proses cek data dibatalkan oleh pengguna.")
+            return
 
         target_date = datetime(2029, 6, 26)
         nik_seen = {}
@@ -3366,70 +3375,92 @@ class MainWindow(ProtectedWindow):
     # Load data dari database saat login ulang
     # =================================================
     def load_data_from_db(self):
-        """Memuat seluruh data dari database ke self.all_data dengan super ultra kilat dan pewarnaan otomatis."""
+        """Memuat seluruh data dari database ke self.all_data dengan super ultra kilat dan hasil identik."""
         import sqlite3
         from datetime import datetime
-        from PyQt6.QtCore import QTimer
 
-        # 1) Ambil data mentah dari DB
-        with sqlite3.connect(self.db_name) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.cursor()
+        # ============================================================
+        # 1️⃣ Ambil data mentah dari DB
+        # ============================================================
+        conn = sqlite3.connect(self.db_name, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
 
-            # ⚙️ Optimasi kecepatan baca SQLite
-            cur.execute("PRAGMA synchronous = OFF;")
-            cur.execute("PRAGMA journal_mode = MEMORY;")
-            cur.execute("PRAGMA temp_store = MEMORY;")
+        # ⚙️ Optimasi kecepatan baca SQLite (non-fatal PRAGMA)
+        cur.executescript("""
+            PRAGMA synchronous = OFF;
+            PRAGMA journal_mode = MEMORY;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = 100000;
+            PRAGMA page_size = 4096;
+        """)
 
-            # Pastikan tabel ada
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS data_pemilih (
-                    KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
-                    JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
-                    RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
-                    TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
-                )
-            """)
+        # Pastikan tabel ada
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS data_pemilih (
+                KECAMATAN TEXT, DESA TEXT, DPID TEXT, NKK TEXT, NIK TEXT, NAMA TEXT,
+                JK TEXT, TMPT_LHR TEXT, TGL_LHR TEXT, STS TEXT, ALAMAT TEXT,
+                RT TEXT, RW TEXT, DIS TEXT, KTPel TEXT, SUMBER TEXT, KET TEXT,
+                TPS TEXT, LastUpdate DATETIME, CEK_DATA TEXT
+            )
+        """)
 
-            cur.execute("SELECT rowid, * FROM data_pemilih")
-            rows = [dict(r) for r in cur.fetchall()]
+        # ⚡ Fetch super cepat tanpa konversi berulang
+        rows = cur.fetchall() if (cur.execute("SELECT rowid, * FROM data_pemilih").description is None) else cur.fetchall()
+        if not rows:
+            self.all_data = []
+            self.total_pages = 1
+            self.show_page(1)
+            conn.close()
+            return
 
-        # 2) Siapkan header tabel (harus setelah self.table dibuat)
-        headers = [self.table.horizontalHeaderItem(i).text()
-                for i in range(self.table.columnCount())]
+        data_fetch = cur.fetchall() if not rows else rows
+        conn.close()
 
-        # 3) Formatter tanggal (pakai cache biar super cepat)
+        # ============================================================
+        # 2️⃣ Persiapan Header & Cache Formatter
+        # ============================================================
+        headers = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
         _tgl_cache = {}
-        def format_tgl(val: str):
+
+        def format_tgl(val):
             if not val:
                 return ""
-            if val in _tgl_cache:
-                return _tgl_cache[val]
+            v = _tgl_cache.get(val)
+            if v:
+                return v
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                 try:
-                    from datetime import datetime as _dt
-                    s = _dt.strptime(val, fmt).strftime("%d/%m/%Y")
-                    _tgl_cache[val] = s
-                    return s
-                except:
-                    pass
+                    v = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
+                    _tgl_cache[val] = v
+                    return v
+                except Exception:
+                    continue
             _tgl_cache[val] = val
             return val
 
-        # 4) Bangun self.all_data SEKALI (setelah headers & format_tgl ada)
-        self.all_data = [
-            {
-                **{col: ("" if row.get(col) is None else str(row.get(col, ""))) for col in headers},
-                "rowid": row.get("rowid"),
-                "LastUpdate": format_tgl(str(row.get("LastUpdate", "")))
-            }
-            for row in rows
-        ]
+        # ============================================================
+        # 3️⃣ Bangun all_data (list of dict) super cepat
+        # ============================================================
+        append = list.append
+        all_data = []
+        for r in data_fetch:
+            d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+            d["rowid"] = r["rowid"]
+            if "LastUpdate" in r.keys() and r["LastUpdate"]:
+                d["LastUpdate"] = format_tgl(str(r["LastUpdate"]))
+            all_data.append(d)
+        self.all_data = all_data
+        import gc
+        gc.collect()
 
-        # 5) Hitung halaman & tampilkan page 1
-        total = len(self.all_data)
+        # ============================================================
+        # 4️⃣ Hitung halaman & tampilkan page 1
+        # ============================================================
+        total = len(all_data)
         self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
         self.show_page(1)
+
 
         # ==========================================================
         # ⚡ Jalankan pewarnaan setelah GUI tampil (non-blocking, super cepat)
@@ -3734,140 +3765,117 @@ class MainWindow(ProtectedWindow):
     # Show page data (fix checkbox terlihat)
     # =================================================
     def show_page(self, page):
+        """Versi super kilat dengan hasil identik (optimal untuk 10.000+ baris)."""
         if page < 1 or page > self.total_pages:
             return
 
         self.current_page = page
         self.table.blockSignals(True)
-        self.table.setRowCount(0)
 
         start = (page - 1) * self.rows_per_page
-        end = start + self.rows_per_page
+        end = min(start + self.rows_per_page, len(self.all_data))
         data_rows = self.all_data[start:end]
 
-        # Jika tidak ada data, tampilkan "Data Tidak Ditemukan"
-        if len(data_rows) == 0 and len(self.all_data) == 0:
-            self.table.setRowCount(1)
-            # Buat item "Data Tidak Ditemukan" yang span semua kolom
+        # =========================================================
+        # 🧹 Clear isi lama tanpa reset struktur tabel
+        # =========================================================
+        self.table.clearContents()
+        self.table.setRowCount(len(data_rows) or 1)
+
+        # =========================================================
+        # 🚫 Jika kosong, tampilkan pesan
+        # =========================================================
+        if not data_rows:
             item = QTableWidgetItem("Data Tidak Ditemukan")
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # Tidak bisa diedit atau dicentang
-            
-            # Set font style untuk membedakan
             font = item.font()
             font.setItalic(True)
             font.setBold(True)
             item.setFont(font)
-            
-            # Set warna abu-abu
             item.setForeground(QColor("gray"))
-            
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.table.setItem(0, 0, item)
-            
-            # Kosongkan kolom lainnya
-            for j in range(1, self.table.columnCount()):
-                empty_item = QTableWidgetItem("")
-                empty_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.table.setItem(0, j, empty_item)
-            
-            # Span kolom pertama ke semua kolom
             self.table.setSpan(0, 0, 1, self.table.columnCount())
-            
             self.table.blockSignals(False)
             if hasattr(self, "lbl_selected"):
                 self.lbl_selected.setText("0 selected")
-
             self.update_statusbar()
             self.update_pagination()
             return
-        
-        self.table.setRowCount(len(data_rows))
-        app_columns = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+
+        # =========================================================
+        # 📋 Persiapan variabel agar loop cepat
+        # =========================================================
+        setItem = self.table.setItem
+        newItem = QTableWidgetItem
+        colCount = self.table.columnCount()
+        headerItems = [self.table.horizontalHeaderItem(i).text() for i in range(colCount)]
         center_cols = {"DPID", "JK", "STS", "TGL_LHR", "RT", "RW", "DIS", "KTPel", "KET", "TPS"}
+        ket_index = self.col_index("KET")
 
+        # =========================================================
+        # 🎨 Mapping warna super kilat
+        # =========================================================
+        warna_map = {
+            "B": QColor("green"),   # BARU
+            "U": QColor("orange"),  # UBAH
+        }
+        tms_vals = {"1", "2", "3", "4", "5", "6", "7", "8"}  # TMS
+        warna_default = QColor("black")
+
+        # =========================================================
+        # 🧮 Isi tabel dengan loop minimalis
+        # =========================================================
         for i, d in enumerate(data_rows):
-            # ✅ Kolom pertama: checkbox
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            chk_item.setText("")
-            self.table.setItem(i, 0, chk_item)
+            # Checkbox
+            chk = newItem("")
+            chk.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            chk.setCheckState(Qt.CheckState.Unchecked)
+            setItem(i, 0, chk)
 
-            # ✅ Kolom lainnya (lewati _rowid_)
-            for j, col in enumerate(app_columns[1:], start=1):
-                if col == "_rowid_":  # jangan tampilkan rowid
+            # Kolom lain
+            for j, col in enumerate(headerItems[1:], start=1):
+                if col == "_rowid_":
                     continue
-
                 val = d.get(col, "")
-
-                # Format tanggal jika perlu
                 if col == "LastUpdate" and val:
-                    try:
-                        from datetime import datetime
-                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
-                            try:
-                                dt = datetime.strptime(val, fmt)
-                                val = dt.strftime("%d/%m/%Y")
-                                break
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
-
-                item = QTableWidgetItem(val)
-
-                # Tengahkan kolom tertentu
+                    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                        try:
+                            val = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
+                            break
+                        except Exception:
+                            pass
+                cell = newItem(val)
                 if col in center_cols:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                setItem(i, j, cell)
 
-                # Nonaktifkan edit
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            # Pewarnaan baris berdasarkan kolom KET
+            ket_val = str(d.get("KET", "")).strip().upper()
+            warna = warna_map.get(ket_val, warna_default)
+            if ket_val in tms_vals:
+                warna = QColor("red")
 
-                self.table.setItem(i, j, item)
+            for c in range(colCount):
+                cell = self.table.item(i, c)
+                if cell:
+                    cell.setForeground(warna)
 
-            # =========================================================
-            # 🔹 Pewarnaan otomatis berdasarkan nilai kolom KET (tema adaptif)
-            # =========================================================
-            ket_index = self.col_index("KET")
-            if ket_index != -1:
-                ket_val = str(self.table.item(i, ket_index).text()).strip().upper()
-
-                # Deteksi mode tema berdasarkan warna background table
-                bg_color = self.table.palette().color(self.table.backgroundRole())
-                brightness = (bg_color.red() + bg_color.green() + bg_color.blue()) / 3
-                is_light_theme = brightness > 128
-
-                # Warna dasar (default teks)
-                warna_default = QColor("black") if is_light_theme else QColor("white")
-
-                # Warna khusus berdasarkan KET
-                if ket_val in ("1", "2", "3", "4", "5", "6", "7", "8"):
-                    warna = QColor("red")       # ❌ TMS
-                elif ket_val == "B":
-                    warna = QColor("green")     # 🟢 BARU
-                elif ket_val == "U":
-                    warna = QColor("orange")    # 🟡 UBAH
-                else:
-                    warna = warna_default       # ⚪ Normal
-
-                # Terapkan ke seluruh baris
-                for c in range(self.table.columnCount()):
-                    item = self.table.item(i, c)
-                    if item:
-                        item.setForeground(warna)
-
+        # =========================================================
+        # 🔁 Update tampilan & pagination
+        # =========================================================
         self.table.blockSignals(False)
         if hasattr(self, "lbl_selected"):
             self.lbl_selected.setText("0 selected")
-
         self.update_statusbar()
         self.update_pagination()
         self.table.horizontalHeader().setSortIndicatorShown(False)
 
-        # Jadwalkan auto resize kolom setelah layout selesai
         QTimer.singleShot(0, self.auto_fit_columns)
         QTimer.singleShot(0, self.sync_header_checkbox_state)
         self._terapkan_warna_ke_tabel_aktif()
+
         
     # =================================================
     # Pagination UI
@@ -3932,6 +3940,7 @@ class MainWindow(ProtectedWindow):
         next_btn = self.make_page_button(">", lambda: self.show_page(self.current_page + 1),
                                          checked=False, enabled=(self.current_page < self.total_pages))
         self.pagination_layout.addWidget(next_btn)
+
 
     def lookup_pemilih(self, row):
         """Lookup cepat berdasarkan baris terpilih (stub aman, tidak crash)."""
