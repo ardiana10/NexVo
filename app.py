@@ -2849,14 +2849,19 @@ class FilterSidebar(QWidget):
     # ==========================
     def reset_filters(self):
         """Reset semua field filter ke nilai default/kosong."""
+        # Reset form fields terlebih dahulu
         self._reset_form_only()
         
-        # Reset data di MainWindow juga
+        # Cari MainWindow dan panggil clear_filters
         parent = self.parent()
         while parent is not None:
-            if hasattr(parent, 'clear_filters') and hasattr(parent, 'all_data'):
-                parent.clear_filters()
-                return
+            if hasattr(parent, 'clear_filters') and callable(getattr(parent, 'clear_filters')):
+                try:
+                    parent.clear_filters()
+                    break
+                except Exception as e:
+                    print(f"Error saat clear_filters: {e}")
+                    break
             parent = parent.parent()
     
     def _reset_form_only(self):
