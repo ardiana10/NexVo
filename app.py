@@ -1,4 +1,4 @@
-import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode # type: ignore
+import sys, sqlite3, csv, os, atexit, base64, random, string, pyotp, qrcode, hashlib, tempfile # type: ignore
 from datetime import datetime, date, timedelta
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QComboBox, QPushButton,
@@ -6,10 +6,11 @@ from PyQt6.QtWidgets import (
     QToolBar, QStatusBar, QCompleter, QSizePolicy,
     QFileDialog, QHBoxLayout, QDialog, QCheckBox, QScrollArea, QHeaderView,
     QStyledItemDelegate, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QFrame, QMenu, QTableWidgetSelectionRange,
-    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStyle, QStyleOptionButton
+    QFormLayout, QSlider, QRadioButton, QDockWidget, QGridLayout, QStyle, QStyleOptionButton, QStackedWidget,
+    QInputDialog
 )
-from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon
-from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QSize, QPoint, QVariantAnimation, QEasingCurve, QAbstractAnimation
+from PyQt6.QtGui import QAction, QPainter, QColor, QPen, QPixmap, QFont, QIcon, QRegularExpressionValidator
+from PyQt6.QtCore import Qt, QTimer, QRect, QPropertyAnimation, QSize, QPoint, QVariantAnimation, QEasingCurve, QAbstractAnimation, QRegularExpression
 from io import BytesIO
 from cryptography.fernet import Fernet
 
@@ -2767,6 +2768,7 @@ class FilterSidebar(QWidget):
         self.btn_filter = QPushButton("Filter")
         self.btn_filter.setObjectName("filterBtn")
         self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_filter.clicked.connect(self._apply_filters)
         
         # Layout tombol dengan spacer untuk posisi center
         layout.addStretch()
@@ -2847,6 +2849,18 @@ class FilterSidebar(QWidget):
     # ==========================
     def reset_filters(self):
         """Reset semua field filter ke nilai default/kosong."""
+        self._reset_form_only()
+        
+        # Reset data di MainWindow juga
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'clear_filters') and hasattr(parent, 'all_data'):
+                parent.clear_filters()
+                return
+            parent = parent.parent()
+    
+    def _reset_form_only(self):
+        """Reset form fields saja tanpa mempengaruhi data."""
         # Reset semua field input teks
         text_fields = [
             self.tgl_update, self.nama, self.nik, self.nkk, 
@@ -2948,6 +2962,22 @@ class FilterSidebar(QWidget):
             return True
         except ValueError:
             return False
+    
+    def _apply_filters(self):
+        """Method untuk menerapkan filter yang dipanggil dari tombol Filter.
+        
+        Method ini akan memanggil apply_filters di parent window (MainWindow).
+        """
+        # Cari MainWindow dari parent chain
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'apply_filters') and hasattr(parent, 'all_data'):
+                parent.apply_filters()
+                return
+            parent = parent.parent()
+        
+        # Fallback jika tidak menemukan MainWindow
+        print("ERROR: Tidak dapat menemukan MainWindow untuk apply_filters")
     
     def apply_theme(self, mode):
         """Terapkan tema tampilan (gelap atau terang) ke semua elemen filter.
@@ -3749,10 +3779,12 @@ class MainWindow(ProtectedWindow):
         # Update pagination and display
         self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
         self.current_page = 1
+        self.update_pagination()
         self.show_page(1)
         
-        # Update status bar with filter info (no popup)
+        # Update status bar with filter info
         self.lbl_total.setText(f"{len(filtered_data)} dari {len(self.original_data)} total (filtered)")
+        self.update_statusbar()
     
     def clear_filters(self):
         """Clear all filters and restore original data"""
@@ -3763,11 +3795,16 @@ class MainWindow(ProtectedWindow):
             # Update pagination and display
             self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
             self.current_page = 1
+            self.update_pagination()
             self.show_page(1)
+            
+            # Update status bar
+            self.lbl_total.setText(f"{len(self.all_data)} total")
+            self.update_statusbar()
         
-        # Reset filter form
+        # Reset filter form only (to avoid infinite loop)
         if self.filter_sidebar:
-            self.filter_sidebar.reset_filters()
+            self.filter_sidebar._reset_form_only()
     
     def wildcard_match(self, pattern, text):
         """Wildcard matching with % support
@@ -3842,6 +3879,35 @@ class MainWindow(ProtectedWindow):
         # Date filter (simple contains check)
         if filters["tgl_lahir"] and filters["tgl_lahir"] not in item.get("TGL_LHR", ""):
             return False
+        
+        # Age filter based on birth date
+        if "umur_min" in filters and "umur_max" in filters:
+            umur_min = filters["umur_min"]
+            umur_max = filters["umur_max"]
+            
+            # Skip if age range is default (0-100)
+            if not (umur_min == 0 and umur_max == 100):
+                tgl_lahir_str = item.get("TGL_LHR", "").strip()
+                if tgl_lahir_str:
+                    try:
+                        # Try different date formats
+                        birth_date = None
+                        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+                            try:
+                                birth_date = datetime.strptime(tgl_lahir_str, fmt).date()
+                                break
+                            except ValueError:
+                                continue
+                        
+                        if birth_date:
+                            today = date.today()
+                            age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                            
+                            if age < umur_min or age > umur_max:
+                                return False
+                    except Exception:
+                        # If we can't parse the date, don't filter by age
+                        pass
             
         # Keterangan filter
         if filters["keterangan"]:
