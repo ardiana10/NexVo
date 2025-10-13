@@ -670,14 +670,19 @@ class CheckboxDelegate(QStyledItemDelegate):
 # Dialog Setting Aplikasi
 # =====================================================
 class SettingDialog(QDialog):
-    def __init__(self, parent=None, db_name=str(DB_PATH)):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tampilan Pemutakhiran")
         self.setFixedSize(280, 400)
-        self.db_name = db_name
+
+        # === Ambil info dari MainWindow ===
+        self.parent_window = parent
+        self._tahapan = getattr(parent, "_tahapan", "DPHP")
+        self._active_table = parent._active_table() if parent else "dphp"
 
         layout = QVBoxLayout(self)
 
+        # === Style checkbox ===
         self.setStyleSheet("""
             QCheckBox::indicator {
                 width: 14px;
@@ -691,7 +696,7 @@ class SettingDialog(QDialog):
                 border: 1px solid #888;
             }
             QCheckBox::indicator:checked {
-                background-color: #ff9900;   /* oranye */
+                background-color: #ff9900;
                 border: 1px solid #ff9900;
                 image: url(:/qt-project.org/styles/commonstyle/images/checkmark.png);
             }
@@ -727,7 +732,7 @@ class SettingDialog(QDialog):
         scroll.setWidget(inner)
         layout.addWidget(scroll)
 
-        # Tombol
+        # === Tombol ===
         btn_layout = QHBoxLayout()
         btn_tutup = QPushButton("Tutup")
         btn_simpan = QPushButton("Simpan")
@@ -742,36 +747,40 @@ class SettingDialog(QDialog):
         btn_layout.addWidget(btn_simpan)
         layout.addLayout(btn_layout)
 
+        # Muat status awal
         self.load_settings()
 
+    # =========================================================
+    # 🔹 Load & Save Setting ke tabel setting_aplikasi_{TAHAPAN}
+    # =========================================================
     @with_safe_db
-    def load_settings(self, conn=None):
-        """Memuat status checkbox kolom dari tabel setting_aplikasi."""
-        conn = get_connection()
+    def load_settings(self, *args, conn=None):
+        """Memuat status checkbox kolom dari tabel setting_aplikasi_<tahapan>."""
         cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS setting_aplikasi (
+
+        tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl_name} (
                 nama_kolom TEXT PRIMARY KEY,
                 tampil INTEGER
             )
         """)
-        cur.execute("SELECT nama_kolom, tampil FROM setting_aplikasi")
+        cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
         rows = dict(cur.fetchall())
 
-        # ✅ Terapkan status ke checkbox UI
         for col, _ in self.columns:
-            checked = bool(rows.get(col, 1))  # default = tampil (True)
+            checked = bool(rows.get(col, 1))  # default tampil
             if col in self.checks:
                 self.checks[col].setChecked(checked)
 
+
     @with_safe_db
-    def save_settings(self, conn=None):
-        """Menyimpan status checkbox kolom ke tabel setting_aplikasi."""
-        conn = get_connection()
+    def save_settings(self, checked: bool = False, conn=None):
         cur = conn.cursor()
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS setting_aplikasi (
+        tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl_name} (
                 nama_kolom TEXT PRIMARY KEY,
                 tampil INTEGER
             )
@@ -780,12 +789,13 @@ class SettingDialog(QDialog):
         for col, _ in self.columns:
             val = 1 if self.checks[col].isChecked() else 0
             cur.execute(
-                "INSERT OR REPLACE INTO setting_aplikasi (nama_kolom, tampil) VALUES (?, ?)",
+                f"INSERT OR REPLACE INTO {tbl_name} (nama_kolom, tampil) VALUES (?, ?)",
                 (col, val)
             )
 
-        conn.commit()
+        # Tidak perlu conn.commit(); decorator sudah commit.
         self.accept()
+
 
 # =========================================================
 # 🔹 FUNGSI GLOBAL: PALET TEMA
@@ -2052,35 +2062,38 @@ class MainWindow(QMainWindow):
 
 
     def show_setting_dialog(self):
-        dlg = SettingDialog(self, self.db_name)
+        dlg = SettingDialog(self)
         if dlg.exec():
             self.apply_column_visibility()
             self.auto_fit_columns()
 
+
     @with_safe_db
-    def apply_column_visibility(self, conn=None):
-        """Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi."""
-        conn = get_connection()
+    def apply_column_visibility(self, *args, conn=None):
+        """Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi_<tahapan>."""
         cur = conn.cursor()
 
-        # Pastikan tabel konfigurasi ada
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS setting_aplikasi (
+        # Gunakan tabel setting berdasarkan tahapan aktif
+        tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
+
+        # Pastikan tabel ada
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {tbl_name} (
                 nama_kolom TEXT PRIMARY KEY,
                 tampil INTEGER
             )
         """)
 
         # Ambil semua pengaturan visibilitas
-        cur.execute("SELECT nama_kolom, tampil FROM setting_aplikasi")
+        cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
         settings = dict(cur.fetchall())
 
         # Terapkan ke tabel tampilan
         for i in range(self.table.columnCount()):
             header_item = self.table.horizontalHeaderItem(i)
             if not header_item:
-                continue  # skip kolom tanpa header label (jaga-jaga)
-            col_name = header_item.text()
+                continue  # skip kolom tanpa header label
+            col_name = header_item.text().strip()
             if col_name in settings:
                 hidden = (settings[col_name] == 0)
                 self.table.setColumnHidden(i, hidden)
