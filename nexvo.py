@@ -3310,15 +3310,12 @@ class MainWindow(QMainWindow):
         tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
 
         if not auto:
-            reply = QMessageBox.question(
+            if not show_modern_question(
                 self,
                 "Konfirmasi",
                 "Apakah kamu yakin ingin menjalankan proses <b>Cek Data</b>?<br><br>"
-                "Proses ini akan memeriksa seluruh data dan mungkin memerlukan waktu beberapa detik.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            if reply == QMessageBox.StandardButton.No:
+                "Proses ini akan memeriksa seluruh data dan mungkin memerlukan waktu beberapa detik."
+            ):
                 show_modern_info(self, "Dibatalkan", "Proses cek data dibatalkan oleh pengguna.")
                 return
 
