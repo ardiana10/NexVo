@@ -39,13 +39,15 @@ except Exception as e:
     raise
 
 # --- UI ---
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QRect, QEvent
+from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QRect, QEvent, QMargins, QVariantAnimation
 from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette
 from PyQt6.QtWidgets import (QSizePolicy, QToolBar, QStatusBar, QHeaderView, QTableWidget, QFileDialog, QScrollArea, QFormLayout, 
     QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton, QComboBox, QDialog, QGraphicsOpacityEffect, QCheckBox, 
     QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog, QTableWidgetItem, QStyledItemDelegate, 
-    QSlider, QGridLayout, QRadioButton, QDockWidget, QMenu, QStackedWidget, QAbstractItemView, QStyle
+    QSlider, QGridLayout, QRadioButton, QDockWidget, QMenu, QStackedWidget, QAbstractItemView, QStyle, QGraphicsSimpleTextItem, QSpacerItem
 )
+
 
 # ==========================================================
 # Konstanta path Windows (AppData\Roaming)
@@ -2132,9 +2134,8 @@ class MainWindow(QMainWindow):
     # =========================================================
     def show_dashboard_page(self):
         """Tampilkan Dashboard elegan (dengan animasi, tanpa status bar)."""
-        from PyQt6.QtWidgets import QGraphicsOpacityEffect, QToolBar
-        from PyQt6.QtGui import QIcon
         import os
+        from PyQt6.QtGui import QIcon
 
         # === Pastikan self.stack masih valid ===
         if not hasattr(self, "stack") or self.stack is None:
@@ -2146,17 +2147,24 @@ class MainWindow(QMainWindow):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        # === Siapkan dashboard ===
-        if not hasattr(self, "dashboard_page") or self.dashboard_page is None:
+        # === Siapkan dashboard (bangun baru atau refresh jika sudah ada) ===
+        if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
+            # Dashboard sudah pernah dibuat → cukup refresh saja
+            if hasattr(self, "refresh_dashboard_on_show"):
+                try:
+                    self.refresh_dashboard_on_show()
+                except Exception as e:
+                    print(f"[Dashboard Refresh Error] {e}")
+        else:
+            # Dashboard belum pernah dibuat → bangun baru
             self.dashboard_page = self._build_dashboard_widget()
             self.stack.addWidget(self.dashboard_page)
 
-        elif self.stack.indexOf(self.dashboard_page) == -1:
-            # Jika dashboard_page pernah dihapus, tambahkan lagi
-            print("STACK:", self.stack)
-            print("DASHBOARD:", getattr(self, "dashboard_page", None))
+        # Pastikan sudah terdaftar di stack
+        if self.stack.indexOf(self.dashboard_page) == -1:
             self.stack.addWidget(self.dashboard_page)
 
+        # Tandai bahwa posisi user sedang di dashboard
         self._is_on_dashboard = True
 
         # === Sembunyikan toolbar & filter ===
@@ -2169,36 +2177,19 @@ class MainWindow(QMainWindow):
         if self.statusBar():
             self.statusBar().showMessage("NexVo v1.0")
 
-        # === Nonaktifkan tema sementara ===
-        if hasattr(self, "action_light"):
-            self.action_light.setEnabled(False)
-            f = self.action_light.font()
-            f.setItalic(True)
-            self.action_light.setFont(f)
-
-        # === Fade-in Dashboard ===
+        # === Tampilkan dashboard dengan animasi Fade-in ===
         self._stack_fade_to(self.dashboard_page, duration=600)
 
 
-
     def _build_dashboard_widget(self) -> QWidget:
-        """Bangun halaman Dashboard modern, elegan, dan bersih."""
-        import os
-        from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
-        from PyQt6.QtWidgets import (
-            QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
-            QGraphicsDropShadowEffect, QGraphicsOpacityEffect
-        )
-        from PyQt6.QtGui import QColor, QPainter, QFont, QPixmap
-        from PyQt6.QtCore import Qt, QMargins, QPropertyAnimation, QEasingCurve
-
-        # === ROOT DASHBOARD ===
+        """Bangun halaman Dashboard modern dinamis dari database aktif."""
+        # === Widget utama ===
         dash_widget = QWidget()
         dash_layout = QVBoxLayout(dash_widget)
         dash_layout.setContentsMargins(30, 0, 30, 10)
         dash_layout.setSpacing(25)
 
-        # === HEADER ===
+        # === Header ===
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(10)
@@ -2213,7 +2204,7 @@ class MainWindow(QMainWindow):
         else:
             logo.setText("🗳️")
 
-        title_lbl = QLabel("Sidalih Pilkada 2024 Desktop – Pemutakhiran Data")
+        title_lbl = QLabel("NexVo Pemilu 2029 Desktop – Pemutakhiran Data")
         title_lbl.setStyleSheet("font-size:14pt; font-weight:600; color:#333;")
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
@@ -2226,7 +2217,7 @@ class MainWindow(QMainWindow):
         dash_layout.addWidget(header_frame)
         dash_layout.addSpacing(-50)
 
-        # === Fade-in untuk header ===
+        # === Fade-in ===
         header_effect = QGraphicsOpacityEffect(header_frame)
         header_frame.setGraphicsEffect(header_effect)
         header_anim = QPropertyAnimation(header_effect, b"opacity")
@@ -2236,12 +2227,88 @@ class MainWindow(QMainWindow):
         header_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         header_anim.start()
 
-        # === KARTU RINGKASAN ===
+        # ======================================================
+        # 🧮 Ambil Data Statistik dari Database Aktif
+        # ======================================================
+        @with_safe_db
+        def get_dashboard_data(self, conn=None):
+            cur = conn.cursor()
+            tbl = self._active_table()
+
+            where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
+
+            # Total pemilih
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
+            total = cur.fetchone()[0] or 0
+
+            # 🧩 Jika tabel kosong, langsung kembalikan nilai 0 semua
+            if total == 0:
+                return {
+                    "desa": self._desa.title(),
+                    "total": 0,
+                    "laki": 0,
+                    "perempuan": 0,
+                    "desa_distinct": 0,
+                    "tps": 0,
+                    "bars": {
+                        "MENINGGAL": 0,
+                        "GANDA": 0,
+                        "DI BAWAH UMUR": 0,
+                        "PINDAH DOMISILI": 0,
+                        "WNA": 0,
+                        "TNI": 0,
+                        "POLRI": 0,
+                        "SALAH TPS": 0,
+                    },
+                }
+
+            # Laki-laki & Perempuan
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
+            laki = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
+            perempuan = cur.fetchone()[0] or 0
+
+            # Distinct desa & TPS
+            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
+            desa_distinct = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
+            tps_distinct = cur.fetchone()[0] or 0
+
+            # Status-statistik (KET 1–8)
+            bars = {}
+            kode_map = {
+                1: "MENINGGAL",
+                2: "GANDA",
+                3: "DI BAWAH UMUR",
+                4: "PINDAH DOMISILI",
+                5: "WNA",
+                6: "TNI",
+                7: "POLRI",
+                8: "SALAH TPS"
+            }
+            for kode, label in kode_map.items():
+                cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
+                bars[label] = cur.fetchone()[0] or 0
+
+            return {
+                "desa": self._desa.title(),
+                "total": total,
+                "laki": laki,
+                "perempuan": perempuan,
+                "desa_distinct": desa_distinct,
+                "tps": tps_distinct,
+                "bars": bars,
+            }
+
+        stats = get_dashboard_data(self)
+
+        # ======================================================
+        # 🪪 Kartu Ringkasan
+        # ======================================================
         top_row = QHBoxLayout()
         top_row.setSpacing(15)
 
         def make_card(icon, title, value):
-            """Kartu elegan tanpa border luar, semua center."""
             card = QFrame()
             card.setMinimumWidth(150)
             card.setMaximumWidth(220)
@@ -2272,14 +2339,14 @@ class MainWindow(QMainWindow):
             card.setStyleSheet("background:#fff; border-radius:12px;")
             return card
 
-            # 🪪🤴👸♀️♂️⚧️📠📖📚📬📫📮🗓️🏛️🏦👧🏻👦🏻📌🚩🚹🚺🚻🏠
+        fmt = lambda x: f"{x:,}".replace(",", ".")
         cards = [
-            ("🏦", "Nama Desa", "Sukasenang"),
-            ("🚻", "Pemilih", "1.439.738"),
-            ("🚹", "Laki-laki", "728.475"),
-            ("🚺", "Perempuan", "711.263"),
-            ("🏠", "Kelurahan", "351"),
-            ("🚩", "TPS", "2.847"),
+            ("🏦", "Nama Desa", stats["desa"]),
+            ("🚻", "Pemilih", fmt(stats["total"])),
+            ("🚹", "Laki-laki", fmt(stats["laki"])),
+            ("🚺", "Perempuan", fmt(stats["perempuan"])),
+            ("🏠", "Kelurahan", fmt(stats["desa_distinct"])),
+            ("🚩", "TPS", fmt(stats["tps"])),
         ]
         for icon, title, value in cards:
             top_row.addWidget(make_card(icon, title, value))
@@ -2290,122 +2357,196 @@ class MainWindow(QMainWindow):
         middle_row.setSpacing(40)
 
         # === PIE DONUT ===
-        series = QPieSeries()
-        series.append("Laki-laki", 50.6)
-        series.append("Perempuan", 49.4)
+        total = max(stats["total"], 1)
+        pct_laki = (stats["laki"] / total) * 100
+        pct_perempuan = (stats["perempuan"] / total) * 100
 
-        series.slices()[0].setBrush(QColor("#6b4e71"))
-        series.slices()[1].setBrush(QColor("#ff6600"))
+        series = QPieSeries()
+        slice_laki = series.append("Laki-laki", pct_laki)
+        slice_perempuan = series.append("Perempuan", pct_perempuan)
+
+        # Warna
+        color_laki = QColor("#6b4e71")      # ungu
+        color_perempuan = QColor("#ff6600") # oranye
+        slice_laki.setBrush(color_laki)
+        slice_perempuan.setBrush(color_perempuan)
+
         for s in series.slices():
             s.setLabelVisible(False)
             s.setBorderColor(Qt.GlobalColor.transparent)
-        series.setHoleSize(0.65)
+        series.setHoleSize(0.60)
 
         chart = QChart()
         chart.addSeries(series)
         chart.setBackgroundVisible(False)
-        chart.legend().setVisible(True)
-        chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
-        chart.legend().setMarkerShape(QLegend.MarkerShape.MarkerShapeFromSeries)
-        chart.setMargins(QMargins(10, 10, 10, 10))
+        chart.legend().setVisible(False)  # sembunyikan legend bawaan
+        chart.setMargins(QMargins(-15, -15, -15, -15))
 
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        chart_view.setMinimumSize(330, 280)
+        chart_view.setMinimumSize(330, 260)
         chart_view.setStyleSheet("background:#fff; border-radius:12px;")
 
-        class ChartContainer(QFrame):
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.setMinimumSize(330, 230)
-                self.setStyleSheet("background:#fff; border-radius:12px;")
-                self._center_label = None
+        # Container donut
+        chart_container = QFrame()
+        chart_container.setMinimumSize(330, 260)
+        chart_container.setStyleSheet("background:#fff; border-radius:12px;")
 
-            def set_center_label(self, label: QLabel):
-                self._center_label = label
-                self._reposition_label()
-
-            def resizeEvent(self, event):
-                self._reposition_label()
-                super().resizeEvent(event)
-
-            def _reposition_label(self):
-                if self._center_label:
-                    self._center_label.setGeometry(0, 0, self.width(), self.height())
-                    self._center_label.raise_()
-
-        chart_container = ChartContainer()
         cc_layout = QVBoxLayout(chart_container)
         cc_layout.setContentsMargins(0, 0, 0, 0)
+        cc_layout.setSpacing(0)
         cc_layout.addWidget(chart_view)
 
-        # === Label tengah terdiri dari dua bagian (judul + nilai)
-        center_widget = QWidget(chart_container)
-        center_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        center_widget.setStyleSheet("background:transparent;")
+        # Label tengah di chart
+        center_label = QGraphicsSimpleTextItem()
+        chart.scene().addItem(center_label)
+        center_label.setText(f"{pct_laki:.1f}%")
+        center_label.setFont(QFont("Segoe UI", 32, QFont.Weight.Bold))
+        center_label.setBrush(QColor("#222"))
 
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(2)
-        center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        def reposition_label():
+            rect = chart.plotArea()
+            text_rect = center_label.boundingRect()
+            x = rect.center().x() - text_rect.width() / 2
+            y = rect.center().y() - text_rect.height() / 2
+            center_label.setPos(x, y)
 
-        lbl_center_title = QLabel("Laki-laki")
-        lbl_center_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_center_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        lbl_center_title.setStyleSheet("color:#444; background:transparent;")
+        chart.plotAreaChanged.connect(lambda _: reposition_label())
+        reposition_label()
 
-        lbl_center_value = QLabel("50.6%")
-        lbl_center_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_center_value.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        lbl_center_value.setStyleSheet("color:#222; background:transparent;")
+        # Label bawah custom (rapat di bawah donut)
+        label_row = QHBoxLayout()
+        label_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label_row.setSpacing(25)
+        label_row.setContentsMargins(0, -30, 0, 0)  # dorong ke atas
 
-        center_layout.addWidget(lbl_center_title)
-        center_layout.addWidget(lbl_center_value)
+        # Hover → ubah angka
+        def update_center_text(slice_obj=None):
+            """Perbarui teks tengah."""
+            if slice_obj is None:
+                center_label.setText("100%")
+            else:
+                center_label.setText(f"{slice_obj.value():.1f}%")
+            reposition_label()
 
-        # Pasang widget label ke tengah lingkaran
-        chart_container.set_center_label(center_widget)
+        def animate_explode(slice_obj, target_factor):
+            """Animasi lembut saat slice dihover."""
+            anim = QPropertyAnimation(slice_obj, b"explodeDistanceFactor", chart)
+            anim.setDuration(180)  # durasi 0.18 detik → halus & cepat
+            anim.setStartValue(slice_obj.explodeDistanceFactor())
+            anim.setEndValue(target_factor)
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+            # simpan referensi kecil supaya tidak langsung di-GC
+            if not hasattr(chart, "_slice_anims"):
+                chart._slice_anims = []
+            chart._slice_anims.append(anim)
 
+        def handle_hover(state, slice_obj):
+            """Efek hover dengan animasi dan teks dinamis."""
+            if state:
+                slice_obj.setExploded(True)
+                animate_explode(slice_obj, 0.08)
+                update_center_text(slice_obj)
+            else:
+                animate_explode(slice_obj, 0.0)
+                # tunda un-explode sedikit agar animasi tidak abrupt
+                def restore():
+                    slice_obj.setExploded(False)
+                    update_center_text(None)
+                QTimer.singleShot(160, restore)
+
+        for sl in series.slices():
+            sl.setExploded(False)
+            sl.setExplodeDistanceFactor(0.0)
+            sl.hovered.connect(lambda state, s=sl: handle_hover(state, s))
+
+
+        def make_color_label(color, text):
+            box = QLabel()
+            box.setFixedSize(14, 14)
+            box.setStyleSheet(f"background:{color.name()}; border-radius:3px;")
+
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size:12pt; color:#444; background:transparent;")
+
+            lay = QHBoxLayout()
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(6)
+            container = QWidget()
+            container.setLayout(lay)
+            lay.addWidget(box)
+            lay.addWidget(lbl)
+
+            container.label = lbl  # simpan referensi
+            container.setCursor(Qt.CursorShape.PointingHandCursor)
+            return container
+
+        item_laki = make_color_label(color_laki, "Laki-laki")
+        item_perempuan = make_color_label(color_perempuan, "Perempuan")
+        label_row.addWidget(item_laki)
+        label_row.addWidget(item_perempuan)
+        cc_layout.addLayout(label_row)
+
+        toggle_state = {"laki": False, "perempuan": False}
+
+        def toggle_label(label_name):
+            nonlocal toggle_state
+            if label_name == "laki":
+                toggle_state["laki"] = not toggle_state["laki"]
+                lbl = item_laki.label
+                if toggle_state["laki"]:
+                    lbl.setStyleSheet("font-size:12pt; color:#444; text-decoration: line-through;")
+                    center_label.setText(f"{pct_perempuan:.1f}%")
+                else:
+                    lbl.setStyleSheet("font-size:12pt; color:#444; text-decoration: none;")
+                    center_label.setText("100%")
+            elif label_name == "perempuan":
+                toggle_state["perempuan"] = not toggle_state["perempuan"]
+                lbl = item_perempuan.label
+                if toggle_state["perempuan"]:
+                    lbl.setStyleSheet("font-size:12pt; color:#444; text-decoration: line-through;")
+                    center_label.setText(f"{pct_laki:.1f}%")
+                else:
+                    lbl.setStyleSheet("font-size:12pt; color:#444; text-decoration: none;")
+                    center_label.setText("100%")
+            reposition_label()
+
+        item_laki.mousePressEvent = lambda e: toggle_label("laki")
+        item_perempuan.mousePressEvent = lambda e: toggle_label("perempuan")
+
+        # Bayangan halus
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(25)
         shadow.setOffset(0, 3)
         shadow.setColor(QColor(0, 0, 0, 50))
         chart_container.setGraphicsEffect(shadow)
 
-        def update_center_label(slice_obj):
-            lbl_center_title.setText(slice_obj.label())
-            lbl_center_value.setText(f"{slice_obj.value():.1f}%")
-
-        def handle_hovered(state, slice_obj):
-            slice_obj.setExploded(state)
-            if state:
-                update_center_label(slice_obj)
-
-        for sl in series.slices():
-            sl.setExploded(False)
-            sl.setExplodeDistanceFactor(0.05)
-            sl.hovered.connect(lambda state, s=sl: handle_hovered(state, s))
-            sl.clicked.connect(lambda _checked, s=sl: update_center_label(s))
-
         middle_row.addWidget(chart_container, 0)
-        #middle_row.addSpacing(10)
 
-        # === BAR HORIZONTAL ===
+        # ======================================================
+        # 📊 BAR CHART (Statistik CEK_DATA)
+        # ======================================================
         bar_frame = QFrame()
         bar_layout = QVBoxLayout(bar_frame)
         bar_layout.setSpacing(14)
         bar_layout.setContentsMargins(5, 35, 20, 35)
 
-        bars = [
-            ("Meninggal", 0.051), ("Ganda", 0.002), ("Di Bawah Umur", 0.000),
-            ("Pindah Domisili", 0.019), ("WNA", 0.000), ("TNI", 0.000),
-            ("Polri", 0.000), ("Salah TPS", 0.017),
-        ]
+        total_bars = sum(stats["bars"].values()) or 1
 
-        for label, val in bars:
+        for label, val in stats["bars"].items():
+            ratio = val / total_bars
             row = QHBoxLayout()
             row.setSpacing(0)
-            lbl = QLabel(label)
-            lbl.setStyleSheet("font-size:10pt; color:#555; min-width:115px;")
+
+            # Gunakan format upper-case hanya untuk label tertentu
+            if label.upper() in ["WNA", "TNI", "POLRI"]:
+                label_text = label.upper()
+            elif label.upper() == "SALAH TPS":
+                label_text = "Salah TPS"
+            else:
+                label_text = label.title()
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet("font-size:11pt; color:#555; min-width:115px;")
 
             bg = QFrame()
             bg.setFixedHeight(8)
@@ -2421,12 +2562,12 @@ class MainWindow(QMainWindow):
             fg.setStyleSheet("background:#ff6600; border-radius:2px;")
 
             base_ratio = 0.9
-            stretch_val = max(1, min(int(val * 100 * base_ratio), 80))
+            stretch_val = max(1, min(int(ratio * 100 * base_ratio), 80))
             inner.addWidget(fg, stretch_val)
             inner.addStretch(100 - stretch_val)
 
-            pct = QLabel(f"{val:.3%}")
-            pct.setStyleSheet("font-size:10pt; color:#333; min-width:55px; text-align:right;")
+            pct = QLabel(f"{val:,}".replace(",", "."))
+            pct.setStyleSheet("font-size:11pt; color:#333; min-width:55px; text-align:right;")
 
             bar_group = QHBoxLayout()
             bar_group.setSpacing(6)
@@ -2450,7 +2591,166 @@ class MainWindow(QMainWindow):
             QWidget { background:#f9f9f9; color:#333; font-family:'Segoe UI','Calibri'; }
             QLabel { color:#333; }
         """)
+
+        # === Simpan referensi elemen untuk refresh cepat ===
+        self.card_labels = {
+            "total": top_row.itemAt(1).widget().findChildren(QLabel)[1],
+            "laki": top_row.itemAt(2).widget().findChildren(QLabel)[1],
+            "perempuan": top_row.itemAt(3).widget().findChildren(QLabel)[1],
+            "desa": top_row.itemAt(4).widget().findChildren(QLabel)[1],
+            "tps": top_row.itemAt(5).widget().findChildren(QLabel)[1],
+        }
+        self.slice_laki = slice_laki
+        self.slice_perempuan = slice_perempuan
+
+        # 🔹 Simpan referensi bar chart: label tampil → {value_label, layout_inner, fg_widget}
+        self.bar_labels = {}
+        for i in range(bar_layout.count()):
+            row_item = bar_layout.itemAt(i)
+            row_hbox = row_item.layout()  # ← ambil layout-nya, bukan item mentah
+
+            if row_hbox is None or row_hbox.count() < 2:
+                continue
+
+            lbl_widget = row_hbox.itemAt(0).widget()       # QLabel kategori (kiri)
+            wrapper    = row_hbox.itemAt(1).widget()       # QFrame (kanan, pembungkus bar_group)
+            if lbl_widget is None or wrapper is None:
+                continue
+
+            wrapper_layout = wrapper.layout()               # QHBoxLayout pada wrapper
+            if wrapper_layout is None or wrapper_layout.count() < 1:
+                continue
+
+            # bar_group adalah layout yang kamu add dengan wrapper_layout.addLayout(bar_group)
+            bar_group_layout = wrapper_layout.itemAt(0).layout()
+            if bar_group_layout is None or bar_group_layout.count() < 2:
+                continue
+
+            # [0] = bg (QFrame berisi layout 'inner'), [1] = pct (QLabel angka kanan)
+            bg_frame    = bar_group_layout.itemAt(0).widget()
+            value_label = bar_group_layout.itemAt(1).widget()
+            if bg_frame is None or value_label is None:
+                continue
+
+            inner_layout = bg_frame.layout()               # HBox 'inner' (berisi fg + stretch)
+            if inner_layout is None or inner_layout.count() < 1:
+                continue
+
+            # item ke-0 dari inner_layout adalah batang oranye (fg)
+            fg_widget = inner_layout.itemAt(0).widget()
+
+            display_label = lbl_widget.text()              # gunakan label tampil sebagai key
+            self.bar_labels[display_label] = {
+                "value": value_label,   # QLabel angka kanan
+                "inner": inner_layout,  # HBox di dalam bg
+                "fg": fg_widget,        # batang oranye (QFrame)
+            }
+
         return dash_widget
+
+    
+    def refresh_dashboard_on_show(self):
+        """Refresh data dashboard setiap kali halaman dashboard ditampilkan."""
+        try:
+            # Jika dashboard belum pernah dibuat, keluar diam-diam
+            if not hasattr(self, "bar_labels") or not hasattr(self, "slice_laki") or not hasattr(self, "slice_perempuan"):
+                print("[Dashboard Refresh] Dashboard belum siap → dilewati.")
+                return
+
+            if hasattr(self, "dashboard_page") and getattr(self, "current_page", "") == "dashboard":
+                if hasattr(self, "refresh_dashboard"):
+                    self.refresh_dashboard()
+        except Exception as e:
+            print(f"[Dashboard Refresh Error] {e}")
+
+        # === Ambil ulang data dari DB aktif ===
+        @with_safe_db
+        def get_dashboard_data(self, conn=None):
+            cur = conn.cursor()
+            tbl = self._active_table()
+            where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
+            total = cur.fetchone()[0] or 0
+
+            if total == 0:
+                bars = {
+                    "MENINGGAL": 0, "GANDA": 0, "DI BAWAH UMUR": 0, "PINDAH DOMISILI": 0,
+                    "WNA": 0, "TNI": 0, "POLRI": 0, "SALAH TPS": 0
+                }
+                return {"total": 0, "laki": 0, "perempuan": 0,
+                        "desa_distinct": 0, "tps": 0, "bars": bars}
+
+            # Data valid → lanjut hitung
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
+            laki = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
+            perempuan = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
+            desa_distinct = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
+            tps_distinct = cur.fetchone()[0] or 0
+
+            kode_map = {
+                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR", 4: "PINDAH DOMISILI",
+                5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
+            }
+            bars = {}
+            for kode, label in kode_map.items():
+                cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
+                bars[label] = cur.fetchone()[0] or 0
+
+            return {"total": total, "laki": laki, "perempuan": perempuan,
+                    "desa_distinct": desa_distinct, "tps": tps_distinct, "bars": bars}
+
+        stats = get_dashboard_data(self)
+
+        # === Kalau dashboard belum siap, keluar aman ===
+        if not hasattr(self, "bar_labels"):
+            print("[Dashboard Refresh] Tidak ada bar_labels → dilewati.")
+            return
+
+        # === Helper untuk ubah panjang batang ===
+        def _set_bar_stretch(ref, stretch_0_100: int):
+            inner = ref["inner"]
+            fg = ref["fg"]
+            while inner.count():
+                item = inner.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.setParent(None)
+            inner.addWidget(fg, max(1, min(stretch_0_100, 100)))
+            inner.addStretch(max(0, 100 - stretch_0_100))
+
+        # === Update bar chart ===
+        total_safe = max(stats["total"], 1)
+
+        def _display_label(name: str) -> str:
+            u = name.upper()
+            if u in ("WNA", "TNI", "POLRI"):
+                return u
+            if u == "SALAH TPS":
+                return "Salah TPS"
+            return name.title()
+
+        for raw_label, val in stats["bars"].items():
+            key = _display_label(raw_label)
+            if key in self.bar_labels:
+                ref = self.bar_labels[key]
+                ref["value"].setText(f"{val:,}".replace(",", "."))
+                stretch = int((val / total_safe) * 100)
+                stretch = max(1, min(stretch, 90))
+                _set_bar_stretch(ref, stretch)
+
+        # === Update pie chart ===
+        total = max(stats["total"], 1)
+        pct_laki = (stats["laki"] / total) * 100
+        pct_perempuan = (stats["perempuan"] / total) * 100
+        self.slice_laki.setValue(pct_laki)
+        self.slice_perempuan.setValue(pct_perempuan)
+
+        print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
+
     
     def _stack_fade_to(self, target_widget, duration=350):
         """Fade-in ke target page di QStackedWidget (aman, tanpa hapus widget)."""
@@ -3752,20 +4052,16 @@ class MainWindow(QMainWindow):
 
     @with_safe_db
     def load_data_from_db(self, conn=None):
-        """Memuat seluruh data dari database ke self.all_data (SQLCipher-safe)."""
-
-        # 1️⃣ Pastikan tabel dan skema valid
+        """Memuat seluruh data dari tabel aktif ke self.all_data (SQLCipher-safe)."""
         self._ensure_schema_and_migrate()
 
         conn = get_connection()
         conn.row_factory = sqlcipher.Row
         cur = conn.cursor()
 
-        tahap = self._tahapan.strip().upper()
-        tabel_map = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}
-        tbl_name = tabel_map.get(tahap, "data_pemilih")
+        tbl_name = self._active_table()  # ✅ gunakan tabel aktif langsung
 
-        # Optimasi baca tanpa mengorbankan keamanan
+        # Optimasi baca
         cur.executescript("""
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
@@ -3773,11 +4069,10 @@ class MainWindow(QMainWindow):
             PRAGMA cache_size = 100000;
         """)
 
-        # 2️⃣ Ambil seluruh data dari tabel sesuai tahapan
         try:
             cur.execute(f"SELECT rowid, * FROM {tbl_name}")
             rows = cur.fetchall()
-            print(f"[DEBUG] load_data_from_db: {len(rows)} baris dimuat dari {tbl_name.upper()}")
+            print(f"[DEBUG] load_data_from_db: {len(rows)} baris dimuat dari {tbl_name}")
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memuat data dari tabel {tbl_name}:\n{e}")
             self.all_data = []
@@ -3790,7 +4085,7 @@ class MainWindow(QMainWindow):
             self.show_page(1)
             return
 
-        # 3️⃣ Formatter tanggal
+        # Formatter tanggal
         _tgl_cache = {}
         def format_tgl(val):
             if not val:
@@ -3807,7 +4102,7 @@ class MainWindow(QMainWindow):
             _tgl_cache[val] = val
             return val
 
-        # 4️⃣ Bangun list of dict
+        # List of dict
         headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
         all_data = []
         for r in rows:
@@ -3818,23 +4113,19 @@ class MainWindow(QMainWindow):
             all_data.append(d)
 
         self.all_data = all_data
+        import gc; gc.collect()
 
-        import gc
-        gc.collect()
-
-        # 5️⃣ Pagination & tampilkan halaman pertama
         total = len(all_data)
         self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
         self.show_page(1)
 
-        # 6️⃣ Terapkan warna otomatis
+        # Terapkan warna otomatis
         def apply_colors_safely():
             try:
                 if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
                     self._warnai_baris_berdasarkan_ket()
                     self._warna_sudah_dihitung = True
                 self._terapkan_warna_ke_tabel_aktif()
-
             except Exception as e:
                 print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
 
@@ -3843,13 +4134,11 @@ class MainWindow(QMainWindow):
 
     @with_safe_db
     def _ensure_schema_and_migrate(self, conn=None):
-        """Pastikan tabel sesuai tahapan aktif eksis dan skema aman."""
+        """Pastikan tabel aktif eksis dan skemanya sesuai."""
         conn = get_connection()
         cur = conn.cursor()
 
-        tahap = self._tahapan.strip().upper()
-        tabel_map = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}
-        tbl_name = tabel_map.get(tahap, "data_pemilih")
+        tbl_name = self._active_table()  # ✅ gunakan tabel aktif
 
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {tbl_name} (
@@ -3879,15 +4168,12 @@ class MainWindow(QMainWindow):
         cur.execute(f"PRAGMA table_info({tbl_name})")
         cols = {row[1] for row in cur.fetchall()}
 
-        # Tambahkan CEK_DATA jika belum ada
         if "CEK_DATA" not in cols:
             cur.execute(f"ALTER TABLE {tbl_name} ADD COLUMN CEK_DATA TEXT")
-
-        # Jika ada kolom lama "CEK DATA", salin nilainya
         if "CEK DATA" in cols:
             cur.execute(f"UPDATE {tbl_name} SET CEK_DATA = COALESCE(CEK_DATA, `CEK DATA`)")
-
         conn.commit()
+
 
     # =================================================
     # Update status bar selected & total
@@ -4057,15 +4343,15 @@ class MainWindow(QMainWindow):
     # =================================================
     def hapus_data_pemilih(self):
         """
-        Menghapus seluruh isi tabel data_pemilih dengan aman.
-        Menggunakan koneksi SQLCipher dari db_manager.
+        Menghapus seluruh isi tabel aktif (sesuai tahapan saat ini) dengan aman.
+        SQLCipher-safe.
         """
         # 🔸 Konfirmasi pengguna
         if not show_modern_question(
             self,
             "Konfirmasi",
             (
-                "Apakah Anda yakin ingin menghapus <b>SELURUH data</b> di database ini?<br>"
+                "Apakah Anda yakin ingin menghapus <b>SELURUH data</b> di tabel aktif ini?<br>"
                 "Tindakan ini <b>tidak dapat dibatalkan!</b>"
             )
         ):
@@ -4073,61 +4359,50 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # 🔸 Koneksi aman ke SQLCipher
+            # 🔸 Koneksi aman ke database terenkripsi
             conn = get_connection()
             cur = conn.cursor()
 
-            # Pastikan tabel ada (agar tidak error saat DELETE)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS data_pemilih (
-                    KECAMATAN TEXT,
-                    DESA TEXT,
-                    DPID TEXT,
-                    NKK TEXT,
-                    NIK TEXT,
-                    NAMA TEXT,
-                    JK TEXT,
-                    TMPT_LHR TEXT,
-                    TGL_LHR TEXT,
-                    STS TEXT,
-                    ALAMAT TEXT,
-                    RT TEXT,
-                    RW TEXT,
-                    DIS TEXT,
-                    KTPel TEXT,
-                    SUMBER TEXT,
-                    KET TEXT,
-                    TPS TEXT,
-                    LastUpdate DATETIME,
-                    CEK_DATA TEXT
-                )
-            """)
+            # 🔸 Ambil nama tabel aktif (otomatis tergantung tahapan)
+            tbl = self._active_table()  # contoh: 'dphp_pilkada2024' atau 'dpshp_pilkada2024'
 
-            # 🔸 Hapus seluruh data dengan aman
-            cur.execute("DELETE FROM data_pemilih")
+            # 🔸 Hapus seluruh data di tabel aktif
+            cur.execute(f"DELETE FROM {tbl}")
             conn.commit()
 
             # 🔸 Kosongkan tampilan GUI
             self.all_data.clear()
             self.table.setRowCount(0)
-            self.lbl_total.setText("0 total")
-            self.lbl_selected.setText("0 selected")
+            if hasattr(self, "lbl_total"):
+                self.lbl_total.setText("0 total")
+            if hasattr(self, "lbl_selected"):
+                self.lbl_selected.setText("0 selected")
 
             # 🔸 Reset pagination
             self.total_pages = 1
             self.current_page = 1
-            self.update_pagination()
-            self.show_page(1)
+            if hasattr(self, "update_pagination"):
+                self.update_pagination()
+            if hasattr(self, "show_page"):
+                self.show_page(1)
+
+            # 🔸 Refresh Dashboard (kalau sedang di dashboard)
+            if hasattr(self, "refresh_dashboard_on_show"):
+                try:
+                    self.refresh_dashboard_on_show()
+                except Exception as e:
+                    print(f"[Dashboard Refresh Error after delete] {e}")
 
             # 🔸 Notifikasi sukses
             show_modern_info(
                 self,
                 "Selesai",
-                "Seluruh data pemilih telah berhasil dihapus dari database!"
+                f"Seluruh data telah dihapus dari tabel <b>{tbl}</b>!"
             )
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+
             
     # =================================================
     # Tampilkan Data tabel dari database
