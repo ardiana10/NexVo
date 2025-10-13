@@ -741,7 +741,7 @@ class SettingDialog(QDialog):
         btn_simpan.setStyleSheet("background:#ff6600; color:white; font-weight:bold; min-width:100px; min-height:30px; border-radius:6px;")
 
         btn_tutup.clicked.connect(self.reject)
-        btn_simpan.clicked.connect(self.save_settings)
+        btn_simpan.clicked.connect(lambda: (self.save_settings(), self.parent_window.apply_column_visibility()))
 
         btn_layout.addWidget(btn_tutup)
         btn_layout.addWidget(btn_simpan)
