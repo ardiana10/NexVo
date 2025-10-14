@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+## -*- coding: utf-8 -*-
 r"""
 NexVo 2.0 (SQLCipher edition)
 --------------------------------
