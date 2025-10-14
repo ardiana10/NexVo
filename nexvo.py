@@ -2138,10 +2138,10 @@ class MainWindow(QMainWindow):
 
             # Tampilkan kembali di tabel utama
             with self.freeze_ui():
-                self.all_data = all_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(all_data)
+                self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+                
 
             # 🔹 Warnai kembali baris-baris
             self._warnai_baris_berdasarkan_ket()
@@ -4190,9 +4190,8 @@ class MainWindow(QMainWindow):
 
             # Tampilkan ke tabel tanpa menghapus kolom apa pun
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
+                self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
             show_modern_info(
@@ -4267,9 +4266,8 @@ class MainWindow(QMainWindow):
 
             # Tampilkan ke tabel tanpa menghapus kolom apa pun
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
+                self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
             show_modern_info(
@@ -4363,9 +4361,7 @@ class MainWindow(QMainWindow):
 
             # ✅ Tampilkan ke tabel (tanpa menghapus kolom)
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
@@ -4446,9 +4442,7 @@ class MainWindow(QMainWindow):
 
             # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
@@ -4526,9 +4520,7 @@ class MainWindow(QMainWindow):
 
             # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
@@ -4602,9 +4594,7 @@ class MainWindow(QMainWindow):
 
             # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
@@ -4680,9 +4670,7 @@ class MainWindow(QMainWindow):
 
             # === Tampilkan ke tabel ===
             with self.freeze_ui():
-                self.all_data = hasil_data
-                self.update_pagination()
-                self.show_page(1)
+                self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
@@ -5256,6 +5244,14 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
 
+    def _refresh_table_with_new_data(self, new_data: list[dict]):
+        """Memperbarui tabel dan pagination setelah self.all_data diganti."""
+        import math
+        self.all_data = new_data
+        self.total_pages = max(1, math.ceil(len(new_data) / self.rows_per_page))
+        self.current_page = 1
+        self.update_pagination()
+        self.show_page(1)
             
     # =================================================
     # Tampilkan Data tabel dari database
@@ -5582,47 +5578,51 @@ class MainWindow(QMainWindow):
 
     def _shutdown(self, source: str = ""):
         """
-        Prosedur shutdown aman untuk SQLCipher:
-        - Pastikan transaksi tersimpan
-        - Tutup koneksi global SQLCipher
-        - Hapus artefak sementara (jika ada)
+        🧹 Prosedur shutdown aman (khusus full SQLCipher):
+        - Menyimpan transaksi terakhir
+        - Menutup koneksi global SQLCipher
+        - Membersihkan artefak sementara
         """
+        import os
+        from db_manager import close_connection
+
+        # 🔒 Pastikan tidak dijalankan dua kali
         if getattr(self, "_did_shutdown", False):
             return
         self._did_shutdown = True
 
         print(f"[INFO] Shutdown dipanggil dari {source or '(tidak diketahui)'}")
 
-        # 1️⃣ Simpan transaksi terakhir jika ada
+        # 1️⃣ Pastikan semua transaksi tersimpan
         try:
             if hasattr(self, "_flush_db"):
                 self._flush_db(source or "_shutdown")
+            print("[INFO] Transaksi terakhir tersimpan.")
         except Exception as e:
             print(f"[WARN] _flush_db({source}) gagal: {e}")
 
-        # 2️⃣ Tutup koneksi SQLCipher dengan aman
+        # 2️⃣ Tutup koneksi SQLCipher utama
         try:
             close_connection()
-            print("[INFO] Koneksi SQLCipher ditutup dengan aman.")
+            print("[INFO] Koneksi SQLCipher utama ditutup dengan aman.")
         except Exception as e:
-            print(f"[WARN] Gagal menutup koneksi: {e}")
+            print(f"[WARN] Gagal menutup koneksi SQLCipher: {e}")
 
-        # 3️⃣ Bersihkan artefak sementara (misal file temp_* .db)
+        # 3️⃣ Hapus artefak sementara (jika ada)
         try:
-            if hasattr(self, "db_name"):
-                base = os.path.basename(self.db_name)
-                temp_files = [
-                    os.path.join(os.path.dirname(self.db_name), f"temp_{base}"),
-                    os.path.join(os.path.dirname(self.db_name), f"temp_{base}.enc")
-                ]
-                for p in temp_files:
-                    if os.path.exists(p):
-                        os.remove(p)
-                        print(f"[INFO] Artefak sementara dihapus: {p}")
-        except Exception as ee:
-            print(f"[WARN] Gagal menghapus file sementara: {ee}")
+            db_path = getattr(self, "db_path", None) or getattr(self, "db_name", "")
+            if db_path:
+                folder = os.path.dirname(db_path)
+                for name in os.listdir(folder):
+                    if name.startswith("temp_") and name.endswith(".db"):
+                        temp_file = os.path.join(folder, name)
+                        os.remove(temp_file)
+                        print(f"[INFO] Artefak sementara dihapus: {temp_file}")
+        except Exception as e:
+            print(f"[WARN] Gagal membersihkan file sementara: {e}")
 
-        print("[INFO] Shutdown selesai.\n")
+        # 4️⃣ Konfirmasi shutdown selesai
+        print("[INFO] Shutdown selesai (SQLCipher mode tunggal aktif). ✅\n")
 
 
     def _init_db_pragmas(self):
@@ -6258,19 +6258,21 @@ class RegisterWindow(QMainWindow):
 
 
 #if __name__ == "__main__":
-#    bootstrap()   
-#    app = QApplication(sys.argv)
-#    app.setApplicationName("NexVo")
-
-    # 🔹 Inisialisasi database terenkripsi
+    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
+#    from db_manager import bootstrap, close_connection
 #    conn = bootstrap()
+
 #    if conn is None:
 #        QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
 #        sys.exit(1)
 
+    # 🔹 Jalankan aplikasi Qt
+#    app = QApplication(sys.argv)
+#    app.setApplicationName("NexVo")
+
     # 🔹 Jalankan halaman login
 #    win = LoginWindow(conn)
-#    win.show()  # showMaximize sudah di dalam __init__
+#    win.show()  # showMaximized sudah di dalam __init__
 
     # 🔹 Tangani penutupan koneksi saat aplikasi ditutup
 #    exit_code = app.exec()
@@ -6278,38 +6280,57 @@ class RegisterWindow(QMainWindow):
 #    sys.exit(exit_code)
 
 
+
 # ==========================================================
 # 🚀 Entry point dengan Mode DEV opsional
 # ==========================================================
 if __name__ == "__main__":
-    bootstrap()
-    app = QApplication(sys.argv)
-    app.setApplicationName("NexVo")
+    from db_manager import bootstrap, close_connection, DB_PATH
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    import sys
 
-    # 🔹 Inisialisasi database terenkripsi
+    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
     conn = bootstrap()
     if conn is None:
         QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
         sys.exit(1)
 
+    # 🔹 Bangun aplikasi Qt
+    app = QApplication(sys.argv)
+    app.setApplicationName("NexVo")
+
     # ===================================================
     # 🔹 Cek apakah mode DEV diaktifkan
     # ===================================================
-    if is_dev_mode_requested():
-        if confirm_dev_mode(None):
-            print("[DEV MODE] Melewati proses login & OTP...")
-            dev_nama = "ARI ARDIANA"
-            dev_kecamatan = "TANJUNGJAYA"
-            dev_desa = "SUKASENANG"
-            dev_tahapan = "DPHP"
+    try:
+        if is_dev_mode_requested():
+            if confirm_dev_mode(None):
+                print("[DEV MODE] Melewati proses login & OTP...")
+                dev_nama = "ARI ARDIANA"
+                dev_kecamatan = "TANJUNGJAYA"
+                dev_desa = "SUKASENANG"
+                dev_tahapan = "DPHP"
 
-            mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
-            mw.show()
-            sys.exit(app.exec())
-        else:
-            print("[INFO] Mode DEV dibatalkan oleh user.")
+                mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
+                mw.show()
 
-    # Normal mode → tampilkan login
+                # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
+                exit_code = app.exec()
+                close_connection()
+                sys.exit(exit_code)
+            else:
+                print("[INFO] Mode DEV dibatalkan oleh user.")
+    except NameError:
+        # fallback jika belum didefinisikan
+        print("[WARN] Fungsi is_dev_mode_requested() / confirm_dev_mode() belum didefinisikan.")
+
+    # ===================================================
+    # 🔹 Mode normal → tampilkan login
+    # ===================================================
     win = LoginWindow(conn)
     win.show()
-    sys.exit(app.exec())
+
+    # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
+    exit_code = app.exec()
+    close_connection()
+    sys.exit(exit_code)

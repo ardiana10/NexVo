@@ -167,7 +167,7 @@ def get_connection():
             _connection.execute("PRAGMA foreign_keys = ON")
             _connection.execute("PRAGMA busy_timeout = 8000")
 
-            init_schema(_connection)
+            # ⚠️ Jangan lagi panggil init_schema di sini
             return _connection
 
         except Exception as e:
@@ -255,8 +255,15 @@ def with_safe_db(func):
 # =========================================================
 # 🚀 BOOTSTRAP SISTEM DATABASE
 # =========================================================
+_db_initialized = False
+
 def bootstrap():
-    """Inisialisasi awal database terenkripsi dan pastikan semua schema lengkap."""
+    """Inisialisasi awal database terenkripsi dan pastikan semua schema lengkap (hanya sekali)."""
+    global _db_initialized
+    if _db_initialized:
+        return get_connection()
+    _db_initialized = True
+
     try:
         if not os.path.exists(DB_PATH):
             print("[INFO] Membuat database baru terenkripsi...")
