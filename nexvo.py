@@ -2160,7 +2160,49 @@ class MainWindow(QMainWindow):
             self.dashboard_page = self._build_dashboard_widget()
             self.stack.addWidget(self.dashboard_page)
 
-        # Pastikan sudah terdaftar di stack
+        # === Ambil ulang data dari DB aktif (pasti sinkron dengan tabel utama) ===
+        @with_safe_db
+        def _get_header_stats(self, conn=None):
+            cur = conn.cursor()
+            tbl = self._active_table()
+            where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
+            total = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
+            laki = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
+            perempuan = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
+            desa = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
+            tps = cur.fetchone()[0] or 0
+
+            return {"total": total, "laki": laki, "perempuan": perempuan, "desa": desa, "tps": tps}
+
+        stats = _get_header_stats(self)
+
+        # === Update label atas (pastikan sesuai nama label yang kamu gunakan) ===
+        try:
+            if hasattr(self, "lbl_total_pemilih"):
+                self.lbl_total_pemilih.setText(f"{stats['total']:,}".replace(",", "."))
+            if hasattr(self, "lbl_total_laki"):
+                self.lbl_total_laki.setText(f"{stats['laki']:,}".replace(",", "."))
+            if hasattr(self, "lbl_total_perempuan"):
+                self.lbl_total_perempuan.setText(f"{stats['perempuan']:,}".replace(",", "."))
+            if hasattr(self, "lbl_total_desa"):
+                self.lbl_total_desa.setText(f"{stats['desa']:,}".replace(",", "."))
+            if hasattr(self, "lbl_total_tps"):
+                self.lbl_total_tps.setText(f"{stats['tps']:,}".replace(",", "."))
+            print("[Dashboard Header] Label atas diperbarui sukses.")
+        except Exception as e:
+            print(f"[Dashboard Header Error] {e}")
+
+        # === Pastikan sudah terdaftar di stack ===
         if self.stack.indexOf(self.dashboard_page) == -1:
             self.stack.addWidget(self.dashboard_page)
 
@@ -2481,11 +2523,12 @@ class MainWindow(QMainWindow):
             container.setCursor(Qt.CursorShape.PointingHandCursor)
             return container
 
-        item_laki = make_color_label(color_laki, "Laki-laki")
         item_perempuan = make_color_label(color_perempuan, "Perempuan")
-        label_row.addWidget(item_laki)
+        item_laki = make_color_label(color_laki, "Laki-laki")
         label_row.addWidget(item_perempuan)
+        label_row.addWidget(item_laki)
         cc_layout.addLayout(label_row)
+
 
         toggle_state = {"laki": False, "perempuan": False}
 
@@ -2709,6 +2752,9 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "bar_labels"):
             print("[Dashboard Refresh] Tidak ada bar_labels → dilewati.")
             return
+        
+        # === Update bar chart ===
+        total_safe = max(stats["total"], 1)
 
         # === Helper untuk ubah panjang batang ===
         def _set_bar_stretch(ref, stretch_0_100: int):
@@ -2721,9 +2767,6 @@ class MainWindow(QMainWindow):
                     w.setParent(None)
             inner.addWidget(fg, max(1, min(stretch_0_100, 100)))
             inner.addStretch(max(0, 100 - stretch_0_100))
-
-        # === Update bar chart ===
-        total_safe = max(stats["total"], 1)
 
         def _display_label(name: str) -> str:
             u = name.upper()
@@ -2748,6 +2791,25 @@ class MainWindow(QMainWindow):
         pct_perempuan = (stats["perempuan"] / total) * 100
         self.slice_laki.setValue(pct_laki)
         self.slice_perempuan.setValue(pct_perempuan)
+
+        # === Refresh label ringkasan atas (Pemilih, Laki-laki, Perempuan, Desa, TPS) ===
+        try:
+            if hasattr(self, "card_labels"):
+                if "total" in self.card_labels:
+                    self.card_labels["total"].setText(f"{stats['total']:,}".replace(",", "."))
+                if "laki" in self.card_labels:
+                    self.card_labels["laki"].setText(f"{stats['laki']:,}".replace(",", "."))
+                if "perempuan" in self.card_labels:
+                    self.card_labels["perempuan"].setText(f"{stats['perempuan']:,}".replace(",", "."))
+                if "desa" in self.card_labels:
+                    self.card_labels["desa"].setText(f"{stats['desa_distinct']:,}".replace(",", "."))
+                if "tps" in self.card_labels:
+                    self.card_labels["tps"].setText(f"{stats['tps']:,}".replace(",", "."))
+                print("[Dashboard Header] card_labels diperbarui sukses.")
+            else:
+                print("[Dashboard Header] card_labels tidak ditemukan.")
+        except Exception as e:
+            print(f"[Dashboard Header Refresh Error] {e}")
 
         print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
 
