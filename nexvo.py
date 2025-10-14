@@ -1856,7 +1856,7 @@ class MainWindow(QMainWindow):
         self.sort_lastupdate_asc = True
 
         self.current_page = 1
-        self.rows_per_page = 300
+        self.rows_per_page = 50
         self.total_pages = 1
 
         self.table = CustomTable()
@@ -3260,6 +3260,41 @@ class MainWindow(QMainWindow):
         from datetime import datetime
         from db_manager import get_connection
 
+        # =====================================================
+        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
+        # =====================================================
+        if getattr(self, "_in_batch_mode", False):
+            # Pastikan semua atribut batch selalu aman
+            if not hasattr(self, "_shared_conn"):
+                self._shared_conn = None
+            if not hasattr(self, "_shared_cur"):
+                self._shared_cur = None
+            if not hasattr(self, "_shared_query_count"):
+                self._shared_query_count = 0
+            if not hasattr(self, "_warning_shown_in_batch"):
+                self._warning_shown_in_batch = {}
+
+            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+            try:
+                if self._shared_conn is None or self._shared_cur is None:
+                    raise Exception("batch connection reset")
+
+                # Tes koneksi ringan
+                self._shared_cur.execute("SELECT 1;")
+
+            except Exception:
+                try:
+                    conn = get_connection()
+                    conn.execute("PRAGMA busy_timeout = 3000;")
+                    self._shared_conn = conn
+                    self._shared_cur = conn.cursor()
+                    self._shared_query_count = 0
+                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
+                except Exception as e:
+                    print("[Batch Recovery Error]", e)
+                    self._shared_conn = None
+                    self._shared_cur = None
+
         dpid_item = self.table.item(row, self.col_index("DPID"))
         ket_item  = self.table.item(row, self.col_index("KET"))
         nama_item = self.table.item(row, self.col_index("NAMA"))
@@ -3353,6 +3388,41 @@ class MainWindow(QMainWindow):
     def hapus_pemilih(self, row, conn=None):
         """Menghapus baris pemilih dari tabel sesuai tahapan aktif (aman & super cepat)."""
         from db_manager import get_connection
+
+        # =====================================================
+        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
+        # =====================================================
+        if getattr(self, "_in_batch_mode", False):
+            # Pastikan semua atribut batch selalu aman
+            if not hasattr(self, "_shared_conn"):
+                self._shared_conn = None
+            if not hasattr(self, "_shared_cur"):
+                self._shared_cur = None
+            if not hasattr(self, "_shared_query_count"):
+                self._shared_query_count = 0
+            if not hasattr(self, "_warning_shown_in_batch"):
+                self._warning_shown_in_batch = {}
+
+            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+            try:
+                if self._shared_conn is None or self._shared_cur is None:
+                    raise Exception("batch connection reset")
+
+                # Tes koneksi ringan
+                self._shared_cur.execute("SELECT 1;")
+
+            except Exception:
+                try:
+                    conn = get_connection()
+                    conn.execute("PRAGMA busy_timeout = 3000;")
+                    self._shared_conn = conn
+                    self._shared_cur = conn.cursor()
+                    self._shared_query_count = 0
+                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
+                except Exception as e:
+                    print("[Batch Recovery Error]", e)
+                    self._shared_conn = None
+                    self._shared_cur = None
 
         # --- Ambil item dari tabel
         dpid_item = self.table.item(row, self.col_index("DPID"))
@@ -3509,6 +3579,41 @@ class MainWindow(QMainWindow):
     def set_ket_status(self, row, new_value: str, label: str):
         from datetime import datetime
         from db_manager import get_connection
+
+        # =====================================================
+        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
+        # =====================================================
+        if getattr(self, "_in_batch_mode", False):
+            # Pastikan semua atribut batch selalu aman
+            if not hasattr(self, "_shared_conn"):
+                self._shared_conn = None
+            if not hasattr(self, "_shared_cur"):
+                self._shared_cur = None
+            if not hasattr(self, "_shared_query_count"):
+                self._shared_query_count = 0
+            if not hasattr(self, "_warning_shown_in_batch"):
+                self._warning_shown_in_batch = {}
+
+            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+            try:
+                if self._shared_conn is None or self._shared_cur is None:
+                    raise Exception("batch connection reset")
+
+                # Tes koneksi ringan
+                self._shared_cur.execute("SELECT 1;")
+
+            except Exception:
+                try:
+                    conn = get_connection()
+                    conn.execute("PRAGMA busy_timeout = 3000;")
+                    self._shared_conn = conn
+                    self._shared_cur = conn.cursor()
+                    self._shared_query_count = 0
+                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
+                except Exception as e:
+                    print("[Batch Recovery Error]", e)
+                    self._shared_conn = None
+                    self._shared_cur = None
 
         dpid_item = self.table.item(row, self.col_index("DPID"))
         nama_item = self.table.item(row, self.col_index("NAMA"))
@@ -3849,7 +3954,7 @@ class MainWindow(QMainWindow):
             QMessageBox.question = no_popup
 
             # Jalankan sort_data tanpa gangguan popup
-            self.sort_data()
+            #self.sort_data()
 
         finally:
             # ============================================================
@@ -4096,7 +4201,7 @@ class MainWindow(QMainWindow):
                     self.update_pagination()
                     self.show_page(1)
                     self.connect_header_events()
-                    self.sort_data(auto=True)
+                    #self.sort_data(auto=True)
                     show_modern_info(
                         self, "Sukses",
                         f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
