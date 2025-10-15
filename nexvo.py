@@ -43,7 +43,7 @@ except Exception as e:
 # --- UI ---
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QSize, QPoint
-from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette
+from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette, QRadialGradient, QPolygon
 from PyQt6.QtWidgets import (QSizePolicy, QToolBar, QStatusBar, QHeaderView, QTableWidget, QFileDialog, QScrollArea, QFormLayout, QToolButton,
     QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton, QComboBox, QDialog, QGraphicsOpacityEffect, QCheckBox, 
     QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog, QTableWidgetItem, QStyledItemDelegate, 
@@ -999,163 +999,199 @@ class RangeSlider(QWidget):
     """
     Widget slider dengan dua handle untuk memilih rentang nilai (min-max).
     
-    Dirancang khusus untuk filter rentang umur dengan antarmuka yang intuitif:
-    - Dua handle yang dapat digeser untuk menentukan nilai minimum dan maksimum
-    - Label yang muncul saat hover atau sedang aktif dengan animasi fade yang halus
-    - Efek visual modern dengan glow effect saat handle aktif
-    - Persistent state untuk menjaga handle tetap aktif setelah diklik
-    - Animasi smooth untuk pergerakan handle dan transisi visual
-    
-    Fitur Interaksi:
-    - Hover: Label muncul dan handle berubah warna
-    - Click: Handle menjadi persistent (tetap aktif) sampai handle lain diklik
-    - Drag: Geser handle untuk mengubah nilai dengan animasi smooth
-    - Keyboard: Arrow keys dengan Shift untuk handle kiri, tanpa Shift untuk handle kanan
+    PERUBAHAN: Widget otomatis non-aktif ketika kehilangan focus
     """
     
     def __init__(self, minimum=0, maximum=100, parent=None):
-        """
-        Inisialisasi RangeSlider dengan rentang nilai tertentu.
-        
-        Args:
-            minimum (int): Nilai minimum slider (default: 0)
-            maximum (int): Nilai maksimum slider (default: 100)
-            parent (QWidget): Widget parent
-        """
         super().__init__(parent)
         
         # === Pengaturan Nilai Rentang ===
         self._min = minimum
         self._max = maximum
-        self._lower = minimum  # Nilai handle kiri (minimum yang dipilih)
-        self._upper = maximum  # Nilai handle kanan (maksimum yang dipilih)
+        self._lower = minimum
+        self._upper = maximum
         
         # === Pengaturan Visual ===
-        self._bar_height = 4      # Tinggi track slider
-        self._handle_radius = 7   # Radius handle (diperkecil untuk tampilan compact)
+        self._bar_height = 4
+        self._handle_radius = 7
         
         # === State Management ===
-        self._active_handle = None  # Handle yang sedang di-drag ('lower'/'upper'/None)
-        self._hover_lower = False   # Apakah mouse hover di handle kiri
-        self._hover_upper = False   # Apakah mouse hover di handle kanan
-        self._hover_track = False   # Apakah mouse hover di area track
-        self._hover_active_track = False  # Apakah mouse hover di area selection
+        self._active_handle = None
+        self._hover_lower = False
+        self._hover_upper = False
+        self._hover_track = False
+        self._hover_active_track = False
         
-        # Persistent states - handle tetap aktif setelah diklik
-        self._persistent_lower = False  # Handle kiri tetap aktif
-        self._persistent_upper = False  # Handle kanan tetap aktif
+        # Persistent states
+        self._persistent_lower = False
+        self._persistent_upper = False
         
-        # === Sistem Animasi untuk Pergerakan Handle ===
+        # === Sistem Animasi ===
         self._animation_timer = QTimer(self)
         self._animation_timer.timeout.connect(self._update_handle_animation)
-        self._animation_timer.setInterval(16)  # 60 FPS untuk animasi yang smooth
+        self._animation_timer.setInterval(16)
         
-        # Target values untuk smooth dragging
         self._target_lower = minimum
         self._target_upper = maximum
-        self._animation_speed = 0.18  # Kecepatan animasi (0.18 untuk gerakan halus)
+        self._animation_speed = 0.18
         
-        # === Sistem Animasi untuk Label Fade Effect ===
         self._label_fade_timer = QTimer(self)
         self._label_fade_timer.timeout.connect(self._update_label_fade)
-        self._label_fade_timer.setInterval(25)  # 40 FPS untuk balance smooth dan performa
+        self._label_fade_timer.setInterval(25)
         
-        # Opacity values untuk fade effect label
-        self._label_opacity = {'lower': 0.0, 'upper': 0.0}     # Opacity saat ini
-        self._target_opacity = {'lower': 0.0, 'upper': 0.0}    # Target opacity
+        self._label_opacity = {'lower': 0.0, 'upper': 0.0}
+        self._target_opacity = {'lower': 0.0, 'upper': 0.0}
         
         # === Pengaturan Widget ===
-        self.setMouseTracking(True)  # Untuk mendeteksi hover tanpa click
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Untuk keyboard input
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # === Tema dan Warna ===
         self._dark_theme = False
-        self._accent_color = QColor('#ff9900')  # Warna accent orange
+        self._accent_color = QColor('#ff9900')
         
-        # Tinggi widget dengan ruang untuk label di atas
         self.setFixedHeight(self._handle_radius * 2 + 50)
 
+    # ============================================================
+    # METODE BARU: Focus Event Handler
+    # ============================================================
+    
+    def focusOutEvent(self, event):
+        """
+        Menangani event ketika widget kehilangan focus.
+        
+        Otomatis menonaktifkan semua persistent state dan fade out label
+        ketika user mengklik widget lain atau area di luar.
+        """
+        # Nonaktifkan semua persistent state
+        self._persistent_lower = False
+        self._persistent_upper = False
+        self._active_handle = None
+        
+        # Fade out semua label
+        self._target_opacity['lower'] = 0.0
+        self._target_opacity['upper'] = 0.0
+        
+        # Start fade animation
+        if not self._label_fade_timer.isActive():
+            self._label_fade_timer.start()
+        
+        self.update()
+        super().focusOutEvent(event)
+    
+    def mousePressEvent(self, event):
+        """
+        Menangani event klik mouse.
+        
+        PERUBAHAN: Sekarang otomatis set focus ke widget ini saat diklik
+        """
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        
+        # Set focus ke widget ini ketika diklik
+        self.setFocus()
+        
+        # Kalkulasi area track
+        left_bound = self._handle_radius
+        right_bound = self.width() - self._handle_radius
+        
+        left_handle_x = self._value_to_x_position(self._lower, left_bound, right_bound)
+        right_handle_x = self._value_to_x_position(self._upper, left_bound, right_bound)
+        
+        mouse_x = event.position().x()
+        mouse_y = event.position().y()
+        
+        click_tolerance = self._handle_radius + 4
+        
+        clicked_on_lower = abs(mouse_x - left_handle_x) <= click_tolerance
+        clicked_on_upper = abs(mouse_x - right_handle_x) <= click_tolerance
+        
+        if clicked_on_lower:
+            if self._persistent_lower:
+                self._persistent_lower = False
+                self._active_handle = None
+            else:
+                self._active_handle = 'lower'
+                self._persistent_upper = False
+                
+        elif clicked_on_upper:
+            if self._persistent_upper:
+                self._persistent_upper = False
+                self._active_handle = None
+            else:
+                self._active_handle = 'upper'
+                self._persistent_lower = False
+                
+        else:
+            center_y = self.height() // 2 + 5
+            side_margin = 8
+            track_left = side_margin + self._handle_radius
+            track_right = self.width() - (side_margin + self._handle_radius)
+            
+            is_in_track = (track_left <= mouse_x <= track_right) and (abs(mouse_y - center_y) <= 15)
+            
+            if is_in_track:
+                self._persistent_lower = False
+                self._persistent_upper = False
+                
+                if abs(mouse_x - left_handle_x) < abs(mouse_x - right_handle_x):
+                    self._active_handle = 'lower'
+                else:
+                    self._active_handle = 'upper'
+            else:
+                self._persistent_lower = False
+                self._persistent_upper = False
+                self._active_handle = None
+        
+        if self._active_handle:
+            self.mouseMoveEvent(event)
+            
+        self.update()
+
+    # ============================================================
+    # METODE UTILITY
+    # ============================================================
+
     def sizeHint(self):
-        """Memberikan ukuran yang disarankan untuk widget."""
         return QSize(160, self._handle_radius * 2 + 10)
 
     def setDark(self, dark_mode: bool):
-        """
-        Mengatur tema tampilan slider.
-        
-        Args:
-            dark_mode (bool): True untuk tema gelap, False untuk tema terang
-        """
         self._dark_theme = dark_mode
         self.update()
 
     def setRange(self, minimum, maximum):
-        """
-        Mengatur rentang nilai slider.
-        
-        Args:
-            minimum (int): Nilai minimum baru
-            maximum (int): Nilai maksimum baru
-        """
         self._min, self._max = minimum, maximum
-        
-        # Pastikan nilai saat ini masih dalam rentang yang valid
         self._lower = max(self._min, min(self._lower, self._max))
         self._upper = max(self._min, min(self._upper, self._max))
-        
-        # Pastikan lower tidak lebih besar dari upper
         if self._lower > self._upper:
             self._lower, self._upper = self._upper, self._lower
-            
         self.update()
 
-    # === Getter Methods ===
     def lowerValue(self):
-        """Mendapatkan nilai handle kiri (minimum)."""
         return self._lower
         
     def upperValue(self):
-        """Mendapatkan nilai handle kanan (maksimum)."""
         return self._upper
         
     def values(self):
-        """Mendapatkan kedua nilai sebagai tuple (lower, upper)."""
         return self._lower, self._upper
 
     def setValues(self, lower_val, upper_val):
-        """
-        Mengatur kedua nilai slider sekaligus dengan animasi smooth.
-        
-        Args:
-            lower_val (int): Nilai baru untuk handle kiri
-            upper_val (int): Nilai baru untuk handle kanan
-        """
-        # Pastikan nilai dalam rentang yang valid
         self._target_lower = max(self._min, min(lower_val, upper_val))
         self._target_upper = min(self._max, max(upper_val, self._target_lower))
         
-        # Jika animasi belum diinisialisasi, langsung set nilai
         if not hasattr(self, '_animation_timer'):
             self._lower = self._target_lower
             self._upper = self._target_upper
         else:
-            # Mulai animasi smooth
             self._animation_timer.start()
             
         self.update()
         self._emit_value_changed()
 
     def _update_handle_animation(self):
-        """
-        Update animasi smooth untuk pergerakan handle.
-        
-        Menggunakan interpolasi linear untuk transisi yang halus dari nilai
-        saat ini ke nilai target. Animasi berhenti ketika handle sudah
-        mencapai posisi target.
-        """
         animation_active = False
         
-        # Smooth interpolation untuk handle kiri
         lower_difference = self._target_lower - self._lower
         if abs(lower_difference) > 0.1:
             self._lower += lower_difference * self._animation_speed
@@ -1163,7 +1199,6 @@ class RangeSlider(QWidget):
         else:
             self._lower = self._target_lower
             
-        # Smooth interpolation untuk handle kanan
         upper_difference = self._target_upper - self._upper
         if abs(upper_difference) > 0.1:
             self._upper += upper_difference * self._animation_speed
@@ -1171,23 +1206,14 @@ class RangeSlider(QWidget):
         else:
             self._upper = self._target_upper
             
-        # Update tampilan jika masih ada perubahan
         if animation_active:
             self.update()
         else:
-            # Hentikan timer jika animasi selesai
             self._animation_timer.stop()
 
     def _update_label_fade(self):
-        """
-        Update animasi fade in/out untuk label nilai.
-        
-        Label akan muncul dengan fade in saat hover atau handle aktif,
-        dan fade out saat tidak ada interaksi. Kecepatan fade disesuaikan
-        untuk memberikan feedback yang responsif namun tidak mengganggu.
-        """
         animation_active = False
-        fade_speed = 0.25  # Kecepatan fade yang seimbang
+        fade_speed = 0.25
         
         for handle_type in ['lower', 'upper']:
             opacity_difference = self._target_opacity[handle_type] - self._label_opacity[handle_type]
@@ -1198,86 +1224,51 @@ class RangeSlider(QWidget):
             else:
                 self._label_opacity[handle_type] = self._target_opacity[handle_type]
                 
-        # Update tampilan jika masih ada perubahan opacity
         if animation_active:
             self.update()
         else:
-            # Hentikan timer jika fade selesai
             self._label_fade_timer.stop()
 
     def _emit_value_changed(self):
-        """
-        Mengirim signal perubahan nilai ke parent widget.
-        
-        Mencoba memanggil method on_age_range_changed pada parent jika tersedia.
-        Ini memungkinkan parent widget merespons perubahan nilai slider.
-        """
         if hasattr(self.parent(), 'on_age_range_changed'):
             try:
                 self.parent().on_age_range_changed(int(self._lower), int(self._upper))
             except Exception:
-                # Abaikan error jika parent tidak dapat memproses callback
                 pass
 
+    # ============================================================
+    # PAINTING METHODS
+    # ============================================================
+
     def paintEvent(self, event):
-        """
-        Menggambar seluruh komponen slider termasuk track, selection, handle, dan label.
-        
-        Komponen yang digambar:
-        1. Background track dengan efek hover
-        2. Selection area (area antara dua handle)
-        3. Handle kiri dan kanan dengan efek glow saat aktif
-        4. Label nilai dengan fade effect dan bubble styling
-        """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # === Kalkulasi Posisi dan Dimensi ===
         widget_width = self.width()
         widget_height = self.height()
-        center_y = widget_height // 2 + 5  # Posisi vertikal track (sedikit ke bawah untuk ruang label)
+        center_y = widget_height // 2 + 5
         
-        # Margin samping untuk menghindari handle terpotong
         side_margin = 8
         track_left = side_margin + self._handle_radius
         track_right = widget_width - (side_margin + self._handle_radius)
         
-        # === Menggambar Background Track ===
         self._draw_background_track(painter, track_left, track_right, center_y)
         
-        # === Menggambar Selection Area ===
         left_handle_x = self._value_to_x_position(self._lower, track_left, track_right)
         right_handle_x = self._value_to_x_position(self._upper, track_left, track_right)
         self._draw_selection_area(painter, left_handle_x, right_handle_x, center_y)
         
-        # === Menggambar Handle dan Label ===
         self._draw_handle_and_label(painter, 'lower', left_handle_x, center_y)
         self._draw_handle_and_label(painter, 'upper', right_handle_x, center_y)
         
         painter.end()
 
     def _draw_background_track(self, painter, left, right, center_y):
-        """
-        Menggambar track latar belakang dengan efek hover.
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            left (int): Posisi x kiri track
-            right (int): Posisi x kanan track  
-            center_y (int): Posisi y tengah track
-        """
-        # Tentukan warna track berdasarkan state hover dan tema
         if self._hover_track:
-            # Warna lebih terang saat hover
-            if self._dark_theme:
-                track_color = QColor('#444')  # Lebih terang dari default gelap
-            else:
-                track_color = QColor('#bbb')  # Lebih gelap dari default terang
+            track_color = QColor('#444') if self._dark_theme else QColor('#bbb')
         else:
-            # Warna default
             track_color = QColor('#333') if self._dark_theme else QColor('#dcdcdc')
         
-        # Gambar track sebagai rounded rectangle
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(track_color)
         
@@ -1286,42 +1277,20 @@ class RangeSlider(QWidget):
         painter.drawRoundedRect(track_rect, 2, 2)
 
     def _draw_selection_area(self, painter, left_x, right_x, center_y):
-        """
-        Menggambar area selection (antara dua handle) dengan efek hover.
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            left_x (float): Posisi x handle kiri
-            right_x (float): Posisi x handle kanan
-            center_y (int): Posisi y tengah track
-        """
         selection_rect = QRect(int(left_x), center_y - self._bar_height // 2, 
                               int(right_x - left_x), self._bar_height)
         
-        # Warna selection berdasarkan hover state
         if self._hover_active_track:
-            # Efek hover: accent color dengan transparansi
             hover_accent = QColor(self._accent_color)
-            hover_accent.setAlpha(180)  # Sedikit transparan untuk efek hover
+            hover_accent.setAlpha(180)
             painter.setBrush(hover_accent)
         else:
-            # Warna normal
             painter.setBrush(self._accent_color)
         
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(selection_rect, 2, 2)
 
     def _draw_handle_and_label(self, painter, handle_type, x_position, center_y):
-        """
-        Menggambar handle dan label untuk satu handle (kiri atau kanan).
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            handle_type (str): Tipe handle ('lower' atau 'upper')
-            x_position (float): Posisi x handle
-            center_y (int): Posisi y tengah handle
-        """
-        # Tentukan state handle
         is_hover = (handle_type == 'lower' and self._hover_lower) or \
                    (handle_type == 'upper' and self._hover_upper)
         is_pressed = self._active_handle == handle_type
@@ -1330,30 +1299,15 @@ class RangeSlider(QWidget):
         
         is_active = is_hover or is_pressed or is_persistent
         
-        # === Gambar Glow Effect untuk Handle Aktif ===
         if is_pressed or is_persistent:
             self._draw_glow_effect(painter, x_position, center_y)
         
-        # === Gambar Handle ===
         self._draw_handle_circle(painter, x_position, center_y, is_active)
-        
-        # === Gambar Label dengan Fade Effect ===
         self._draw_handle_label(painter, handle_type, x_position, center_y, is_active)
 
     def _draw_glow_effect(self, painter, x_position, center_y):
-        """
-        Menggambar efek glow di sekitar handle yang aktif.
+        glow_color = QColor('#ff9900')
         
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            x_position (float): Posisi x pusat glow
-            center_y (int): Posisi y pusat glow
-        """
-        from PyQt6.QtGui import QRadialGradient
-        
-        glow_color = QColor('#ff9900')  # Warna orange sesuai accent
-        
-        # Layer 1: Glow luar (efek lebih lembut)
         outer_radius = self._handle_radius + 8
         outer_rect = QRect(int(x_position - outer_radius), int(center_y - outer_radius), 
                           2 * outer_radius, 2 * outer_radius)
@@ -1367,7 +1321,6 @@ class RangeSlider(QWidget):
         painter.setBrush(outer_gradient)
         painter.drawEllipse(outer_rect)
         
-        # Layer 2: Glow dalam (efek lebih terang dan tajam)
         inner_radius = self._handle_radius + 4
         inner_rect = QRect(int(x_position - inner_radius), int(center_y - inner_radius), 
                           2 * inner_radius, 2 * inner_radius)
@@ -1381,28 +1334,17 @@ class RangeSlider(QWidget):
         painter.drawEllipse(inner_rect)
 
     def _draw_handle_circle(self, painter, x_position, center_y, is_active):
-        """
-        Menggambar lingkaran handle dengan styling yang sesuai state.
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            x_position (float): Posisi x pusat handle
-            center_y (int): Posisi y pusat handle
-            is_active (bool): Apakah handle dalam state aktif
-        """
-        # Tentukan warna berdasarkan tema dan state
         if self._dark_theme:
             face_color = QColor('#3a3a3a') if is_active else QColor('#2a2a2a')
         else:
             face_color = QColor('#f8f8f8') if is_active else QColor('#ffffff')
             
-        border_color = QColor('#ff9900')  # Selalu orange untuk konsistensi
+        border_color = QColor('#ff9900')
         
-        # Gambar handle dengan border
         painter.setBrush(face_color)
         
         border_pen = QPen(border_color)
-        border_pen.setWidth(2)  # Border selalu tebal untuk visibility
+        border_pen.setWidth(2)
         painter.setPen(border_pen)
         
         handle_rect = QRect(int(x_position - self._handle_radius), 
@@ -1410,7 +1352,6 @@ class RangeSlider(QWidget):
                            2 * self._handle_radius, 2 * self._handle_radius)
         painter.drawEllipse(handle_rect)
         
-        # Titik tengah untuk grip visual saat aktif
         if is_active:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(border_color)
@@ -1418,78 +1359,48 @@ class RangeSlider(QWidget):
             painter.drawEllipse(center_dot)
 
     def _draw_handle_label(self, painter, handle_type, x_position, center_y, is_active):
-        """
-        Menggambar label nilai handle dengan bubble styling dan fade effect.
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            handle_type (str): Tipe handle ('lower' atau 'upper')
-            x_position (float): Posisi x handle
-            center_y (int): Posisi y handle
-            is_active (bool): Apakah handle dalam state aktif
-        """
         opacity = self._label_opacity.get(handle_type, 0.0)
         should_show_label = is_active or opacity > 0.01
         
         if not should_show_label or opacity <= 0.01:
             return
             
-        # Dapatkan nilai untuk ditampilkan
         value = int(self._lower) if handle_type == 'lower' else int(self._upper)
         label_text = str(value)
         
-        # Setup font
         font = painter.font()
         font.setPointSize(9)
         font.setBold(True)
         painter.setFont(font)
         
-        # Kalkulasi dimensi bubble
         font_metrics = painter.fontMetrics()
         padding_horizontal = 8
         padding_vertical = 4
         text_width = font_metrics.horizontalAdvance(label_text) + padding_horizontal
         text_height = font_metrics.height() + padding_vertical
         
-        # Posisi label di atas handle
         distance_from_center = 35 if (is_active and self._active_handle == handle_type) else 25
         label_top_y = int(center_y - distance_from_center - text_height)
         
-        # Pastikan label tidak keluar dari area widget
         if label_top_y < 2:
             label_top_y = 2
             
         bubble_rect = QRect(int(x_position - text_width / 2), label_top_y, 
                            int(text_width), int(text_height))
         
-        # Alpha untuk fade effect
         alpha = int(240 * opacity)
         
-        # Gambar bubble background
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(60, 60, 60, alpha))  # Dark background dengan alpha
+        painter.setBrush(QColor(60, 60, 60, alpha))
         painter.drawRoundedRect(bubble_rect, 4, 4)
         
         self._draw_label_pointer(painter, x_position, label_top_y + text_height, alpha)
         
-        # Gambar teks
         text_alpha = int(255 * opacity)
-        painter.setPen(QColor(255, 255, 255, text_alpha))  # White text dengan alpha
+        painter.setPen(QColor(255, 255, 255, text_alpha))
         painter.drawText(bubble_rect, Qt.AlignmentFlag.AlignCenter, label_text)
 
     def _draw_label_pointer(self, painter, x_position, bottom_y, alpha):
-        """
-        Menggambar segitiga pointer di bawah bubble label.
-        
-        Args:
-            painter (QPainter): Object painter untuk menggambar
-            x_position (float): Posisi x pusat segitiga
-            bottom_y (int): Posisi y dasar bubble
-            alpha (int): Nilai alpha untuk transparansi
-        """
-        from PyQt6.QtGui import QPolygon
-        from PyQt6.QtCore import QPoint
-        
         triangle_size = 4
         triangle_tip_x = int(x_position)
         
@@ -1503,130 +1414,21 @@ class RangeSlider(QWidget):
         painter.drawPolygon(triangle)
 
     def _value_to_x_position(self, value, left_bound, right_bound):
-        """
-        Konversi nilai slider ke posisi x pada widget.
-        
-        Args:
-            value (float): Nilai yang akan dikonversi
-            left_bound (int): Batas kiri area track
-            right_bound (int): Batas kanan area track
-            
-        Returns:
-            float: Posisi x yang sesuai dengan nilai
-        """
         if self._max == self._min:
             return left_bound
-        
         ratio = (value - self._min) / (self._max - self._min)
         return left_bound + ratio * (right_bound - left_bound)
 
     def _x_position_to_value(self, x_position, left_bound, right_bound):
-        """
-        Konversi posisi x pada widget ke nilai slider.
-        
-        Args:
-            x_position (float): Posisi x yang akan dikonversi
-            left_bound (int): Batas kiri area track
-            right_bound (int): Batas kanan area track
-            
-        Returns:
-            int: Nilai slider yang sesuai dengan posisi x
-        """
         ratio = (x_position - left_bound) / (right_bound - left_bound)
         value = self._min + ratio * (self._max - self._min)
         return int(round(max(self._min, min(value, self._max))))
 
-    def mousePressEvent(self, event):
-        """
-        Menangani event klik mouse untuk aktivasi dan toggle handle.
-        
-        Logika click:
-        - Klik pada handle yang sudah persistent: matikan persistent state
-        - Klik pada handle yang tidak persistent: aktifkan handle tersebut
-        - Klik di area track: aktifkan handle terdekat dengan posisi klik
-        - Klik di luar area: matikan semua persistent state
-        """
-        if event.button() != Qt.MouseButton.LeftButton:
-            return
-            
-        # Kalkulasi area track
-        left_bound = self._handle_radius
-        right_bound = self.width() - self._handle_radius
-        
-        # Posisi handle saat ini
-        left_handle_x = self._value_to_x_position(self._lower, left_bound, right_bound)
-        right_handle_x = self._value_to_x_position(self._upper, left_bound, right_bound)
-        
-        mouse_x = event.position().x()
-        mouse_y = event.position().y()
-        
-        # Toleransi untuk area klik handle
-        click_tolerance = self._handle_radius + 4
-        
-        # Cek klik pada handle
-        clicked_on_lower = abs(mouse_x - left_handle_x) <= click_tolerance
-        clicked_on_upper = abs(mouse_x - right_handle_x) <= click_tolerance
-        
-        if clicked_on_lower:
-            # Toggle persistent state untuk handle kiri
-            if self._persistent_lower:
-                self._persistent_lower = False
-                self._active_handle = None
-            else:
-                self._active_handle = 'lower'
-                self._persistent_upper = False  # Matikan handle lain
-                
-        elif clicked_on_upper:
-            # Toggle persistent state untuk handle kanan
-            if self._persistent_upper:
-                self._persistent_upper = False
-                self._active_handle = None
-            else:
-                self._active_handle = 'upper'
-                self._persistent_lower = False  # Matikan handle lain
-                
-        else:
-            # Klik di area track atau di luar
-            center_y = self.height() // 2 + 5
-            side_margin = 8
-            track_left = side_margin + self._handle_radius
-            track_right = self.width() - (side_margin + self._handle_radius)
-            
-            is_in_track = (track_left <= mouse_x <= track_right) and (abs(mouse_y - center_y) <= 15)
-            
-            if is_in_track:
-                # Klik di area track - aktifkan handle terdekat
-                self._persistent_lower = False
-                self._persistent_upper = False
-                
-                # Tentukan handle terdekat
-                if abs(mouse_x - left_handle_x) < abs(mouse_x - right_handle_x):
-                    self._active_handle = 'lower'
-                else:
-                    self._active_handle = 'upper'
-            else:
-                # Klik di luar area - matikan semua persistent state
-                self._persistent_lower = False
-                self._persistent_upper = False
-                self._active_handle = None
-        
-        # Mulai drag jika ada handle aktif
-        if self._active_handle:
-            self.mouseMoveEvent(event)
-            
-        self.update()
+    # ============================================================
+    # MOUSE EVENT HANDLERS
+    # ============================================================
 
     def mouseMoveEvent(self, event):
-        """
-        Menangani event pergerakan mouse untuk hover effect dan dragging.
-        
-        Fitur:
-        - Deteksi hover pada handle dan track untuk visual feedback
-        - Smooth dragging dengan animasi
-        - Update cursor sesuai area (pointing hand untuk handle, arrow untuk lainnya)
-        - Kontrol fade in/out label berdasarkan interaksi
-        """
-        # Kalkulasi area dan posisi
         left_bound = self._handle_radius
         right_bound = self.width() - self._handle_radius
         left_handle_x = self._value_to_x_position(self._lower, left_bound, right_bound)
@@ -1635,7 +1437,6 @@ class RangeSlider(QWidget):
         mouse_x = event.position().x()
         mouse_y = event.position().y()
         
-        # Reset hover states
         prev_hover_lower = self._hover_lower
         prev_hover_upper = self._hover_upper
         self._hover_lower = False
@@ -1643,16 +1444,12 @@ class RangeSlider(QWidget):
         self._hover_track = False
         self._hover_active_track = False
         
-        # Area hit yang diperluas untuk responsivitas lebih baik
         hit_radius = self._handle_radius + 6
         
-        # Deteksi hover pada handle
         if abs(mouse_x - left_handle_x) <= hit_radius:
             self._hover_lower = True
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self._target_opacity['lower'] = 1.0
-            
-            # Soft instant show untuk feedback responsif
             if self._label_opacity['lower'] < 0.3:
                 self._label_opacity['lower'] = 0.4
                 
@@ -1660,13 +1457,10 @@ class RangeSlider(QWidget):
             self._hover_upper = True
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self._target_opacity['upper'] = 1.0
-            
-            # Soft instant show untuk feedback responsif
             if self._label_opacity['upper'] < 0.3:
                 self._label_opacity['upper'] = 0.4
                 
         else:
-            # Deteksi hover pada track
             center_y = self.height() // 2 + 5
             side_margin = 8
             track_left = side_margin + self._handle_radius
@@ -1679,29 +1473,24 @@ class RangeSlider(QWidget):
             else:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
         
-        # Update target opacity untuk fade effect
         if not self._hover_lower and not (self._active_handle == 'lower') and not self._persistent_lower:
             self._target_opacity['lower'] = 0.0
         if not self._hover_upper and not (self._active_handle == 'upper') and not self._persistent_upper:
             self._target_opacity['upper'] = 0.0
             
-        # Maintain opacity untuk persistent handles
         if self._persistent_lower:
             self._target_opacity['lower'] = 1.0
         if self._persistent_upper:
             self._target_opacity['upper'] = 1.0
             
-        # Start fade animation jika ada perubahan hover state
         if (prev_hover_lower != self._hover_lower or prev_hover_upper != self._hover_upper):
             if not self._label_fade_timer.isActive():
                 self._label_fade_timer.start()
         
-        # Handle dragging dengan hover effect
         if self._active_handle:
             self._hover_track = True
             self._hover_active_track = True
             
-            # Maintain label visibility saat drag
             if self._active_handle == 'lower':
                 self._target_opacity['lower'] = 1.0
             elif self._active_handle == 'upper':
@@ -1709,13 +1498,12 @@ class RangeSlider(QWidget):
         
         self.update()
         
-        # Smooth dragging dengan precision yang diperbaiki
         if self._active_handle:
             new_value = self._x_position_to_value(mouse_x, left_bound, right_bound)
             
             if self._active_handle == 'lower': 
                 clamped_value = min(new_value, self._upper)
-                if abs(clamped_value - self._target_lower) > 0.3:  # Threshold untuk gerakan halus
+                if abs(clamped_value - self._target_lower) > 0.3:
                     self._target_lower = clamped_value
                     self._animation_timer.start()
             else: 
@@ -1727,64 +1515,57 @@ class RangeSlider(QWidget):
             self._emit_value_changed()
 
     def mouseReleaseEvent(self, event): 
-        """
-        Menangani event pelepasan mouse untuk set persistent state.
-        
-        Setelah drag selesai, handle yang di-drag akan menjadi persistent
-        (tetap aktif) sampai handle lain diklik atau area di luar diklik.
-        """
-        # Set persistent state berdasarkan handle yang sedang aktif
         if self._active_handle == 'lower':
             self._persistent_lower = True
             self._persistent_upper = False
-            self._target_opacity['lower'] = 1.0  # Maintain label visibility
+            self._target_opacity['lower'] = 1.0
         elif self._active_handle == 'upper':
             self._persistent_upper = True
             self._persistent_lower = False
-            self._target_opacity['upper'] = 1.0  # Maintain label visibility
+            self._target_opacity['upper'] = 1.0
             
         self._active_handle = None
         
-        # Start fade animation untuk smooth transition
         if not self._label_fade_timer.isActive():
             self._label_fade_timer.start()
         
         self.update()
         
     def leaveEvent(self, event): 
-        """
-        Menangani event mouse meninggalkan widget.
-        
-        Reset semua hover states dan fade out label yang tidak persistent.
-        """
         self._hover_lower = False
         self._hover_upper = False
         self._hover_track = False
         self._hover_active_track = False
         
-        # Fade out labels kecuali yang persistent
         if not self._persistent_lower:
             self._target_opacity['lower'] = 0.0
         if not self._persistent_upper:
             self._target_opacity['upper'] = 0.0
-            
-        # Start fade animation
+
         if not self._label_fade_timer.isActive():
             self._label_fade_timer.start()
             
-        self.setCursor(Qt.CursorShape.ArrowCursor)  # reset cursor saat meninggalkan widget
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.update()
+
     def keyPressEvent(self, e):
         step = 1
-        if e.key()==Qt.Key.Key_Left:
-            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier: self._lower=max(self._min,self._lower-step)
-            else: self._upper=max(self._min,self._upper-step)
-            self._emit(); self.update()
-        elif e.key()==Qt.Key.Key_Right:
-            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier: self._lower=min(self._upper,self._lower+step)
-            else: self._upper=min(self._max,self._upper+step)
-            self._emit(); self.update()
-        else: super().keyPressEvent(e)
+        if e.key() == Qt.Key.Key_Left:
+            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._lower = max(self._min, self._lower - step)
+            else:
+                self._upper = max(self._min, self._upper - step)
+            self._emit_value_changed()
+            self.update()
+        elif e.key() == Qt.Key.Key_Right:
+            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._lower = min(self._upper, self._lower + step)
+            else:
+                self._upper = min(self._max, self._upper + step)
+            self._emit_value_changed()
+            self.update()
+        else:
+            super().keyPressEvent(e)
 
 # =====================================================
 # Panel Filter Samping (dock kanan)
@@ -2582,7 +2363,7 @@ class FilterSidebar(QWidget):
     def _setup_age_slider(self, layout, gap):
         """Setup slider rentang umur dengan label yang interaktif."""
         umur_container = QVBoxLayout()
-        umur_container.setContentsMargins(0, 8, 0, 0)  # Beri jarak dari elemen di atas
+        umur_container.setContentsMargins(0, 16, 0, 0)  # Beri jarak dari elemen di atas
         umur_container.setSpacing(gap)
         
         # Label umur
@@ -9121,9 +8902,9 @@ if __name__ == "__main__":
         if is_dev_mode_requested():
             if confirm_dev_mode(None):
                 print("[DEV MODE] Melewati proses login & OTP...")
-                dev_nama = "ARI ARDIANA"
-                dev_kecamatan = "TANJUNGJAYA"
-                dev_desa = "SUKASENANG"
+                dev_nama = "Riparip"
+                dev_kecamatan = "SINGAPARNA"
+                dev_desa = "CIKADONGDONG"
                 dev_tahapan = "DPHP"
 
                 mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
