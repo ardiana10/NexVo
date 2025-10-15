@@ -1,4 +1,4 @@
-## -*- coding: utf-8 -*-
+﻿## -*- coding: utf-8 -*-
 r"""
 NexVo 2.0 (SQLCipher edition)
 --------------------------------
@@ -43,7 +43,7 @@ except Exception as e:
 # --- UI ---
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QRect, QEvent, QMargins, QVariantAnimation
-from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette
+from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette, QBrush
 from PyQt6.QtWidgets import (QSizePolicy, QToolBar, QStatusBar, QHeaderView, QTableWidget, QFileDialog, QScrollArea, QFormLayout, QToolButton,
     QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton, QComboBox, QDialog, QGraphicsOpacityEffect, QCheckBox, 
     QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog, QTableWidgetItem, QStyledItemDelegate, 
@@ -1769,9 +1769,82 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(btn_baru)
         add_spacer()
 
-        btn_rekap = QPushButton("Rekap")
-        self.style_button(btn_rekap, bg="#d71d1d", fg="white", bold=True)
+        # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
+        btn_rekap = QToolButton()
+        btn_rekap.setText("Rekap")
+        btn_rekap.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn_rekap.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+
+        # Gunakan stylesheet yang sama dengan tombol lain (style_button)
+        btn_rekap.setStyleSheet(f"""
+            QToolButton {{
+                background-color: #d71d1d;
+                color: white;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: {'normal' if True else 'normal'};
+                border: none;
+                border-radius: 5px;
+                padding: 4px 9px;
+                margin: 3px 1px;
+                min-height: 17px;   /* tinggi seragam dengan QPushButton */
+            }}
+            QToolButton:hover {{
+                background-color: #3B3B3B;
+            }}
+            QToolButton:pressed {{
+                background-color: #8c1010;
+            }}
+            /* 🔥 Hilangkan ikon dropdown bawaan sepenuhnya */
+            QToolButton::menu-indicator {{
+                image: none;
+                width: 0px;
+                height: 0px;
+            }}
+        """)
+
+        # === Menu di dalam tombol ===
+        menu_rekap = QMenu(btn_rekap)
+        menu_rekap.addAction(QAction(" Pemilih Aktif", self, triggered=self.cek_rekapaktif))
+        #menu_rekap.addAction(QAction(" Pemilih Baru", self, triggered=self.cek_rekapbaru))
+        #menu_rekap.addAction(QAction(" Ubah Data", self, triggered=self.cek_rekapubah))
+        #menu_rekap.addAction(QAction(" Saring TMS", self, triggered=self.cek_rekaptms))
+        #menu_rekap.addAction(QAction(" KTPel", self, triggered=self.cek_rekapktp))
+        #menu_rekap.addAction(QAction(" Disabilitas", self, triggered=self.cek_rekapdifabel))
+        #menu_rekap.addAction(QAction(" Tidak Padan", self, triggered=self.cek_rekaptidakpadan))
+        btn_rekap.setMenu(menu_rekap)
         toolbar.addWidget(btn_rekap)
+        add_spacer()
+
+        # === Gaya popup menu elegan ===
+        menu_rekap.setStyleSheet("""
+            QMenu {
+                background-color: #EAEAEA;
+                color: #000000;
+                border: 1px solid #000000;
+                border-radius: 5px;
+                padding: 1px 0px;
+                margin-top: 1px;
+            }
+            QMenu::item {
+                background-color: transparent;
+                padding: 3px 6px;
+                border-radius: 3px;
+                color: #000000;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+            }
+            QMenu::item:selected {
+                background-color: #d71d1d;
+                color: white;
+                border-radius: 3px;
+            }
+            QMenu::separator {
+                height: 2px;
+                background-color: #d71d1d;
+                margin: 4px 10px;
+            }
+        """)
 
         # === Spacer kiri ke tengah ===
         spacer_left = QWidget()
@@ -1811,8 +1884,8 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
                 font-weight: {'normal' if True else 'normal'};
                 border: none;
-                border-radius: 3px;
-                padding: 4px 12px;
+                border-radius: 5px;
+                padding: 4px 9px;
                 margin: 3px 1px;
                 min-height: 17px;   /* tinggi seragam dengan QPushButton */
             }}
@@ -1931,7 +2004,7 @@ class MainWindow(QMainWindow):
         self.sort_lastupdate_asc = True
 
         self.current_page = 1
-        self.rows_per_page = 50
+        self.rows_per_page = 100
         self.total_pages = 1
 
         self.table = CustomTable()
@@ -3407,128 +3480,123 @@ class MainWindow(QMainWindow):
     # 🔹 1. AKTIFKAN PEMILIH (versi batch optimized)
     # =========================================================
     def aktifkan_pemilih(self, row):
+        """
+        - Gunakan DPID (unik)
+        - Satu query update (KET + LastUpdate)
+        - Freeze UI selama proses
+        - Batch-aware dan SQLCipher-safe
+        """
         from datetime import datetime
         from db_manager import get_connection
 
-        # =====================================================
-        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
-        # =====================================================
-        if getattr(self, "_in_batch_mode", False):
-            # Pastikan semua atribut batch selalu aman
-            if not hasattr(self, "_shared_conn"):
-                self._shared_conn = None
-            if not hasattr(self, "_shared_cur"):
-                self._shared_cur = None
-            if not hasattr(self, "_shared_query_count"):
-                self._shared_query_count = 0
-            if not hasattr(self, "_warning_shown_in_batch"):
-                self._warning_shown_in_batch = {}
-
-            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+        with self.freeze_ui():  # 🚀 Bekukan tampilan & event sementara
             try:
-                if self._shared_conn is None or self._shared_cur is None:
-                    raise Exception("batch connection reset")
+                # =====================================================
+                # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
+                # =====================================================
+                if getattr(self, "_in_batch_mode", False):
+                    if not hasattr(self, "_shared_conn"):
+                        self._shared_conn = None
+                    if not hasattr(self, "_shared_cur"):
+                        self._shared_cur = None
+                    if not hasattr(self, "_shared_query_count"):
+                        self._shared_query_count = 0
+                    if not hasattr(self, "_warning_shown_in_batch"):
+                        self._warning_shown_in_batch = {}
 
-                # Tes koneksi ringan
-                self._shared_cur.execute("SELECT 1;")
+                    try:
+                        if self._shared_conn is None or self._shared_cur is None:
+                            raise Exception("batch connection reset")
+                        self._shared_cur.execute("SELECT 1;")
+                    except Exception:
+                        conn = get_connection()
+                        conn.execute("PRAGMA busy_timeout = 3000;")
+                        self._shared_conn = conn
+                        self._shared_cur = conn.cursor()
+                        self._shared_query_count = 0
+                        print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
 
-            except Exception:
-                try:
+                # =====================================================
+                # 🧩 Ambil data baris
+                # =====================================================
+                dpid_item = self.table.item(row, self.col_index("DPID"))
+                ket_item  = self.table.item(row, self.col_index("KET"))
+                nama_item = self.table.item(row, self.col_index("NAMA"))
+
+                dpid = dpid_item.text().strip() if dpid_item else ""
+                ket  = ket_item.text().strip().upper() if ket_item else ""
+                nama = nama_item.text().strip() if nama_item else ""
+
+                # ⚠️ Validasi: hanya boleh aktifkan yang KET=1–8
+                if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
+                    if getattr(self, "_in_batch_mode", False):
+                        if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
+                            self._warning_shown_in_batch["aktifkan_pemilih"] = True
+                    else:
+                        show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Aktif atau tidak bisa diubah.")
+                    self._batch_add("rejected", "aktifkan_pemilih")
+                    return
+
+                # =====================================================
+                # 🧠 Update di memori dan tampilan
+                # =====================================================
+                today_str = datetime.now().strftime("%d/%m/%Y")
+                if ket_item:
+                    ket_item.setText("0")
+
+                gi = self._global_index(row)
+                if 0 <= gi < len(self.all_data):
+                    self.all_data[gi]["KET"] = "0"
+                    self.all_data[gi]["LastUpdate"] = today_str
+
+                last_update_col = self.col_index("LastUpdate")
+                if last_update_col != -1:
+                    lu_item = self.table.item(row, last_update_col)
+                    if not lu_item:
+                        lu_item = QTableWidgetItem()
+                        self.table.setItem(row, last_update_col, lu_item)
+                    lu_item.setText(today_str)
+
+                # =====================================================
+                # ⚙️ Query ultra ringan (KET+LastUpdate sekaligus)
+                # =====================================================
+                tbl = self._active_table()
+                if not tbl:
+                    return
+
+                sql_update = f"UPDATE {tbl} SET KET = 0, LastUpdate = ? WHERE DPID = ?"
+                params = (today_str, dpid)
+
+                if getattr(self, "_in_batch_mode", False):
+                    cur = self._shared_cur
+                    cur.execute(sql_update, params)
+                    self._shared_query_count += 1
+
+                    if self._shared_query_count % 1000 == 0:
+                        self._shared_conn.commit()
+                else:
                     conn = get_connection()
+                    cur = conn.cursor()
                     conn.execute("PRAGMA busy_timeout = 3000;")
-                    self._shared_conn = conn
-                    self._shared_cur = conn.cursor()
-                    self._shared_query_count = 0
-                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
-                except Exception as e:
-                    print("[Batch Recovery Error]", e)
-                    self._shared_conn = None
-                    self._shared_cur = None
+                    cur.execute(sql_update, params)
+                    conn.commit()
 
-        dpid_item = self.table.item(row, self.col_index("DPID"))
-        ket_item  = self.table.item(row, self.col_index("KET"))
-        nama_item = self.table.item(row, self.col_index("NAMA"))
+                # =====================================================
+                # 🎨 Warnai ulang baris dan tandai sukses
+                # =====================================================
+                self._warnai_baris_berdasarkan_ket()
+                self._terapkan_warna_ke_tabel_aktif()
+                self._batch_add("ok", "aktifkan_pemilih")
 
-        dpid = dpid_item.text().strip() if dpid_item else ""
-        ket  = ket_item.text().strip().upper() if ket_item else ""
-        nama = nama_item.text().strip() if nama_item else ""
+                # =====================================================
+                # 💾 Non-batch mode: simpan & info
+                # =====================================================
+                if not getattr(self, "_in_batch_mode", False):
+                    self._flush_db("aktifkan_pemilih")
+                    show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
-        # ⚠️ Validasi
-        if not dpid or dpid == "0" or ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
-            if getattr(self, "_in_batch_mode", False):
-                if not self._warning_shown_in_batch.get("aktifkan_pemilih", False):
-                    self._warning_shown_in_batch["aktifkan_pemilih"] = True
-            else:
-                show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Aktif atau tidak bisa diubah.")
-            self._batch_add("rejected", "aktifkan_pemilih")
-            return
-
-        # ✅ Update kolom KET jadi 0
-        ket_item.setText("0")
-        self.update_database_field(row, "KET", "0")
-
-        gi = self._global_index(row)
-        if 0 <= gi < len(self.all_data):
-            self.all_data[gi]["KET"] = "0"
-
-        # 🕓 Isi kolom LastUpdate (DD/MM/YYYY)
-        today_str = datetime.now().strftime("%d/%m/%Y")
-        last_update_col = self.col_index("LastUpdate")
-        if last_update_col != -1:
-            lu_item = self.table.item(row, last_update_col)
-            if not lu_item:
-                lu_item = QTableWidgetItem()
-                self.table.setItem(row, last_update_col, lu_item)
-            lu_item.setText(today_str)
-
-        if 0 <= gi < len(self.all_data):
-            self.all_data[gi]["LastUpdate"] = today_str
-
-        # 🔹 Update ke database sesuai tahapan aktif (batch aware)
-        try:
-            tbl = self._active_table()
-            if not tbl:
-                return
-
-            # === Mode batch: gunakan shared cursor ===
-            if getattr(self, "_in_batch_mode", False):
-                if not hasattr(self, "_shared_cur") or not self._shared_cur:
-                    conn = get_connection()
-                    self._shared_conn = conn
-                    self._shared_cur = conn.cursor()
-                    conn.execute("PRAGMA busy_timeout = 3000;")
-                    self._shared_query_count = 0
-
-                cur = self._shared_cur
-                cur.execute(f"UPDATE {tbl} SET LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
-                self._shared_query_count += 1
-
-                # Commit tiap 1000 baris (agar aman)
-                if self._shared_query_count % 1000 == 0:
-                    self._shared_conn.commit()
-
-            else:
-                # === Mode normal (non-batch): commit langsung ===
-                conn = get_connection()
-                cur = conn.cursor()
-                conn.execute("PRAGMA busy_timeout = 3000;")
-                cur.execute(f"UPDATE {tbl} SET LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
-                conn.commit()
-
-        except Exception as e:
-            print("[DB ERROR] aktifkan_pemilih:", e)
-
-        # 🌗 Warna sesuai tema
-        self._warnai_baris_berdasarkan_ket()
-        self._terapkan_warna_ke_tabel_aktif()
-
-        # ✅ Catat batch sukses
-        self._batch_add("ok", "aktifkan_pemilih")
-
-        # ✅ Non-batch mode → langsung simpan & tampilkan info
-        if not getattr(self, "_in_batch_mode", False):
-            self._flush_db("aktifkan_pemilih")
-            show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
+            except Exception as e:
+                print(f"[DB ERROR] aktifkan_pemilih (fast): {e}")
 
 
     # =========================================================
@@ -3536,324 +3604,285 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_pemilih(self, row, conn=None):
-        """Menghapus baris pemilih dari tabel sesuai tahapan aktif (aman & super cepat)."""
+        """Menghapus baris pemilih dari tabel sesuai tahapan aktif (super cepat & aman)."""
         from db_manager import get_connection
 
-        # =====================================================
-        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
-        # =====================================================
-        if getattr(self, "_in_batch_mode", False):
-            # Pastikan semua atribut batch selalu aman
-            if not hasattr(self, "_shared_conn"):
-                self._shared_conn = None
-            if not hasattr(self, "_shared_cur"):
-                self._shared_cur = None
-            if not hasattr(self, "_shared_query_count"):
-                self._shared_query_count = 0
-            if not hasattr(self, "_warning_shown_in_batch"):
-                self._warning_shown_in_batch = {}
-
-            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+        with self.freeze_ui():  # 🚀 Bekukan GUI sementara agar tidak flicker
             try:
-                if self._shared_conn is None or self._shared_cur is None:
-                    raise Exception("batch connection reset")
+                # =====================================================
+                # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
+                # =====================================================
+                if getattr(self, "_in_batch_mode", False):
+                    if not hasattr(self, "_shared_conn"):
+                        self._shared_conn = None
+                    if not hasattr(self, "_shared_cur"):
+                        self._shared_cur = None
+                    if not hasattr(self, "_shared_query_count"):
+                        self._shared_query_count = 0
+                    if not hasattr(self, "_warning_shown_in_batch"):
+                        self._warning_shown_in_batch = {}
 
-                # Tes koneksi ringan
-                self._shared_cur.execute("SELECT 1;")
+                    # Reconnect jika perlu
+                    try:
+                        if self._shared_conn is None or self._shared_cur is None:
+                            raise Exception("batch connection reset")
+                        self._shared_cur.execute("SELECT 1;")
+                    except Exception:
+                        conn = get_connection()
+                        conn.execute("PRAGMA busy_timeout = 3000;")
+                        self._shared_conn = conn
+                        self._shared_cur = conn.cursor()
+                        self._shared_query_count = 0
+                        print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
 
-            except Exception:
-                try:
-                    conn = get_connection()
-                    conn.execute("PRAGMA busy_timeout = 3000;")
-                    self._shared_conn = conn
-                    self._shared_cur = conn.cursor()
-                    self._shared_query_count = 0
-                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
-                except Exception as e:
-                    print("[Batch Recovery Error]", e)
-                    self._shared_conn = None
-                    self._shared_cur = None
+                # =====================================================
+                # 🧩 Ambil data baris
+                # =====================================================
+                dpid_item = self.table.item(row, self.col_index("DPID"))
+                nik_item  = self.table.item(row, self.col_index("NIK"))
+                nkk_item  = self.table.item(row, self.col_index("NKK"))
+                nama_item = self.table.item(row, self.col_index("NAMA"))
 
-        # --- Ambil item dari tabel
-        dpid_item = self.table.item(row, self.col_index("DPID"))
-        nik_item  = self.table.item(row, self.col_index("NIK"))
-        nkk_item  = self.table.item(row, self.col_index("NKK"))
-        nama_item = self.table.item(row, self.col_index("NAMA"))
+                dpid = dpid_item.text().strip() if dpid_item else ""
+                nik  = nik_item.text().strip() if nik_item else ""
+                nkk  = nkk_item.text().strip() if nkk_item else ""
+                nama = nama_item.text().strip() if nama_item else ""
 
-        dpid = dpid_item.text().strip() if dpid_item else ""
-        nik  = nik_item.text().strip() if nik_item else ""
-        nkk  = nkk_item.text().strip() if nkk_item else ""
-        nama = nama_item.text().strip() if nama_item else ""
+                # ⚠️ Hanya boleh hapus jika DPID kosong / 0
+                if dpid and dpid != "0":
+                    if getattr(self, "_in_batch_mode", False):
+                        if not self._warning_shown_in_batch.get("hapus_pemilih", False):
+                            self._warning_shown_in_batch["hapus_pemilih"] = True
+                    else:
+                        show_modern_warning(
+                            self, "Ditolak",
+                            f"{nama} tidak dapat dihapus dari Daftar Pemilih.<br>"
+                            f"Hanya Pemilih Baru di tahap ini yang bisa dihapus!"
+                        )
+                    self._batch_add("rejected", "hapus_pemilih")
+                    return
 
-        # ⚠️ Hanya boleh hapus jika DPID kosong atau 0
-        if dpid and dpid != "0":
-            if getattr(self, "_in_batch_mode", False):
-                if not self._warning_shown_in_batch.get("hapus_pemilih", False):
-                    self._warning_shown_in_batch["hapus_pemilih"] = True
-            else:
-                show_modern_warning(
-                    self, "Ditolak",
-                    f"{nama} tidak dapat dihapus dari Daftar Pemilih.<br>"
-                    f"Hanya Pemilih Baru di tahap ini yang bisa dihapus!"
+                # 🔸 Konfirmasi (non-batch saja)
+                if not getattr(self, "_in_batch_mode", False):
+                    if not show_modern_question(
+                        self, "Konfirmasi Hapus",
+                        f"Apakah Anda yakin ingin menghapus data ini?<br>"
+                        f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
+                    ):
+                        self._batch_add("skipped", "hapus_pemilih")
+                        return
+
+                gi = self._global_index(row)
+                if not (0 <= gi < len(self.all_data)):
+                    self._batch_add("skipped", "hapus_pemilih")
+                    return
+
+                sig = self._row_signature_from_ui(row)
+                rowid = self.all_data[gi].get("rowid") or self.all_data[gi].get("_rowid_")
+                if not rowid:
+                    show_modern_error(self, "Error", "ROWID tidak ditemukan — data tidak dapat dihapus.")
+                    self._batch_add("skipped", "hapus_pemilih")
+                    return
+
+                last_update = sig.get("LastUpdate", "").strip()
+                tbl = self._active_table()
+                if not tbl:
+                    show_modern_error(self, "Error", "Tahapan tidak valid — tabel tujuan tidak ditemukan.")
+                    self._batch_add("skipped", "hapus_pemilih")
+                    return
+
+                # =====================================================
+                # ⚙️ Single-query DELETE ultra ringan
+                # =====================================================
+                sql_delete = f"""
+                    DELETE FROM {tbl}
+                    WHERE rowid = ?
+                    AND IFNULL(NIK,'') = ?
+                    AND IFNULL(NKK,'') = ?
+                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
+                    AND IFNULL(TGL_LHR,'') = ?
+                    AND IFNULL(LastUpdate,'') = ?
+                """
+                params = (
+                    rowid,
+                    sig.get("NIK", ""),
+                    sig.get("NKK", ""),
+                    sig.get("DPID", ""),
+                    sig.get("TGL_LHR", ""),
+                    last_update
                 )
-            self._batch_add("rejected", "hapus_pemilih")
-            return
 
-        # 🔸 Konfirmasi sebelum hapus (hanya jika bukan batch)
-        if not getattr(self, "_in_batch_mode", False):
-            if not show_modern_question(
-                self, "Konfirmasi Hapus",
-                f"Apakah Anda yakin ingin menghapus data ini?<br>"
-                f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
-            ):
-                self._batch_add("skipped", "hapus_pemilih")
-                return
+                if getattr(self, "_in_batch_mode", False):
+                    cur = self._shared_cur
+                    cur.execute(sql_delete, params)
+                    self._shared_query_count += 1
 
-        gi = self._global_index(row)
-        if not (0 <= gi < len(self.all_data)):
-            self._batch_add("skipped", "hapus_pemilih")
-            return
-
-        sig = self._row_signature_from_ui(row)
-        rowid = self.all_data[gi].get("rowid") or self.all_data[gi].get("_rowid_")
-        if not rowid:
-            show_modern_error(self, "Error", "ROWID tidak ditemukan — data tidak dapat dihapus.")
-            self._batch_add("skipped", "hapus_pemilih")
-            return
-
-        last_update = sig.get("LastUpdate", "").strip()  # biarkan tetap DD/MM/YYYY
-
-        # ✅ Tentukan tabel sesuai tahapan aktif
-        tbl = self._active_table()
-        if not tbl:
-            show_modern_error(self, "Error", "Tahapan tidak valid — tabel tujuan tidak ditemukan.")
-            self._batch_add("skipped", "hapus_pemilih")
-            return
-
-        try:
-            # ===========================================
-            # 🟢 1. Batch Mode → Simpan ke cursor bersama
-            # ===========================================
-            if getattr(self, "_in_batch_mode", False):
-                if not hasattr(self, "_shared_cur") or not self._shared_cur:
-                    # Buat shared cursor baru untuk batch
+                    # ✅ Commit otomatis setiap 1000 baris
+                    if self._shared_query_count % 1000 == 0:
+                        self._shared_conn.commit()
+                else:
                     conn = get_connection()
-                    self._shared_conn = conn
-                    self._shared_cur = conn.cursor()
+                    cur = conn.cursor()
                     conn.execute("PRAGMA busy_timeout = 3000;")
-                    self._shared_query_count = 0
+                    cur.execute(sql_delete, params)
+                    conn.commit()
 
-                cur = self._shared_cur
-                cur.execute(f"""
-                    DELETE FROM {tbl}
-                    WHERE rowid = ?
-                    AND IFNULL(NIK,'') = ?
-                    AND IFNULL(NKK,'') = ?
-                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
-                    AND IFNULL(TGL_LHR,'') = ?
-                    AND IFNULL(LastUpdate,'') = ?
-                """, (
-                    rowid,
-                    sig.get("NIK", ""),
-                    sig.get("NKK", ""),
-                    sig.get("DPID", ""),
-                    sig.get("TGL_LHR", ""),
-                    last_update
-                ))
+                # =====================================================
+                # 🧹 Hapus dari memori
+                # =====================================================
+                del self.all_data[gi]
+                if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
+                    self.current_page -= 1
 
-                self._shared_query_count += 1
+                # =====================================================
+                # 💬 Info sukses & catat batch
+                # =====================================================
+                if not getattr(self, "_in_batch_mode", False):
+                    show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari {tbl.upper()}!")
 
-                # Commit otomatis tiap 1000 operasi (supaya cepat tapi tetap aman)
-                if self._shared_query_count % 1000 == 0:
+                self._batch_add("ok", "hapus_pemilih")
+
+            except Exception as e:
+                show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+                self._batch_add("skipped", "hapus_pemilih")
+
+            # =====================================================
+            # 🔚 Tutup koneksi batch di akhir proses massal
+            # =====================================================
+            if not getattr(self, "_in_batch_mode", False) and hasattr(self, "_shared_conn"):
+                try:
                     self._shared_conn.commit()
-
-            # ===========================================
-            # 🔹 2. Mode Normal (Non-batch)
-            # ===========================================
-            else:
-                conn = get_connection()
-                cur = conn.cursor()
-                conn.execute("PRAGMA busy_timeout = 3000;")
-
-                cur.execute(f"""
-                    DELETE FROM {tbl}
-                    WHERE rowid = ?
-                    AND IFNULL(NIK,'') = ?
-                    AND IFNULL(NKK,'') = ?
-                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
-                    AND IFNULL(TGL_LHR,'') = ?
-                    AND IFNULL(LastUpdate,'') = ?
-                """, (
-                    rowid,
-                    sig.get("NIK", ""),
-                    sig.get("NKK", ""),
-                    sig.get("DPID", ""),
-                    sig.get("TGL_LHR", ""),
-                    last_update
-                ))
-
-                conn.commit()
-
-            # ✅ Hapus dari memori
-            del self.all_data[gi]
-
-            # Mundurkan halaman jika kosong
-            if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
-                self.current_page -= 1
-
-            if not getattr(self, "_in_batch_mode", False):
-                show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari {tbl.upper()}!")
-
-            self._batch_add("ok", "hapus_pemilih")
-
-        except Exception as e:
-            show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
-            self._batch_add("skipped", "hapus_pemilih")
-
-        # ===========================================
-        # 🔚 3. Tutup batch di akhir proses massal
-        # ===========================================
-        if not getattr(self, "_in_batch_mode", False) and hasattr(self, "_shared_conn"):
-            try:
-                self._shared_conn.commit()
-                self._shared_conn.close()
-                self._shared_cur = None
-                self._shared_conn = None
-            except Exception:
-                pass
-
+                    self._shared_conn.close()
+                    self._shared_cur = None
+                    self._shared_conn = None
+                except Exception:
+                    pass
 
     # =========================================================
     # 🔹 3. STATUS PEMILIH (versi batch optimized)
     # =========================================================
     def set_ket_status(self, row, new_value: str, label: str):
+        """
+        - Update berdasar DPID (unik)
+        - Gunakan shared connection bila batch
+        - Freeze UI selama proses (tanpa redraw berulang)
+        """
         from datetime import datetime
         from db_manager import get_connection
 
-        # =====================================================
-        # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
-        # =====================================================
-        if getattr(self, "_in_batch_mode", False):
-            # Pastikan semua atribut batch selalu aman
-            if not hasattr(self, "_shared_conn"):
-                self._shared_conn = None
-            if not hasattr(self, "_shared_cur"):
-                self._shared_cur = None
-            if not hasattr(self, "_shared_query_count"):
-                self._shared_query_count = 0
-            if not hasattr(self, "_warning_shown_in_batch"):
-                self._warning_shown_in_batch = {}
-
-            # 🩹 Jika koneksi/cursor mati → auto-reconnect
+        with self.freeze_ui():  # 🚀 Bekukan tampilan sementara
             try:
-                if self._shared_conn is None or self._shared_cur is None:
-                    raise Exception("batch connection reset")
+                # =====================================================
+                # 🧱 Inisialisasi batch environment aman
+                # =====================================================
+                if getattr(self, "_in_batch_mode", False):
+                    if not hasattr(self, "_shared_conn"):
+                        self._shared_conn = None
+                    if not hasattr(self, "_shared_cur"):
+                        self._shared_cur = None
+                    if not hasattr(self, "_shared_query_count"):
+                        self._shared_query_count = 0
+                    if not hasattr(self, "_warning_shown_in_batch"):
+                        self._warning_shown_in_batch = {}
 
-                # Tes koneksi ringan
-                self._shared_cur.execute("SELECT 1;")
+                    # Reconnect jika perlu
+                    try:
+                        if self._shared_conn is None or self._shared_cur is None:
+                            raise Exception("batch connection reset")
+                        self._shared_cur.execute("SELECT 1;")
+                    except Exception:
+                        conn = get_connection()
+                        conn.execute("PRAGMA busy_timeout = 3000;")
+                        self._shared_conn = conn
+                        self._shared_cur = conn.cursor()
+                        self._shared_query_count = 0
+                        print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
 
-            except Exception:
-                try:
-                    conn = get_connection()
-                    conn.execute("PRAGMA busy_timeout = 3000;")
-                    self._shared_conn = conn
-                    self._shared_cur = conn.cursor()
-                    self._shared_query_count = 0
-                    print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
-                except Exception as e:
-                    print("[Batch Recovery Error]", e)
-                    self._shared_conn = None
-                    self._shared_cur = None
+                # =====================================================
+                # 🧩 Ambil data baris
+                # =====================================================
+                dpid_item = self.table.item(row, self.col_index("DPID"))
+                nama_item = self.table.item(row, self.col_index("NAMA"))
+                nama = nama_item.text().strip() if nama_item else ""
 
-        dpid_item = self.table.item(row, self.col_index("DPID"))
-        nama_item = self.table.item(row, self.col_index("NAMA"))
-        nama = nama_item.text().strip() if nama_item else ""
+                if not dpid_item or dpid_item.text().strip() in ("", "0"):
+                    if getattr(self, "_in_batch_mode", False):
+                        if not self._warning_shown_in_batch.get("set_ket_status", False):
+                            show_modern_warning(self, "Ditolak", "Data Pemilih Baru tidak bisa di-TMS-kan.")
+                            self._warning_shown_in_batch["set_ket_status"] = True
+                    else:
+                        show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Baru dan tidak bisa di-TMS-kan.")
+                    self._batch_add("rejected", f"set_ket_status_{label}")
+                    return
 
-        # ⚠️ Validasi
-        if not dpid_item or dpid_item.text().strip() in ("", "0"):
-            if getattr(self, "_in_batch_mode", False):
-                if not self._warning_shown_in_batch.get("set_ket_status", False):
-                    show_modern_warning(self, "Ditolak", "Data Pemilih Baru tidak bisa di-TMS-kan.")
-                    self._warning_shown_in_batch["set_ket_status"] = True
-            else:
-                show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Baru dan tidak bisa di-TMS-kan.")
-            self._batch_add("rejected", f"set_ket_status_{label}")
-            return
-
-        # --- Update kolom KET
-        ket_item = self.table.item(row, self.col_index("KET"))
-        if ket_item and ket_item.text().strip() == new_value:
-            return
-
-        if ket_item:
-            ket_item.setText(new_value)
-            self.update_database_field(row, "KET", new_value)
-
-        gi = self._global_index(row)
-        if 0 <= gi < len(self.all_data):
-            self.all_data[gi]["KET"] = new_value
-
-        # --- Jika KET hasilnya 1–8 → isi LastUpdate
-        if new_value in ("1", "2", "3", "4", "5", "6", "7", "8"):
-            today_str = datetime.now().strftime("%d/%m/%Y")
-            last_update_col = self.col_index("LastUpdate")
-            if last_update_col != -1:
-                lu_item = self.table.item(row, last_update_col)
-                if not lu_item:
-                    lu_item = QTableWidgetItem()
-                    self.table.setItem(row, last_update_col, lu_item)
-                lu_item.setText(today_str)
-
-            if 0 <= gi < len(self.all_data):
-                self.all_data[gi]["LastUpdate"] = today_str
-
-            # 🔹 Update database (batch-aware)
-            try:
+                dpid = dpid_item.text().strip()
                 tbl = self._active_table()
                 if not tbl:
                     return
 
-                dpid = dpid_item.text().strip()
+                # =====================================================
+                # 🧠 Update cepat di memori
+                # =====================================================
+                gi = self._global_index(row)
+                if 0 <= gi < len(self.all_data):
+                    self.all_data[gi]["KET"] = new_value
+
+                ket_item = self.table.item(row, self.col_index("KET"))
+                if ket_item:
+                    ket_item.setText(new_value)
+
+                # =====================================================
+                # ⚙️ Query ultra ringan
+                # =====================================================
+                today_str = datetime.now().strftime("%d/%m/%Y")
+
+                # Single update untuk dua kolom (sekali query)
+                sql_update = f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?"
+                params = (new_value, today_str, dpid)
 
                 if getattr(self, "_in_batch_mode", False):
-                    # === MODE BATCH: shared cursor ===
-                    if not hasattr(self, "_shared_cur") or not self._shared_cur:
-                        conn = get_connection()
-                        self._shared_conn = conn
-                        self._shared_cur = conn.cursor()
-                        conn.execute("PRAGMA busy_timeout = 3000;")
-                        self._shared_query_count = 0
-
                     cur = self._shared_cur
-                    cur.execute(f"UPDATE {tbl} SET LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
+                    cur.execute(sql_update, params)
                     self._shared_query_count += 1
 
-                    # Commit setiap 1000 baris biar aman
                     if self._shared_query_count % 1000 == 0:
                         self._shared_conn.commit()
-
                 else:
-                    # === MODE NORMAL: commit langsung ===
                     conn = get_connection()
                     cur = conn.cursor()
                     conn.execute("PRAGMA busy_timeout = 3000;")
-                    cur.execute(f"UPDATE {tbl} SET LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
+                    cur.execute(sql_update, params)
                     conn.commit()
 
+                # =====================================================
+                # 🧩 Perbarui tampilan (langsung di memori)
+                # =====================================================
+                last_update_col = self.col_index("LastUpdate")
+                if last_update_col != -1:
+                    lu_item = self.table.item(row, last_update_col)
+                    if not lu_item:
+                        lu_item = QTableWidgetItem()
+                        self.table.setItem(row, last_update_col, lu_item)
+                    lu_item.setText(today_str)
+                    if 0 <= gi < len(self.all_data):
+                        self.all_data[gi]["LastUpdate"] = today_str
+
+                # =====================================================
+                # 🎨 Warnai dan tandai hasil
+                # =====================================================
+                self._warnai_baris_berdasarkan_ket()
+                self._terapkan_warna_ke_tabel_aktif()
+                self._batch_add("ok", f"set_ket_status_{label}")
+
+                # =====================================================
+                # 💾 Non-batch mode: simpan & info
+                # =====================================================
+                if not getattr(self, "_in_batch_mode", False):
+                    self._flush_db("set_ket_status")
+                    show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
+
             except Exception as e:
-                print("[DB ERROR] set_ket_status:", e)
-
-        # 🎨 Warnai merah (status TMS)
-        self._warnai_baris_berdasarkan_ket()
-        self._terapkan_warna_ke_tabel_aktif()
-
-        # ✅ Catat batch sukses
-        self._batch_add("ok", f"set_ket_status_{label}")
-
-        # ✅ Non-batch mode → langsung simpan dan tampilkan notifikasi
-        if not getattr(self, "_in_batch_mode", False):
-            self._flush_db("set_ket_status")
-            show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
+                print(f"[DB ERROR] set_ket_status (fast): {e}")
 
 
     # =========================================================
@@ -5391,6 +5420,73 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[WARN] Gagal menerapkan warna otomatis di show_page: {e}")
 
+    # =========================================================
+    # 🔹 CEK REKAP PEMILIH AKTIF (MENU → Rekap → Pemilih Aktif)
+    # =========================================================
+    def cek_rekapaktif(self):
+        """Menampilkan rekap pemilih aktif per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel rekap ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS rekap (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM rekap")
+
+            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+                cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
+            self.hide()
+            self.rekap_window = RekapWindow(self)
+            self.rekap_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Aktif:\n{e}")
 
     # =================================================
     # Pagination UI
@@ -5648,6 +5744,187 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"[WARN] init_db_pragmas gagal: {e}", file=sys.stderr)
+
+# =========================================================
+# 🔹 KELAS TAMPILAN REKAP
+# =========================================================
+class RekapWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih aktif per TPS."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Pemilih Aktif")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # =========================================================
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PEMILIH AKTIF PER TPS")
+        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #111111;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #333333;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel rekap
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel rekap ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM rekap ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            for j, val in enumerate(row):
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                if j in (0, 1, 2, 3, 4):
+                    font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
 
 #####################################*************########################################
 #####################################*************########################################
