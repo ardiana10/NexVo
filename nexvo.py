@@ -1470,7 +1470,6 @@ class RangeSlider(QWidget):
         painter.setBrush(QColor(60, 60, 60, alpha))  # Dark background dengan alpha
         painter.drawRoundedRect(bubble_rect, 4, 4)
         
-        # Gambar segitiga pointer
         self._draw_label_pointer(painter, x_position, label_top_y + text_height, alpha)
         
         # Gambar teks
