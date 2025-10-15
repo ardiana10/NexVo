@@ -4438,8 +4438,7 @@ class MainWindow(QMainWindow):
 
         # --- Batch flags & stats (aman dari AttributeError) ---
         self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
-        self._in_batch_mode = False
-        self._warning_shown_in_batch = {}
+        self._in_batch_shown_in_batch = {}
         self._install_safe_shutdown_hooks()
         self.sort_lastupdate_asc = True
 
