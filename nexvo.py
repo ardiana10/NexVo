@@ -1993,7 +1993,7 @@ class MainWindow(QMainWindow):
         menu_cekdata.addAction(QAction("Potensi NIK Invalid", self, triggered=self.cek_potensi_nik_invalid))
         menu_cekdata.addAction(QAction("Potensi Dibawah Umur", self, triggered=self.cek_potensi_dibawah_umur))
         menu_cekdata.addAction(QAction("Potensi Beda TPS", self, triggered=self.cek_beda_tps))
-        menu_cekdata.addAction(QAction("Potensi Tidak Padan", self, triggered=self.cek_tidak_padan))
+        menu_cekdata.addAction(QAction("Pemilih Tidak Padan", self, triggered=self.cek_tidak_padan))
         menu_cekdata.addAction(QAction("Ganda NIK", self, triggered=self.cek_ganda_nik))
         menu_cekdata.addAction(QAction("Pemilih Pemula", self, triggered=self.cek_pemilih_pemula))
         btn_cekdata.setMenu(menu_cekdata)
@@ -3112,7 +3112,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Dashboard Header Refresh Error] {e}")
 
-        print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
+        #print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
 
     
     def _stack_fade_to(self, target_widget, duration=350):
@@ -6280,8 +6280,17 @@ class RekapWindow(QMainWindow):
         # =========================================================
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         # =========================================================
@@ -6291,17 +6300,17 @@ class RekapWindow(QMainWindow):
         judul_layout.setSpacing(2)
 
         lbl1 = QLabel("REKAP PEMILIH AKTIF")
-        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl1.setStyleSheet("color: #111111;")
+        lbl1.setStyleSheet("color: #000000;")
 
         lbl2 = QLabel(nama_tahapan)
-        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl2.setStyleSheet("color: #333333;")
+        lbl2.setStyleSheet("color: #000000;")
 
         lbl3 = QLabel(lokasi_str)
-        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl3.setStyleSheet("color: #000000;")
 
@@ -6459,8 +6468,17 @@ class BaruWindow(QMainWindow):
         # =========================================================
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         # =========================================================
@@ -6470,17 +6488,17 @@ class BaruWindow(QMainWindow):
         judul_layout.setSpacing(2)
 
         lbl1 = QLabel("REKAP PEMILIH BARU")
-        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl1.setStyleSheet("color: #111111;")
+        lbl1.setStyleSheet("color: #000000;")
 
         lbl2 = QLabel(nama_tahapan)
-        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl2.setStyleSheet("color: #333333;")
+        lbl2.setStyleSheet("color: #000000;")
 
         lbl3 = QLabel(lokasi_str)
-        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl3.setStyleSheet("color: #000000;")
 
@@ -6638,8 +6656,17 @@ class UbahWindow(QMainWindow):
         # =========================================================
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         # =========================================================
@@ -6649,17 +6676,17 @@ class UbahWindow(QMainWindow):
         judul_layout.setSpacing(2)
 
         lbl1 = QLabel("REKAP PERUBAHAN DATA PEMILIH")
-        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl1.setStyleSheet("color: #111111;")
+        lbl1.setStyleSheet("color: #000000;")
 
         lbl2 = QLabel(nama_tahapan)
-        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl2.setStyleSheet("color: #333333;")
+        lbl2.setStyleSheet("color: #000000;")
 
         lbl3 = QLabel(lokasi_str)
-        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl3.setStyleSheet("color: #000000;")
 
@@ -6810,21 +6837,30 @@ class SaringWindow(QMainWindow):
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         judul_layout = QVBoxLayout()
         judul_layout.setSpacing(2)
         for text, size, weight in [
-            ("REKAP PEMILIH TIDAK MEMENUHI SYARAT (TMS)", 22, QFont.Weight.Bold),
-            (nama_tahapan, 13, QFont.Weight.Normal),
-            (lokasi_str, 12, QFont.Weight.Bold)
+            ("REKAP PEMILIH TIDAK MEMENUHI SYARAT (TMS)", 13, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Bold),
+            (lokasi_str, 13, QFont.Weight.Bold)
         ]:
             lbl = QLabel(text)
             lbl.setFont(QFont("Segoe UI", size, weight))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            lbl.setStyleSheet("color: #000000;" if size > 13 else "color: #000000;")
             judul_layout.addWidget(lbl)
         layout.addLayout(judul_layout)
 
@@ -6967,21 +7003,30 @@ class KtpWindow(QMainWindow):
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         judul_layout = QVBoxLayout()
         judul_layout.setSpacing(2)
         for text, size, weight in [
-            ("REKAP PEMILIH NON KTP-EL", 22, QFont.Weight.Bold),
-            (nama_tahapan, 13, QFont.Weight.Normal),
-            (lokasi_str, 12, QFont.Weight.Bold)
+            ("REKAP PEMILIH NON KTP-EL", 13, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Bold),
+            (lokasi_str, 13, QFont.Weight.Bold)
         ]:
             lbl = QLabel(text)
             lbl.setFont(QFont("Segoe UI", size, weight))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            lbl.setStyleSheet("color: #000000;" if size > 13 else "color: #000000;")
             judul_layout.addWidget(lbl)
         layout.addLayout(judul_layout)
 
@@ -7116,21 +7161,30 @@ class DifabelWindow(QMainWindow):
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
-        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
         layout.addWidget(lbl_user)
 
         judul_layout = QVBoxLayout()
         judul_layout.setSpacing(2)
         for text, size, weight in [
-            ("REKAP PEMILIH DISABILITAS", 22, QFont.Weight.Bold),
-            (nama_tahapan, 13, QFont.Weight.Normal),
-            (lokasi_str, 12, QFont.Weight.Bold)
+            ("REKAP PEMILIH DISABILITAS", 13, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Bold),
+            (lokasi_str, 13, QFont.Weight.Bold)
         ]:
             lbl = QLabel(text)
             lbl.setFont(QFont("Segoe UI", size, weight))
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            lbl.setStyleSheet("color: #000000;" if size > 13 else "color: #000000;")
             judul_layout.addWidget(lbl)
         layout.addLayout(judul_layout)
 
