@@ -4441,7 +4441,7 @@ class MainWindow(QMainWindow):
         self._in_batch_shown_in_batch = {}
         self._install_safe_shutdown_hooks()
         self.sort_lastupdate_asc = True
-
+        
         self.current_page = 1
         self.rows_per_page = 50
         self.total_pages = 1
@@ -5839,31 +5839,64 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(new_widget)
             return
 
-        # 🧭 Jalankan animasi aman
+        # 🧭 Jalankan animasi aman (clamp ke available screen untuk menghindari setGeometry warning di Windows)
         geo = self.centralWidget().geometry()
         w, h = geo.width(), geo.height()
-        new_widget.setGeometry(geo)
 
-        # Posisi awal berdasarkan arah transisi
-        start_rect = QRect(0, 0, w, h)
+        # Coba dapatkan screen yang relevan, fallback ke primary
+        try:
+            screen = QApplication.screenAt(self.mapToGlobal(self.rect().center())) or QApplication.primaryScreen()
+        except Exception:
+            screen = QApplication.primaryScreen()
+
+        if screen:
+            avail = screen.availableGeometry()
+            clamped_w = min(w, avail.width())
+            clamped_h = min(h, avail.height())
+        else:
+            clamped_w, clamped_h = w, h
+
+        # Buat QRect yang diklamping, tetap gunakan posisi x/y lama tapi ukuran dikurangi bila perlu
+        try:
+            clamped_geo = QRect(geo.x(), geo.y(), clamped_w, clamped_h)
+        except Exception:
+            clamped_geo = QRect(0, 0, clamped_w, clamped_h)
+
+        # Atur geometry awal dan posisi mulai animasi (aman dalam try/except)
+        start_rect = QRect(0, 0, clamped_w, clamped_h)
         if direction == "left":
-            start_rect.moveTo(w, 0)
+            start_rect.moveTo(clamped_w, 0)
         elif direction == "right":
-            start_rect.moveTo(-w, 0)
+            start_rect.moveTo(-clamped_w, 0)
 
-        new_widget.setGeometry(start_rect)
+        try:
+            new_widget.setGeometry(start_rect)
+        except Exception:
+            # fallback setGeometry yang lebih aman
+            try:
+                new_widget.setGeometry(0, 0, clamped_w, clamped_h)
+            except Exception:
+                pass
+
+        # Pasang widget baru sebagai central
         self.setCentralWidget(new_widget)
 
-        # Animasi geser halus
-        anim = QPropertyAnimation(new_widget, b"geometry")
-        anim.setDuration(duration)
-        anim.setStartValue(start_rect)
-        anim.setEndValue(geo)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.start()
-
-        # Simpan referensi supaya animasi tidak dihentikan premature
-        self._slide_anim = anim
+        # Animasi geser halus — gunakan clamped_geo sebagai target
+        try:
+            anim = QPropertyAnimation(new_widget, b"geometry")
+            anim.setDuration(duration)
+            anim.setStartValue(start_rect)
+            anim.setEndValue(clamped_geo)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            anim.start()
+            # Simpan referensi supaya animasi tidak dihentikan premature
+            self._slide_anim = anim
+        except Exception:
+            # Jika animasi gagal, pastikan widget berada di posisi akhir minimal
+            try:
+                new_widget.setGeometry(clamped_geo)
+            except Exception:
+                pass
 
     def auto_fit_columns(self):
         header = self.table.horizontalHeader()
