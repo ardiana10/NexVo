@@ -13,27 +13,21 @@ Catatan:
 - Jalankan: python nexvo.py
 """
 
-import os, sys, subprocess, csv, hashlib
+import os, sys, subprocess, csv, hashlib, random, string, re
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
 from collections import defaultdict
 from typing import Optional
-import random, string, re
 from io import BytesIO
 import pyotp, qrcode
-from PyQt6.QtGui import QPainter, QPen, QRegularExpressionValidator
-from PyQt6.QtWidgets import QCompleter
-from db_manager import (
-    close_connection,
-    get_connection,
-    with_safe_db,
-    bootstrap,
-    connect_encrypted,
-    hapus_semua_data,
-)
 
 # --- DB ---
+from db_manager import (
+    close_connection, get_connection, with_safe_db, bootstrap,
+    connect_encrypted, hapus_semua_data,
+)
+
 try:
     from sqlcipher3 import dbapi2 as sqlcipher
 except Exception as e:
@@ -41,14 +35,27 @@ except Exception as e:
     raise
 
 # --- UI ---
-from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QRect, QEvent, QMargins, QVariantAnimation
-from PyQt6.QtGui import QIcon, QFont, QColor, QPixmap, QPainter, QAction, QPalette, QBrush
-from PyQt6.QtWidgets import (QSizePolicy, QToolBar, QStatusBar, QHeaderView, QTableWidget, QFileDialog, QScrollArea, QFormLayout, QToolButton,
-    QApplication, QWidget, QMainWindow, QLabel, QLineEdit, QPushButton, QComboBox, QDialog, QGraphicsOpacityEffect, QCheckBox, 
-    QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog, QTableWidgetItem, QStyledItemDelegate, 
-    QSlider, QGridLayout, QRadioButton, QDockWidget, QMenu, QStackedWidget, QAbstractItemView, QStyle, QGraphicsSimpleTextItem, QSpacerItem
+from PyQt6.QtCore import (
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression,
+    QRect, QEvent, QMargins, QVariantAnimation,
 )
+from PyQt6.QtGui import (
+    QIcon, QFont, QColor, QPixmap, QPainter, QAction,
+    QPalette, QBrush, QPen, QRegularExpressionValidator,
+)
+from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
+from PyQt6.QtWidgets import (
+    QSizePolicy, QToolBar, QStatusBar, QHeaderView, QTableWidget,
+    QFileDialog, QScrollArea, QFormLayout, QToolButton, QApplication,
+    QWidget, QMainWindow, QLabel, QLineEdit, QPushButton, QComboBox,
+    QDialog, QGraphicsOpacityEffect, QCheckBox, QVBoxLayout, QHBoxLayout,
+    QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog,
+    QTableWidgetItem, QStyledItemDelegate, QSlider, QGridLayout, QRadioButton,
+    QDockWidget, QMenu, QStackedWidget, QAbstractItemView, QStyle,
+    QGraphicsSimpleTextItem, QSpacerItem,
+)
+from PyQt6.QtWidgets import QCompleter
+
 
 
 # ==========================================================
@@ -120,11 +127,10 @@ def connect_encrypted_db(db_path: Path, key_bytes: bytes):
 
 def init_schema(conn) -> None:
     """
-    Membuat semua tabel utama (users, kecamatan, dphp, dpshp, dpshpa)
+    Membuat semua tabel utama (users, kecamatan, dphp, dpshp, dpshpa, dan tabel rekap)
     jika belum ada. Aman dijalankan berulang kali.
     """
     import os, sys, subprocess
-
     cur = conn.cursor()
 
     # --- Tabel users ---
@@ -177,22 +183,93 @@ def init_schema(conn) -> None:
     for tbl in ("dphp", "dpshp", "dpshpa"):
         cur.execute(f"CREATE TABLE IF NOT EXISTS {tbl} {common_schema};")
 
+    # =========================================================
+    # 🧾 Tambahan: tabel-tabel rekapitulasi
+    # =========================================================
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rekap (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS baru (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ubah (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS saring (
+            "NAMA TPS" TEXT,
+            "1L" INTEGER, "1P" INTEGER,
+            "2L" INTEGER, "2P" INTEGER,
+            "3L" INTEGER, "3P" INTEGER,
+            "4L" INTEGER, "4P" INTEGER,
+            "5L" INTEGER, "5P" INTEGER,
+            "6L" INTEGER, "6P" INTEGER,
+            "7L" INTEGER, "7P" INTEGER,
+            "8L" INTEGER, "8P" INTEGER,
+            "TMS L" INTEGER, "TMS P" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ktpel (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS difabel (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "FISIK" INTEGER,
+            "INTELEKTUAL" INTEGER,
+            "MENTAL" INTEGER,
+            "DIF. WICARA" INTEGER,
+            "DIF. RUNGU" INTEGER,
+            "DIF. NETRA" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
     conn.commit()
 
-    # --- Cek tabel kecamatan ---
+    # --- Isi kecamatan otomatis jika kosong ---
     try:
         cur.execute("SELECT COUNT(*) FROM kecamatan")
         count = cur.fetchone()[0]
     except Exception:
-        count = 0  # kalau tabel belum siap, abaikan tapi log
+        count = 0
 
-    # --- Isi tabel kecamatan jika kosong ---
     if count == 0:
         print("[INFO] Tabel 'kecamatan' kosong → menjalankan init_db.py ...")
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             script_path = os.path.join(base_dir, "init_db.py")
-
             if os.path.exists(script_path):
                 subprocess.run([sys.executable, script_path], check=True)
                 print("[✅] Data kecamatan berhasil diinisialisasi otomatis.")
@@ -203,15 +280,27 @@ def init_schema(conn) -> None:
         except Exception as e:
             print(f"[ERROR] Gagal menjalankan init_db.py: {e}")
 
-    # ✅ Tidak menutup koneksi
-
 
 def hapus_semua_data(conn):
-    """Kosongkan seluruh tabel di nexvo.db (users, dphp, dpshp, dpshpa)."""
+    """Hapus semua data dinamis tanpa mengganggu tabel master atau metadata internal."""
     cur = conn.cursor()
-    for tbl in ("users", "dphp", "dpshp", "dpshpa"):
-        cur.execute(f"DELETE FROM {tbl};")
-    conn.commit()
+    try:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [
+            r[0] for r in cur.fetchall()
+            if r[0] not in ("sqlite_sequence", "kecamatan")
+        ]
+
+        for tbl in tables:
+            cur.execute(f"DELETE FROM {tbl};")
+
+        conn.commit()
+        print("[INFO] Semua data berhasil dihapus.")
+
+    except Exception as e:
+        print(f"[PERINGATAN] Gagal hapus data: {e}")
+
+
 
 def show_modern_warning(parent, title, text):
     msg = QMessageBox(parent)
@@ -605,45 +694,41 @@ class CheckboxDelegate(QStyledItemDelegate):
         super().__init__(parent)
 
     def paint(self, painter, option, index):
-        value = index.data(Qt.ItemDataRole.CheckStateRole)
-        if value is None:
-            super().paint(painter, option, index)
+        # 🛡️ Abaikan jika tabel kosong atau index tidak valid
+        model = index.model()
+        if not model or index.row() >= model.rowCount() or index.column() != 0:
             return
 
-        # 🔹 Konversi nilai
+        value = index.data(Qt.ItemDataRole.CheckStateRole)
+        if value is None:
+            return  # jangan gambar apa-apa
+
         try:
             state = Qt.CheckState(value)
         except Exception:
             state = Qt.CheckState.Unchecked
 
-        # 🔹 Matikan highlight seleksi (hilangkan abu gelap)
         option.state &= ~QStyle.StateFlag.State_Selected
         option.state &= ~QStyle.StateFlag.State_HasFocus
 
         rect = self.get_checkbox_rect(option)
-
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # === Checkbox belum dicentang ===
+        # Gambar checkbox
         if state == Qt.CheckState.Unchecked:
-            painter.setBrush(Qt.BrushStyle.NoBrush)      # transparan
-            painter.setPen(QPen(QColor("#A0A0A0"), 1.2)) # border hitam tipis
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#A0A0A0"), 1.2))
             painter.drawRoundedRect(rect, 3, 3)
-
-        # === Checkbox dicentang ===
         else:
-            painter.setBrush(Qt.BrushStyle.NoBrush)      # tetap transparan
-            painter.setPen(QPen(QColor("#000000"), 1.2)) # border hitam
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#000000"), 1.2))
             painter.drawRoundedRect(rect, 3, 3)
-
-            # gambar centang merah
             painter.setPen(QPen(QColor("#C42525"), 2))
             painter.drawLine(rect.left() + 3, rect.center().y(),
                              rect.center().x() - 1, rect.bottom() - 4)
             painter.drawLine(rect.center().x() - 1, rect.bottom() - 4,
                              rect.right() - 3, rect.top() + 3)
-
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
@@ -1771,7 +1856,7 @@ class MainWindow(QMainWindow):
 
         # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_rekap = QToolButton()
-        btn_rekap.setText("Rekap")
+        btn_rekap.setText(" Rekap ")
         btn_rekap.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn_rekap.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
@@ -2098,7 +2183,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(0, 30)
         self.table.horizontalHeader().setStretchLastSection(True)
-        #QTimer.singleShot(0, self.init_header_checkbox)
+        QTimer.singleShot(0, self.init_header_checkbox)
 
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
@@ -2154,11 +2239,13 @@ class MainWindow(QMainWindow):
         self.table.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
+        # === 🩶 Menangani klik luar tabel untuk clear selection ===
         if event.type() == QEvent.Type.MouseButtonPress:
             pos = self.mapFromGlobal(event.globalPosition().toPoint())
             if not self.table.geometry().contains(pos):
                 self._safe_clear_selection()
 
+        # === 🩶 Area viewport tabel ===
         if obj == self.table.viewport():
             if event.type() == QEvent.Type.MouseMove:
                 index = self.table.indexAt(event.pos())
@@ -2166,8 +2253,13 @@ class MainWindow(QMainWindow):
                     self._safe_clear_selection()
             elif event.type() == QEvent.Type.Leave:
                 self._safe_clear_selection()
+            elif event.type() == QEvent.Type.Resize:
+                # Pastikan overlay “Data Tidak Ditemukan” tetap di tengah
+                if hasattr(self, "_empty_overlay") and self._empty_overlay:
+                    self._empty_overlay.resize(self.table.viewport().size())
 
         return super().eventFilter(obj, event)
+
     
     def reset_tampilkan_semua_data(self, silent=False):
         """
@@ -3281,14 +3373,14 @@ class MainWindow(QMainWindow):
             if it and it.checkState() == Qt.CheckState.Checked:
                 checked_cnt += 1
 
-        #self.header_checkbox.blockSignals(True)
-        #if checked_cnt == 0:
-        #    self.header_checkbox.setCheckState(Qt.CheckState.Unchecked)
-        #elif checked_cnt == total:
-        #    self.header_checkbox.setCheckState(Qt.CheckState.Checked)
-        #else:
-        #    self.header_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
-        #self.header_checkbox.blockSignals(False)
+        self.header_checkbox.blockSignals(True)
+        if checked_cnt == 0:
+            self.header_checkbox.setCheckState(Qt.CheckState.Unchecked)
+        elif checked_cnt == total:
+            self.header_checkbox.setCheckState(Qt.CheckState.Checked)
+        else:
+            self.header_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+        self.header_checkbox.blockSignals(False)
 
     # Memunculkan menu klik kanan
     def show_context_menu(self, pos):
@@ -4157,11 +4249,9 @@ class MainWindow(QMainWindow):
             f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!")
         
     def cek_potensi_nkk_invalid(self):
-        """
-        🔍 Pemeriksaan Potensi NKK Invalid di seluruh data (full DB)
-        Data diperiksa tanpa mengubah kolom apa pun — semua kolom tetap tampil.
-        """
+        """🔍 Pemeriksaan Potensi NKK Invalid di seluruh data (full DB)."""
         from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -4174,28 +4264,22 @@ class MainWindow(QMainWindow):
             rows = cur.fetchall()
 
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])
                 return
 
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            all_data = [{col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))} for r in rows]
 
             hasil_data = []
             for d in all_data:
                 nkk = d.get("NKK", "").strip()
                 ket = d.get("KET", "").strip().upper()
-
-                # Lewati baris dengan KET 1–8
                 if ket in ("1","2","3","4","5","6","7","8"):
                     continue
-
-                # Pemeriksaan NKK
                 if len(nkk) != 16:
                     hasil_data.append(d)
                     continue
-
                 try:
                     dd, mm = int(nkk[6:8]), int(nkk[8:10])
                     if not (1 <= dd <= 31 and 1 <= mm <= 12):
@@ -4203,41 +4287,27 @@ class MainWindow(QMainWindow):
                 except Exception:
                     hasil_data.append(d)
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Potensi NKK Invalid.")
-                return
-
-            # Urutkan sesuai kebutuhan
-            hasil_data.sort(key=lambda d: (
-                d.get("TPS", ""),
-                d.get("RW", ""),
-                d.get("RT", ""),
-                d.get("NKK", ""),
-                d.get("NAMA", "")
-            ))
-
-            # Tampilkan ke tabel tanpa menghapus kolom apa pun
+            # tampilkan walau kosong
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Potensi NKK Invalid ditemukan.<br>"
-                f"<b>Harap segera periksa data anda!</b>"
-            )
+            if hasil_data:
+                show_modern_info(self, "Selesai", 
+                    f"{len(hasil_data)} Data Potensi NKK Invalid Ditemukan.\n"
+                    f"Harap segera periksa data anda!")
+            else:
+                show_modern_info(self, "Selesai", "Tidak Ada Data Potensi NKK Invalid.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Potensi NKK Invalid:\n{e}")
 
+
     def cek_potensi_nik_invalid(self):
-        """
-        🔍 Pemeriksaan Potensi NKK Invalid di seluruh data (full DB)
-        Data diperiksa tanpa mengubah kolom apa pun — semua kolom tetap tampil.
-        """
+        """🔍 Pemeriksaan Potensi NIK Invalid di seluruh data (full DB)."""
         from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -4250,28 +4320,22 @@ class MainWindow(QMainWindow):
             rows = cur.fetchall()
 
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])
                 return
 
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            all_data = [{col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))} for r in rows]
 
             hasil_data = []
             for d in all_data:
                 nik = d.get("NIK", "").strip()
                 ket = d.get("KET", "").strip().upper()
-
-                # Lewati baris dengan KET 1–8
                 if ket in ("1","2","3","4","5","6","7","8"):
                     continue
-
-                # Pemeriksaan NIK
                 if len(nik) != 16:
                     hasil_data.append(d)
                     continue
-
                 try:
                     dd, mm = int(nik[6:8]), int(nik[8:10])
                     if not (1 <= dd <= 71 and 1 <= mm <= 12):
@@ -4279,45 +4343,27 @@ class MainWindow(QMainWindow):
                 except Exception:
                     hasil_data.append(d)
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Potensi NKK Invalid.")
-                return
-
-            # Urutkan sesuai kebutuhan
-            hasil_data.sort(key=lambda d: (
-                d.get("TPS", ""),
-                d.get("RW", ""),
-                d.get("RT", ""),
-                d.get("NKK", ""),
-                d.get("NAMA", "")
-            ))
-
-            # Tampilkan ke tabel tanpa menghapus kolom apa pun
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Potensi NIK Invalid ditemukan.<br>"
-                f"<b>Harap segera periksa data anda!</b>"
-            )
+            if hasil_data:
+                show_modern_info(self, "Selesai", 
+                    f"{len(hasil_data)} Data Potensi NIK Invalid Ditemukan.\n"
+                    f"Harap segera periksa data anda!")
+            else:
+                show_modern_info(self, "Selesai", "Tidak Ada Data Potensi NIK Invalid.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Potensi NIK Invalid:\n{e}")
 
+
     def cek_potensi_dibawah_umur(self):
-        """
-        🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB)
-        - Melewati baris dengan KET = 1–8
-        - Menghitung umur berdasarkan TGL_LHR
-        - Menandai pemilih yang berumur <13 tahun atau <17 tahun (dengan STS=B)
-        - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
-        """
+        """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB)."""
         from db_manager import get_connection
         from datetime import datetime
+        from PyQt6.QtCore import QTimer
 
         target_date = datetime(2029, 6, 26)
 
@@ -4332,28 +4378,23 @@ class MainWindow(QMainWindow):
             rows = cur.fetchall()
 
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])
                 return
 
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
-
+            all_data = [{col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))} for r in rows]
             hasil_data = []
+
             for d in all_data:
                 tgl = d.get("TGL_LHR", "").strip()
                 ket = d.get("KET", "").strip().upper()
                 sts = d.get("STS", "").strip().upper()
-
-                # ⚠️ Lewati baris dengan KET 1–8
                 if ket in ("1","2","3","4","5","6","7","8"):
                     continue
-
                 if not tgl:
                     continue
 
-                # Format tanggal lahir bisa 01/01/2000 atau 2000-01-01
                 for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
                     try:
                         tgl_lhr = datetime.strptime(tgl, fmt)
@@ -4364,44 +4405,23 @@ class MainWindow(QMainWindow):
                     continue
 
                 umur = (target_date - tgl_lhr).days / 365.25
-
-                if umur < 0 or umur < 13:
+                if umur < 13 or (umur < 17 and sts == "B"):
                     d["CEK_DATA"] = "Potensi Dibawah Umur"
                     hasil_data.append(d)
-                    continue
-                elif umur < 17 and sts == "B":
-                    d["CEK_DATA"] = "Potensi Dibawah Umur"
-                    hasil_data.append(d)
-                    continue
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Potensi Dibawah Umur.")
-                return
-
-            # ✅ Urutkan hasil
-            hasil_data.sort(key=lambda d: (
-                d.get("TPS", ""),
-                d.get("RW", ""),
-                d.get("RT", ""),
-                d.get("NKK", ""),
-                d.get("NAMA", "")
-            ))
-
-            # ✅ Tampilkan ke tabel (tanpa menghapus kolom)
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Potensi Dibawah Umur ditemukan.\n"
-                f"Harap segera periksa data anda!"
-            )
+            if hasil_data:
+                show_modern_info(self, "Selesai", f"{len(hasil_data)} Data Potensi Dibawah Umur Ditemukan.")
+            else:
+                show_modern_info(self, "Selesai", "Tidak Ada Pemilih Potensi Dibawah Umur.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Potensi Dibawah Umur:\n{e}")
+
 
     def cek_beda_tps(self):
         """
@@ -4411,6 +4431,8 @@ class MainWindow(QMainWindow):
         - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
         """
         from collections import defaultdict
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -4422,25 +4444,28 @@ class MainWindow(QMainWindow):
             col_names = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
 
+            # === Jika tabel kosong ===
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
                 return
 
             # === Muat seluruh data ke memori ===
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
 
             # === Kelompokkan berdasarkan NKK ===
             nkk_groups = defaultdict(list)
             for d in all_data:
-                ket = d.get("KET", "").strip()
                 nkk = d.get("NKK", "").strip()
+                ket = d.get("KET", "").strip()
                 if not nkk:
                     continue
                 if ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
-                    continue  # ⛔ skip baris KET 1–8
+                    continue  # ⛔ lewati baris dengan KET 1–8
                 nkk_groups[nkk].append(d)
 
             # === Deteksi NKK yang muncul di TPS berbeda ===
@@ -4450,16 +4475,11 @@ class MainWindow(QMainWindow):
                     continue
                 tps_set = {d.get("TPS", "").strip() for d in daftar}
                 if len(tps_set) > 1:
-                    # Semua anggota grup ini berarti Beda TPS
                     for d in daftar:
                         d["CEK_DATA"] = "Beda TPS"
                         hasil_data.append(d)
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan Pemilih Beda TPS.")
-                return
-
-            # === Urutkan hasil ===
+            # === Urutkan hasil (meski kosong tetap aman) ===
             hasil_data.sort(key=lambda d: (
                 d.get("NKK", ""),
                 d.get("TPS", ""),
@@ -4468,21 +4488,30 @@ class MainWindow(QMainWindow):
                 d.get("NAMA", "")
             ))
 
-            # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
+            # === Tampilkan hasil ke tabel (termasuk jika kosong) ===
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Pemilih Beda TPS ditemukan.\n"
-                f"Harap segera pindahkan ke TPS yang seharusnya!"
-            )
+            # === Popup hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f"{len(hasil_data)} Data Pemilih Beda TPS Ditemukan.\n"
+                    f"Harap segera pindahkan ke TPS yang seharusnya!"
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Pemilih Beda TPS."
+                )
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Beda TPS:\n{e}")
+
 
     def cek_tidak_padan(self):
         """
@@ -4491,6 +4520,9 @@ class MainWindow(QMainWindow):
         - Melewati baris dengan KET = 1–8 selain 8
         - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
         """
+        from collections import defaultdict
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -4502,42 +4534,39 @@ class MainWindow(QMainWindow):
             col_names = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
 
+            # === Jika tabel kosong ===
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
                 return
 
-            # === Muat seluruh data ke memori ===
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            # === Muat seluruh data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
 
             # === Kelompokkan berdasarkan NIK ===
             nik_ket_map = defaultdict(set)
             for d in all_data:
                 nik = d.get("NIK", "").strip()
                 ket = d.get("KET", "").strip().upper()
-                if not nik:
-                    continue
-                nik_ket_map[nik].add(ket)
+                if nik:
+                    nik_ket_map[nik].add(ket)
 
-            # === Pemeriksaan: KET = 8 tanpa pasangan B ===
+            # === Pemeriksaan: KET=8 tanpa pasangan B ===
             hasil_data = []
             for d in all_data:
                 ket = d.get("KET", "").strip().upper()
                 nik = d.get("NIK", "").strip()
-                if ket in ("1","2","3","4","5","6","7"):
-                    continue  # ⛔ skip KET 1–7
-                if ket == "8":
-                    if "B" not in nik_ket_map[nik]:
-                        d["CEK_DATA"] = "Tidak Padan"
-                        hasil_data.append(d)
+                if not nik:
+                    continue
+                if ket == "8" and "B" not in nik_ket_map[nik]:
+                    d["CEK_DATA"] = "Tidak Padan"
+                    hasil_data.append(d)
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Pemilih Tidak Padan.")
-                return
-
-            # === Urutkan hasil ===
+            # === Urutkan hasil (tetap aman meski kosong) ===
             hasil_data.sort(key=lambda d: (
                 d.get("TPS", ""),
                 d.get("RW", ""),
@@ -4546,21 +4575,30 @@ class MainWindow(QMainWindow):
                 d.get("NAMA", "")
             ))
 
-            # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
+            # === Tampilkan hasil ke tabel ===
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Pemilih Tidak Padan ditemukan.\n"
-                f"Harap segera dimasukkan sebagai Pemilih Baru!"
-            )
+            # === Popup hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f"{len(hasil_data)} Data Pemilih Tidak Padan Ditemukan.\n"
+                    f"Harap dimasukkan sebagai Pemilih Baru di TPS yang seharusnya!"
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Pemilih Tidak Padan."
+                )
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Tidak Padan:\n{e}")
+
 
     def cek_ganda_nik(self):
         """
@@ -4569,6 +4607,9 @@ class MainWindow(QMainWindow):
         - Melewati baris dengan KET = 1–8
         - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
         """
+        from collections import defaultdict
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -4580,24 +4621,26 @@ class MainWindow(QMainWindow):
             col_names = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
 
+            # === Jika tabel kosong ===
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
                 return
 
-            # === Muat seluruh data ke memori ===
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            # === Muat seluruh data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
 
             # === Kelompokkan berdasarkan NIK ===
             nik_groups = defaultdict(list)
             for d in all_data:
                 nik = d.get("NIK", "").strip()
                 ket = d.get("KET", "").strip().upper()
-                if not nik or ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
-                    continue  # ⛔ lewati baris dengan KET 1–8 atau NIK kosong
-                nik_groups[nik].append(d)
+                if nik and ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    nik_groups[nik].append(d)
 
             # === Deteksi NIK yang muncul lebih dari satu kali ===
             hasil_data = []
@@ -4607,11 +4650,7 @@ class MainWindow(QMainWindow):
                         d["CEK_DATA"] = "Ganda Aktif"
                         hasil_data.append(d)
 
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Pemilih Ganda NIK.")
-                return
-
-            # === Urutkan hasil ===
+            # === Urutkan hasil (tetap aman meski kosong) ===
             hasil_data.sort(key=lambda d: (
                 d.get("TPS", ""),
                 d.get("RW", ""),
@@ -4620,28 +4659,38 @@ class MainWindow(QMainWindow):
                 d.get("NAMA", "")
             ))
 
-            # === Tampilkan ke tabel tanpa menghapus kolom apa pun ===
+            # === Tampilkan hasil ke tabel ===
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Pemilih Ganda NIK ditemukan.\n"
-                f"Harap segera periksa data kamu!"
-            )
+            # === Popup hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f"{len(hasil_data)} Data Pemilih Ganda NIK Ditemukan.\n"
+                    f"Harap segera periksa data anda!"
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Pemilih Ganda NIK."
+                )
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Ganda NIK:\n{e}")
+
 
     def cek_pemilih_pemula(self):
         """
         🔍 Pemilih Pemula:
         - Baris dengan KET = 'B'
         - NIK hanya muncul sekali di SELURUH tabel aktif (tanpa melewatkan KET 1–8)
-        - Tampilkan hasil ke tabel, urut: TPS, RW, RT, NKK, NAMA
+        - Tampilkan hasil ke tabel (urut: TPS, RW, RT, NKK, NAMA)
+        - Jika tidak ditemukan → tampilkan tabel kosong
         """
         from db_manager import get_connection
         from collections import defaultdict
@@ -4658,34 +4707,32 @@ class MainWindow(QMainWindow):
             rows = cur.fetchall()
 
             if not rows:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
                 return
 
-            # === Muat seluruh data (lengkap semua kolom) ===
-            all_data = []
-            for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+            # === Muat semua data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
 
-            # === Hitung kemunculan NIK di SELURUH tabel (tanpa skip KET 1–8) ===
+            # === Hitung kemunculan NIK (semua data, tanpa skip KET 1–8) ===
             nik_count = defaultdict(int)
             for d in all_data:
                 nik = d.get("NIK", "").strip()
                 if nik:
                     nik_count[nik] += 1
 
-            # === Ambil hanya baris KET='B' yang NIK-nya unik (count==1) ===
+            # === Ambil baris dengan KET='B' dan NIK unik (count==1) ===
             hasil_data = []
             for d in all_data:
-                ket = d.get("KET", "").strip().upper()
-                nik = d.get("NIK", "").strip()
-                if ket == "B" and nik and nik_count[nik] == 1:
-                    d["CEK_DATA"] = "Pemilih Pemula"
-                    hasil_data.append(d)
-
-            if not hasil_data:
-                show_modern_info(self, "Info", "Tidak ditemukan data Pemilih Pemula.")
-                return
+                if d.get("KET", "").strip().upper() == "B":
+                    nik = d.get("NIK", "").strip()
+                    if nik and nik_count[nik] == 1:
+                        d["CEK_DATA"] = "Pemilih Pemula"
+                        hasil_data.append(d)
 
             # === Urutkan hasil ===
             hasil_data.sort(key=lambda d: (
@@ -4696,18 +4743,26 @@ class MainWindow(QMainWindow):
                 d.get("NAMA", "")
             ))
 
-            # === Tampilkan ke tabel ===
+            # === Tampilkan hasil (termasuk kosong) ===
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
                 QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
-            show_modern_info(
-                self,
-                "Selesai",
-                f"{len(hasil_data)} data Pemilih Pemula ditemukan.\n"
-                f"Ini hanya untuk data anda jika saja dibutuhkan"
-            )
+            # === Info hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f"{len(hasil_data)} Data Pemilih Pemula Ditemukan.\n"
+                    f"Ini hanya untuk keperluan verifikasi anda."
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Pemilih Pemula."
+                )
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Pemula:\n{e}")
@@ -4925,7 +4980,7 @@ class MainWindow(QMainWindow):
                 # === Cek isi tabel setelah commit ===
                 cur.execute(f"SELECT COUNT(*) FROM {tbl_name}")
                 total = cur.fetchone()[0]
-                print(f"[DEBUG] Jumlah baris di tabel {tbl_name.upper()}: {total}")
+                #print(f"[DEBUG] Jumlah baris di tabel {tbl_name.upper()}: {total}")
 
                 # === Refresh tampilan (tanpa flicker, tanpa event) ===
                 try:
@@ -4974,7 +5029,7 @@ class MainWindow(QMainWindow):
         try:
             cur.execute(f"SELECT rowid, * FROM {tbl_name}")
             rows = cur.fetchall()
-            print(f"[DEBUG] load_data_from_db: {len(rows)} baris dimuat dari {tbl_name}")
+            #print(f"[DEBUG] load_data_from_db: {len(rows)} baris dimuat dari {tbl_name}")
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memuat data dari tabel {tbl_name}:\n{e}")
             self.all_data = []
@@ -5284,7 +5339,6 @@ class MainWindow(QMainWindow):
     # =================================================
     # Tampilkan Data tabel dari database
     # =================================================
-
     def show_page(self, page):
         if not hasattr(self, "table") or self.table is None:
             print("[WARN] Table belum dibuat, show_page dibatalkan sementara.")
@@ -5295,32 +5349,52 @@ class MainWindow(QMainWindow):
 
         self.current_page = page
         self.table.blockSignals(True)
+        old_overlay = getattr(self, "_empty_overlay", None)
+        if old_overlay:
+            old_overlay.deleteLater()
+            self._empty_overlay = None
 
         start = (page - 1) * self.rows_per_page
         end = min(start + self.rows_per_page, len(self.all_data))
         data_rows = self.all_data[start:end]
-        print(f"[DEBUG] Menampilkan {len(data_rows)} baris dari index {start}–{end}")
+        #print(f"[DEBUG] Menampilkan {len(data_rows)} baris dari index {start}–{end}")
 
         # =========================================================
         # 🧹 Clear isi lama tanpa reset struktur tabel
         # =========================================================
         self.table.clearContents()
-        self.table.setRowCount(len(data_rows) or 1)
+        self.table.setRowCount(len(data_rows))
 
         # =========================================================
         # 🚫 Jika kosong, tampilkan pesan
         # =========================================================
         if not data_rows:
-            item = QTableWidgetItem("Data Tidak Ditemukan")
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            font = item.font()
-            font.setItalic(True)
-            font.setBold(True)
-            item.setFont(font)
-            item.setForeground(QColor("gray"))
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table.setItem(0, 0, item)
-            self.table.setSpan(0, 0, 1, self.table.columnCount())
+            self.table.setRowCount(0)
+
+            # Hapus overlay lama jika ada
+            old_overlay = getattr(self, "_empty_overlay", None)
+            if old_overlay:
+                old_overlay.deleteLater()
+                self._empty_overlay = None
+
+            # Buat label overlay di tengah viewport tabel
+            overlay = QLabel("Tidak Ada Data Yang Ditampilkan", self.table.viewport())
+            overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            overlay.setStyleSheet("""
+                color: gray;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+                font-style: italic;
+                font-weight: bold;
+                background: transparent;
+            """)
+            overlay.resize(self.table.viewport().size())
+            overlay.show()
+            self._empty_overlay = overlay
+
+            # Pastikan overlay ikut event resize
+            self.table.viewport().installEventFilter(self)
+
             self.table.blockSignals(False)
             if hasattr(self, "lbl_selected"):
                 self.lbl_selected.setText("0 selected")
@@ -5480,9 +5554,7 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
-            self.hide()
-            self.rekap_window = RekapWindow(self)
-            self.rekap_window.showMaximized()
+            self.rekap_window = self.show_window_with_transition(RekapWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Aktif:\n{e}")
@@ -5545,9 +5617,7 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
-            self.hide()
-            self.baru_window = BaruWindow(self)
-            self.baru_window.showMaximized()
+            self.baru_window = self.show_window_with_transition(BaruWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Baru:\n{e}")
@@ -5611,9 +5681,7 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
-            self.hide()
-            self.ubah_window = UbahWindow(self)
-            self.ubah_window.showMaximized()
+            self.ubah_window = self.show_window_with_transition(UbahWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Ubah Data:\n{e}")
@@ -5703,9 +5771,7 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela SARING
-            self.hide()
-            self.saring_window = SaringWindow(self)
-            self.saring_window.showMaximized()
+            self.saring_window = self.show_window_with_transition(SaringWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap TMS:\n{e}")
@@ -5783,9 +5849,7 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela KTPel
-            self.hide()
-            self.ktp_window = KtpWindow(self)
-            self.ktp_window.showMaximized()
+            self.ktp_window = self.show_window_with_transition(KtpWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih KTPel:\n{e}")
@@ -5866,12 +5930,54 @@ class MainWindow(QMainWindow):
             conn.commit()
 
             # 🔹 Sembunyikan MainWindow dan tampilkan jendela difabel
-            self.hide()
-            self.difabel_window = DifabelWindow(self)
-            self.difabel_window.showMaximized()
+            self.difabel_window = self.show_window_with_transition(DifabelWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Disabilitas:\n{e}")
+
+    def show_window_with_transition(self, window_class, delay_hide=150):
+        """
+        Menampilkan window baru (top-level) dengan efek transisi halus.
+        ✅ Icon aplikasi tetap muncul di taskbar
+        ✅ Data kecamatan/desa tetap terbaca
+        ✅ Fade-in cepat
+        """
+        try:
+            QTimer.singleShot(delay_hide, self.hide)
+
+            # 🟢 Buat instance window baru, kirim self sebagai argumen manual
+            new_window = window_class(self)
+
+            # 🟢 Pastikan icon muncul di taskbar
+            icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
+            if os.path.exists(icon_path):
+                new_window.setWindowIcon(QIcon(icon_path))
+            new_window.setWindowFlags(
+                Qt.WindowType.Window |
+                Qt.WindowType.CustomizeWindowHint |
+                Qt.WindowType.WindowTitleHint |
+                Qt.WindowType.WindowMinMaxButtonsHint |
+                Qt.WindowType.WindowCloseButtonHint
+            )
+
+            # Fade-in animasi
+            effect = QGraphicsOpacityEffect(new_window)
+            new_window.setGraphicsEffect(effect)
+            anim = QPropertyAnimation(effect, b"opacity")
+            anim.setDuration(120)
+            anim.setStartValue(0)
+            anim.setEndValue(1)
+            anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+            new_window._fade_anim = anim
+
+            new_window.showMaximized()
+            self._active_child_window = new_window
+
+            return new_window
+        except Exception as e:
+            print(f"[UI ERROR] Gagal transisi window: {e}")
+
 
     # =================================================
     # Pagination UI
@@ -6134,15 +6240,13 @@ class MainWindow(QMainWindow):
 # 🔹 KELAS TAMPILAN REKAP
 # =========================================================
 class RekapWindow(QMainWindow):
-    """Jendela maximize untuk rekap pemilih aktif per TPS."""
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Pemilih Aktif")
         self.setStyleSheet("background-color: #ffffff;")
 
-        # === Layout utama ===
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(40, 40, 40, 40)
@@ -6150,12 +6254,12 @@ class RekapWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # =========================================================
-        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # 🧭 Ambil info dari parent_window
         # =========================================================
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -6314,9 +6418,10 @@ class RekapWindow(QMainWindow):
 class BaruWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih baru per TPS."""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Pemilih Baru")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -6328,12 +6433,12 @@ class BaruWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # =========================================================
-        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # 🧭 Ambil info dari parent_window
         # =========================================================
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -6492,9 +6597,10 @@ class BaruWindow(QMainWindow):
 class UbahWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih ubah per TPS."""
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Perubahan Data Pemilih")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -6506,12 +6612,12 @@ class UbahWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # =========================================================
-        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # 🧭 Ambil info dari parent_window
         # =========================================================
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -6669,9 +6775,10 @@ class UbahWindow(QMainWindow):
 
 class SaringWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih TMS per TPS."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Pemilih TMS")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -6682,11 +6789,13 @@ class SaringWindow(QMainWindow):
         layout.setSpacing(20)
         self.setCentralWidget(central)
 
-        # === Header dan Judul ===
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -6823,9 +6932,10 @@ class SaringWindow(QMainWindow):
 
 class KtpWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih KTPel per TPS."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Pemilih KTPel")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -6836,11 +6946,13 @@ class KtpWindow(QMainWindow):
         layout.setSpacing(20)
         self.setCentralWidget(central)
 
-        # === Header & info lokasi ===
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -6969,9 +7081,10 @@ class KtpWindow(QMainWindow):
 
 class DifabelWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih Disabilitas per TPS."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
         self.setWindowTitle("Rekap Pemilih Disabilitas")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -6982,11 +7095,13 @@ class DifabelWindow(QMainWindow):
         layout.setSpacing(20)
         self.setCentralWidget(central)
 
-        # === Header & lokasi ===
-        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
-        tahap = getattr(parent, "_tahapan", "DPHP").upper()
-        kecamatan = getattr(parent, "_kecamatan", "").upper()
-        desa = getattr(parent, "_desa", "").upper()
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -7775,8 +7890,8 @@ if __name__ == "__main__":
             if confirm_dev_mode(None):
                 print("[DEV MODE] Melewati proses login & OTP...")
                 dev_nama = "ARI ARDIANA"
-                dev_kecamatan = "TANJUNGJAYA"
-                dev_desa = "SUKASENANG"
+                dev_kecamatan = "RAJAPOLAH"
+                dev_desa = "MANGGUNGJAYA"
                 dev_tahapan = "DPHP"
 
                 mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)

@@ -58,7 +58,7 @@ def load_or_create_key():
 # 🧱 INISIALISASI SCHEMA UTAMA
 # =========================================================
 def init_schema(conn) -> None:
-    """Membuat semua tabel utama jika belum ada (aman dijalankan berulang kali)."""
+    """Membuat semua tabel utama dan tabel rekap jika belum ada (aman dijalankan berulang kali)."""
     cur = conn.cursor()
 
     # --- Tabel users ---
@@ -111,9 +111,84 @@ def init_schema(conn) -> None:
     for tbl in ("dphp", "dpshp", "dpshpa"):
         cur.execute(f"CREATE TABLE IF NOT EXISTS {tbl} {common_schema};")
 
+    # =========================================================
+    # 🧾 Tambahan: Tabel Rekapitulasi
+    # =========================================================
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rekap (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS baru (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ubah (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS saring (
+            "NAMA TPS" TEXT,
+            "1L" INTEGER, "1P" INTEGER,
+            "2L" INTEGER, "2P" INTEGER,
+            "3L" INTEGER, "3P" INTEGER,
+            "4L" INTEGER, "4P" INTEGER,
+            "5L" INTEGER, "5P" INTEGER,
+            "6L" INTEGER, "6P" INTEGER,
+            "7L" INTEGER, "7P" INTEGER,
+            "8L" INTEGER, "8P" INTEGER,
+            "TMS L" INTEGER, "TMS P" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ktpel (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "LAKI-LAKI" INTEGER,
+            "PEREMPUAN" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS difabel (
+            "NAMA TPS" TEXT,
+            "JUMLAH KK" INTEGER,
+            "FISIK" INTEGER,
+            "INTELEKTUAL" INTEGER,
+            "MENTAL" INTEGER,
+            "DIF. WICARA" INTEGER,
+            "DIF. RUNGU" INTEGER,
+            "DIF. NETRA" INTEGER,
+            "JUMLAH" INTEGER
+        );
+    """)
+
     conn.commit()
 
-    # --- Isi kecamatan otomatis jika kosong ---
+    # =========================================================
+    # 🧩 Isi kecamatan otomatis jika kosong
+    # =========================================================
     try:
         cur.execute("SELECT COUNT(*) FROM kecamatan")
         count = cur.fetchone()[0]
@@ -125,7 +200,6 @@ def init_schema(conn) -> None:
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
             script_path = os.path.join(base_dir, "init_db.py")
-
             if os.path.exists(script_path):
                 subprocess.run([sys.executable, script_path], check=True)
                 print("[✅] Data kecamatan berhasil diinisialisasi otomatis.")
