@@ -1805,13 +1805,12 @@ class MainWindow(QMainWindow):
 
         # === Menu di dalam tombol ===
         menu_rekap = QMenu(btn_rekap)
-        menu_rekap.addAction(QAction(" Pemilih Aktif", self, triggered=self.cek_rekapaktif))
-        #menu_rekap.addAction(QAction(" Pemilih Baru", self, triggered=self.cek_rekapbaru))
-        #menu_rekap.addAction(QAction(" Ubah Data", self, triggered=self.cek_rekapubah))
-        #menu_rekap.addAction(QAction(" Saring TMS", self, triggered=self.cek_rekaptms))
-        #menu_rekap.addAction(QAction(" KTPel", self, triggered=self.cek_rekapktp))
-        #menu_rekap.addAction(QAction(" Disabilitas", self, triggered=self.cek_rekapdifabel))
-        #menu_rekap.addAction(QAction(" Tidak Padan", self, triggered=self.cek_rekaptidakpadan))
+        menu_rekap.addAction(QAction("Pemilih Aktif", self, triggered=self.cek_rekapaktif))
+        menu_rekap.addAction(QAction("Pemilih Baru", self, triggered=self.cek_rekapbaru))
+        menu_rekap.addAction(QAction("Ubah Data", self, triggered=self.cek_rekapubah))
+        menu_rekap.addAction(QAction("Saring TMS", self, triggered=self.cek_rekaptms))
+        menu_rekap.addAction(QAction("Pemilih Non KTPel", self, triggered=self.cek_rekapktp))
+        menu_rekap.addAction(QAction("Disabilitas", self, triggered=self.cek_rekapdifabel))
         btn_rekap.setMenu(menu_rekap)
         toolbar.addWidget(btn_rekap)
         add_spacer()
@@ -1823,7 +1822,7 @@ class MainWindow(QMainWindow):
                 color: #000000;
                 border: 1px solid #000000;
                 border-radius: 5px;
-                padding: 1px 0px;
+                padding: 1px 4px;
                 margin-top: 1px;
             }
             QMenu::item {
@@ -1905,13 +1904,13 @@ class MainWindow(QMainWindow):
 
         # === Menu di dalam tombol ===
         menu_cekdata = QMenu(btn_cekdata)
-        menu_cekdata.addAction(QAction(" Potensi NKK Invalid", self, triggered=self.cek_potensi_nkk_invalid))
-        menu_cekdata.addAction(QAction(" Potensi NIK Invalid", self, triggered=self.cek_potensi_nik_invalid))
-        menu_cekdata.addAction(QAction(" Potensi Dibawah Umur", self, triggered=self.cek_potensi_dibawah_umur))
-        menu_cekdata.addAction(QAction(" Potensi Beda TPS", self, triggered=self.cek_beda_tps))
-        menu_cekdata.addAction(QAction(" Potensi Tidak Padan", self, triggered=self.cek_tidak_padan))
-        menu_cekdata.addAction(QAction(" Ganda NIK", self, triggered=self.cek_ganda_nik))
-        menu_cekdata.addAction(QAction(" Pemilih Pemula", self, triggered=self.cek_pemilih_pemula))
+        menu_cekdata.addAction(QAction("Potensi NKK Invalid", self, triggered=self.cek_potensi_nkk_invalid))
+        menu_cekdata.addAction(QAction("Potensi NIK Invalid", self, triggered=self.cek_potensi_nik_invalid))
+        menu_cekdata.addAction(QAction("Potensi Dibawah Umur", self, triggered=self.cek_potensi_dibawah_umur))
+        menu_cekdata.addAction(QAction("Potensi Beda TPS", self, triggered=self.cek_beda_tps))
+        menu_cekdata.addAction(QAction("Potensi Tidak Padan", self, triggered=self.cek_tidak_padan))
+        menu_cekdata.addAction(QAction("Ganda NIK", self, triggered=self.cek_ganda_nik))
+        menu_cekdata.addAction(QAction("Pemilih Pemula", self, triggered=self.cek_pemilih_pemula))
         btn_cekdata.setMenu(menu_cekdata)
         toolbar.addWidget(btn_cekdata)
         add_spacer()
@@ -1923,7 +1922,7 @@ class MainWindow(QMainWindow):
                 color: #000000;
                 border: 1px solid #000000;
                 border-radius: 5px;
-                padding: 1px 0px;
+                padding: 1px 4px;
                 margin-top: 1px;
             }
             QMenu::item {
@@ -2396,7 +2395,7 @@ class MainWindow(QMainWindow):
 
         stats = _get_header_stats(self)
 
-        # === Update label atas (pastikan sesuai nama label yang kamu gunakan) ===
+        # === Update label atas (pastikan sesuai nama label yang anda gunakan) ===
         try:
             if hasattr(self, "lbl_total_pemilih"):
                 self.lbl_total_pemilih.setText(f"{stats['total']:,}".replace(",", "."))
@@ -2874,7 +2873,7 @@ class MainWindow(QMainWindow):
             if wrapper_layout is None or wrapper_layout.count() < 1:
                 continue
 
-            # bar_group adalah layout yang kamu add dengan wrapper_layout.addLayout(bar_group)
+            # bar_group adalah layout yang anda add dengan wrapper_layout.addLayout(bar_group)
             bar_group_layout = wrapper_layout.itemAt(0).layout()
             if bar_group_layout is None or bar_group_layout.count() < 2:
                 continue
@@ -3972,7 +3971,7 @@ class MainWindow(QMainWindow):
             if not show_modern_question(
                 self,
                 "Konfirmasi",
-                "Apakah kamu yakin ingin menjalankan proses <b>Cek Data</b>?<br><br>"
+                "Apakah anda yakin ingin menjalankan proses <b>Cek Data</b>?<br><br>"
                 "Proses ini akan memeriksa seluruh data dan mungkin memerlukan waktu beberapa detik."
             ):
                 show_modern_info(self, "Dibatalkan", "Proses cek data dibatalkan oleh pengguna.")
@@ -4227,7 +4226,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Selesai",
                 f"{len(hasil_data)} data Potensi NKK Invalid ditemukan.<br>"
-                f"<b>Harap segera periksa data kamu!</b>"
+                f"<b>Harap segera periksa data anda!</b>"
             )
 
         except Exception as e:
@@ -4303,7 +4302,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Selesai",
                 f"{len(hasil_data)} data Potensi NIK Invalid ditemukan.<br>"
-                f"<b>Harap segera periksa data kamu!</b>"
+                f"<b>Harap segera periksa data anda!</b>"
             )
 
         except Exception as e:
@@ -4398,7 +4397,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Selesai",
                 f"{len(hasil_data)} data Potensi Dibawah Umur ditemukan.\n"
-                f"Harap segera periksa data kamu!"
+                f"Harap segera periksa data anda!"
             )
 
         except Exception as e:
@@ -5488,6 +5487,392 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Aktif:\n{e}")
 
+    def cek_rekapbaru(self):
+        """Menampilkan rekap pemilih baru per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel baru ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS baru (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM baru")
+
+            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') IN ('b')
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND COALESCE(KET,'') IN ('b')
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('b')
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('b')
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+                cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
+            self.hide()
+            self.baru_window = BaruWindow(self)
+            self.baru_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Baru:\n{e}")
+
+
+    def cek_rekapubah(self):
+        """Menampilkan rekap pemilih ubah per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel ubah ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ubah (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM ubah")
+
+            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') IN ('b')
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap ubah per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND COALESCE(KET,'') IN ('u')
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('u')
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('u')
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+                cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
+            self.hide()
+            self.ubah_window = UbahWindow(self)
+            self.ubah_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Ubah Data:\n{e}")
+
+    def cek_rekaptms(self):
+        """Menampilkan rekap pemilih TMS per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel TMS ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS saring (
+                    "NAMA TPS" TEXT,
+                    "1L" INTEGER, "1P" INTEGER,
+                    "2L" INTEGER, "2P" INTEGER,
+                    "3L" INTEGER, "3P" INTEGER,
+                    "4L" INTEGER, "4P" INTEGER,
+                    "5L" INTEGER, "5P" INTEGER,
+                    "6L" INTEGER, "6P" INTEGER,
+                    "7L" INTEGER, "7P" INTEGER,
+                    "8L" INTEGER, "8P" INTEGER,
+                    "TMS L" INTEGER, "TMS P" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM saring")
+
+            # 🔹 Ambil distinct TPS
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') IN ('1','2','3','4','5','6','7','8')
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # Hitung masing-masing kategori (1–8)
+                counts = {}
+                for ket in range(1, 9):
+                    for jk in ('L', 'P'):
+                        cur.execute(f"""
+                            SELECT COUNT(*) FROM {tbl_name}
+                            WHERE TPS=? AND JK=? AND COALESCE(KET,'')=?
+                        """, (tps, jk, str(ket)))
+                        counts[f"{ket}{jk}"] = cur.fetchone()[0] or 0
+
+                # Hitung total TMS per jenis kelamin
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                TMS_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                TMS_P = cur.fetchone()[0] or 0
+
+                total = TMS_L + TMS_P
+
+                # Simpan ke tabel saring (20 kolom)
+                cur.execute("""
+                    INSERT INTO saring VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                """, (
+                    nama_tps,
+                    counts["1L"], counts["1P"],
+                    counts["2L"], counts["2P"],
+                    counts["3L"], counts["3P"],
+                    counts["4L"], counts["4P"],
+                    counts["5L"], counts["5P"],
+                    counts["6L"], counts["6P"],
+                    counts["7L"], counts["7P"],
+                    counts["8L"], counts["8P"],
+                    TMS_L, TMS_P, total
+                ))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela SARING
+            self.hide()
+            self.saring_window = SaringWindow(self)
+            self.saring_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap TMS:\n{e}")
+
+    def cek_rekapktp(self):
+        """Menampilkan rekap pemilih KTPel per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel ktpel ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ktpel (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM ktpel")
+
+            # 🔹 Ambil distinct TPS (abaikan KET 1–8, hanya KTPel='b')
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                AND LOWER(COALESCE(KTPel,'')) = 'b'
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # Hitung jumlah KK unik
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=?
+                    AND LOWER(COALESCE(KTPel,''))='b'
+                    AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                # Laki-laki
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='L'
+                    AND LOWER(COALESCE(KTPel,''))='b'
+                    AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                # Perempuan
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='P'
+                    AND LOWER(COALESCE(KTPel,''))='b'
+                    AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+
+                # Simpan ke tabel hasil
+                cur.execute("INSERT INTO ktpel VALUES (?, ?, ?, ?, ?)",
+                            (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela KTPel
+            self.hide()
+            self.ktp_window = KtpWindow(self)
+            self.ktp_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih KTPel:\n{e}")
+
+    def cek_rekapdifabel(self):
+        """Menampilkan rekap pemilih Disabilitas per TPS (maximize window)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel difabel ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS difabel (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "FISIK" INTEGER,
+                    "INTELEKTUAL" INTEGER,
+                    "MENTAL" INTEGER,
+                    "DIF. WICARA" INTEGER,
+                    "DIF. RUNGU" INTEGER,
+                    "DIF. NETRA" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM difabel")
+
+            # 🔹 Ambil distinct TPS (hanya DIS = 1–6, abaikan KET 1–8)
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl_name}
+                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                AND COALESCE(DIS,'') IN ('1','2','3','4','5','6')
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+
+            # 🔹 Isi data rekap difabel per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # Jumlah KK unik
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? 
+                    AND COALESCE(DIS,'') IN ('1','2','3','4','5','6')
+                    AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                # Disabilitas kategori
+                def hitung_dis(kode):
+                    cur.execute(f"""
+                        SELECT COUNT(*)
+                        FROM {tbl_name}
+                        WHERE TPS=? 
+                        AND COALESCE(DIS,'') = ?
+                        AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
+                    """, (tps, kode))
+                    return cur.fetchone()[0] or 0
+
+                DIS_FIS = hitung_dis('1')
+                DIS_INT = hitung_dis('2')
+                DIS_MEN = hitung_dis('3')
+                DIS_WIC = hitung_dis('4')
+                DIS_RUN = hitung_dis('5')
+                DIS_NET = hitung_dis('6')
+
+                total = DIS_FIS + DIS_INT + DIS_MEN + DIS_WIC + DIS_RUN + DIS_NET
+
+                # Simpan hasil
+                cur.execute("""
+                    INSERT INTO difabel VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (nama_tps, nkk, DIS_FIS, DIS_INT, DIS_MEN, DIS_WIC, DIS_RUN, DIS_NET, total))
+
+            conn.commit()
+
+            # 🔹 Sembunyikan MainWindow dan tampilkan jendela difabel
+            self.hide()
+            self.difabel_window = DifabelWindow(self)
+            self.difabel_window.showMaximized()
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Disabilitas:\n{e}")
+
     # =================================================
     # Pagination UI
     # =================================================
@@ -5801,7 +6186,7 @@ class RekapWindow(QMainWindow):
         judul_layout = QVBoxLayout()
         judul_layout.setSpacing(2)
 
-        lbl1 = QLabel("REKAP PEMILIH AKTIF PER TPS")
+        lbl1 = QLabel("REKAP PEMILIH AKTIF")
         lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
         lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl1.setStyleSheet("color: #111111;")
@@ -5917,6 +6302,812 @@ class RekapWindow(QMainWindow):
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class BaruWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih baru per TPS."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Pemilih Baru")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # =========================================================
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PEMILIH BARU")
+        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #111111;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #333333;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel baru
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel baru ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM baru ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            for j, val in enumerate(row):
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                if j in (0, 1, 2, 3, 4):
+                    font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class UbahWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih ubah per TPS."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Perubahan Data Pemilih")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent (nama, tahapan, kecamatan, desa)
+        # =========================================================
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PERUBAHAN DATA PEMILIH")
+        lbl1.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #111111;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Normal))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #333333;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel UBAH
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel ubah ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM ubah ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            for j, val in enumerate(row):
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                if j in (0, 1, 2, 3, 4):
+                    font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class SaringWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih TMS per TPS."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Pemilih TMS")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # === Header dan Judul ===
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+        for text, size, weight in [
+            ("REKAP PEMILIH TIDAK MEMENUHI SYARAT (TMS)", 22, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Normal),
+            (lokasi_str, 12, QFont.Weight.Bold)
+        ]:
+            lbl = QLabel(text)
+            lbl.setFont(QFont("Segoe UI", size, weight))
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            judul_layout.addWidget(lbl)
+        layout.addLayout(judul_layout)
+
+        # === Tabel utama ===
+        headers = [
+            "NAMA TPS", "1L", "1P", "2L", "2P", "3L", "3P", "4L", "4P",
+            "5L", "5P", "6L", "6P", "7L", "7P", "8L", "8P", "TMS L", "TMS P", "JUMLAH"
+        ]
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        header = self.table.horizontalHeader()
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(19, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;
+                selection-color: #000000;
+            }
+        """)
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM saring ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)
+
+        # === Hitung total setiap kolom ===
+        num_cols = len(headers)
+        col_totals = [0] * num_cols
+
+        for i, row in enumerate(rows):
+            for j, val in enumerate(row):
+                if j > 0:
+                    try:
+                        col_totals[j] += int(val or 0)
+                    except ValueError:
+                        pass
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL"] + [str(col_totals[j]) for j in range(1, num_cols)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # === Tombol Tutup ===
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def kembali_ke_main(self):
+        """Kembalikan ke jendela utama."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class KtpWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih KTPel per TPS."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Pemilih KTPel")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # === Header & info lokasi ===
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+        for text, size, weight in [
+            ("REKAP PEMILIH NON KTP-EL", 22, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Normal),
+            (lokasi_str, 12, QFont.Weight.Bold)
+        ]:
+            lbl = QLabel(text)
+            lbl.setFont(QFont("Segoe UI", size, weight))
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            judul_layout.addWidget(lbl)
+        layout.addLayout(judul_layout)
+
+        # === Tabel utama ===
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel ktpel ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM ktpel ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)
+
+        total_nkk = total_L = total_P = total_all = 0
+        for i, row in enumerate(rows):
+            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            for j, val in enumerate(row):
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # === Tombol Tutup ===
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class DifabelWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih Disabilitas per TPS."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setWindowTitle("Rekap Pemilih Disabilitas")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # === Header & lokasi ===
+        nama_user = getattr(parent, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent, "_kecamatan", "").upper()
+        desa = getattr(parent, "_desa", "").upper()
+
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_user.setFont(QFont("Segoe UI Semibold", 18))
+        lbl_user.setStyleSheet("color: #000000; border-bottom: 3px solid #ff6600; padding-bottom: 8px;")
+        layout.addWidget(lbl_user)
+
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+        for text, size, weight in [
+            ("REKAP PEMILIH DISABILITAS", 22, QFont.Weight.Bold),
+            (nama_tahapan, 13, QFont.Weight.Normal),
+            (lokasi_str, 12, QFont.Weight.Bold)
+        ]:
+            lbl = QLabel(text)
+            lbl.setFont(QFont("Segoe UI", size, weight))
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: #111111;" if size > 13 else "color: #333333;")
+            judul_layout.addWidget(lbl)
+        layout.addLayout(judul_layout)
+
+        # === Tabel utama ===
+        headers = [
+            "NAMA TPS", "JUMLAH KK", "FISIK", "INTELEKTUAL",
+            "MENTAL", "DIF. WICARA", "DIF. RUNGU", "DIF. NETRA", "JUMLAH"
+        ]
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;
+                selection-color: #000000;
+            }
+        """)
+
+        # === Ambil data dari tabel difabel ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM difabel ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)
+
+        # === Hitung total kolom ===
+        col_totals = [0] * len(headers)
+        for i, row in enumerate(rows):
+            for j, val in enumerate(row):
+                if j > 0:
+                    try:
+                        col_totals[j] += int(val or 0)
+                    except ValueError:
+                        pass
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total otomatis ===
+        total_labels = ["TOTAL"] + [str(col_totals[j]) for j in range(1, len(headers))]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))
+            self.table.setItem(len(rows), j, item)
+
+        layout.addWidget(self.table)
+
+        # === Tombol Tutup ===
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow."""
         if self.parent_window:
             self.parent_window.showNormal()
             self.parent_window.showMaximized()
