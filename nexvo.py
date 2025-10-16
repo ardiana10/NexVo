@@ -15,7 +15,7 @@ Catatan:
 
 import os, sys, subprocess, csv, hashlib, random, string, re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from contextlib import contextmanager
 from collections import defaultdict
 from typing import Optional
@@ -37,7 +37,7 @@ except Exception as e:
 # --- UI ---
 from PyQt6.QtCore import (
     Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression,
-    QRect, QEvent, QMargins, QVariantAnimation,
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize
 )
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction,
@@ -53,7 +53,7 @@ from PyQt6.QtWidgets import (
     QFrame, QMessageBox, QGraphicsDropShadowEffect, QInputDialog,
     QTableWidgetItem, QStyledItemDelegate, QSlider, QGridLayout, QRadioButton,
     QDockWidget, QMenu, QStackedWidget, QAbstractItemView, QStyle,
-    QGraphicsSimpleTextItem, QSpacerItem,QStyleOptionButton
+    QGraphicsSimpleTextItem, QSpacerItem, QStyleOptionButton
 )
 from PyQt6.QtWidgets import QCompleter
 
