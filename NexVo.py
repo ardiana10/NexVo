@@ -4695,7 +4695,7 @@ class MainWindow(QMainWindow):
             if not show_modern_question(
                 self,
                 "Konfirmasi Keluar",
-                "Apakah Anda yakin ingin keluar dari aplikasi NexVo?"
+                "Apakah Anda yakin menutup aplikasi?"
             ):
                 return  # ❌ User pilih Tidak → batalkan keluar
 
@@ -10309,8 +10309,8 @@ class BeritaAcara(QMainWindow):
             print(f"[Logo Warning] Tidak dapat memuat logo: {e}")
 
         # === Judul utama ===
-        story.append(Paragraph("<b>BERITA ACARA</b>", styles["CenterBold"]))
-        story.append(Spacer(1, -14))
+        story.append(Paragraph("<b><u>BERITA ACARA</u></b>", styles["CenterBold"]))
+        story.append(Spacer(1, -12))
         story.append(Paragraph(f"Nomor: {nomor}", styles["CenterBold"]))
         story.append(Spacer(1, 8))
         story.append(Paragraph(
