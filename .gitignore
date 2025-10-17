@@ -1,0 +1,81 @@
+# =========================================
+# 🐍 GITIGNORE UNTUK PROJECT PYTHON (NexVo)
+# =========================================
+
+# 🔒 File rahasia & konfigurasi lokal
+.env
+*.key
+*.pem
+*.enc
+*.env
+.env.*
+nexvo.key
+config.json
+secrets.json
+
+# 🧱 Database lokal
+*.db
+*.sqlite
+*.sqlite3
+temp_*.db
+*.db.enc
+
+# 📂 Folder cache dan build
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 🧩 Virtual environment
+venv/
+.env/
+env/
+.venv/
+
+# 🧰 IDE / Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 📊 Log dan file sementara
+*.log
+*.tmp
+*.bak
+*.swp
+*.~*
+.DS_Store
+Thumbs.db
+
+# 📦 Output build / dist
+build/
+dist/
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
+
+# 🧾 PyInstaller & cx_Freeze artifacts
+output/
+dist/
+build/
+*.exe
+*.dll
+*.pyd
+
+# 🧰 Testing & profiling
+.coverage
+.cache/
+pytest_cache/
+htmlcov/
+
+# 🔍 Backup / temp / auto-save
+*.bak
+*.old
+*.orig
+*.tmp
+*.swp
+*~
+~$*
+
+# 🪟 Windows-specific
+desktop.ini
