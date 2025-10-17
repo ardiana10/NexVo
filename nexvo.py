@@ -1717,26 +1717,26 @@ class FilterSidebar(QWidget):
         main_layout.addSpacing(gap)
         main_layout.addLayout(grid_layout)
         
-        # === Checkbox Options ===
-        # Opsi checkbox untuk filter tambahan
-        checkbox_layout = QGridLayout()
-        checkbox_layout.setContentsMargins(0, 0, 0, 0)
-        checkbox_layout.setHorizontalSpacing(gap)
-        checkbox_layout.setVerticalSpacing(gap)
+        # # === Checkbox Options ===
+        # # Opsi checkbox untuk filter tambahan
+        # checkbox_layout = QGridLayout()
+        # checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        # checkbox_layout.setHorizontalSpacing(gap)
+        # checkbox_layout.setVerticalSpacing(gap)
         
-        self._setup_checkboxes(checkbox_layout)
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(checkbox_layout)
+        # self._setup_checkboxes(checkbox_layout)
+        # main_layout.addSpacing(gap)
+        # main_layout.addLayout(checkbox_layout)
         
-        # === Radio Button Options ===
-        # Pilihan tipe data (Reguler/Khusus)
-        radio_layout = QHBoxLayout()
-        radio_layout.setContentsMargins(0, 0, 0, 0)
-        radio_layout.setSpacing(2)  # Spacing yang rapat untuk radio button
+        # # === Radio Button Options ===
+        # # Pilihan tipe data (Reguler/Khusus)
+        # radio_layout = QHBoxLayout()
+        # radio_layout.setContentsMargins(0, 0, 0, 0)
+        # radio_layout.setSpacing(2)  # Spacing yang rapat untuk radio button
         
-        self._setup_radio_buttons(radio_layout)
-        main_layout.addSpacing(gap)
-        main_layout.addLayout(radio_layout)
+        # self._setup_radio_buttons(radio_layout)
+        # main_layout.addSpacing(gap)
+        # main_layout.addLayout(radio_layout)
         
         # === Tombol Aksi ===
         # Tombol untuk reset dan apply filter
@@ -2528,46 +2528,91 @@ class FilterSidebar(QWidget):
         # Dropdown KTP Elektronik
         self.ktp_el.addItems(["KTP-el", "B", "S"])
         
-        # Dropdown sumber data - berisi berbagai sumber pemutakhiran
-        self.sumber.addItems([
-            "Sumber", "dp4", "trw3_2025", "tms_trw 2 _2025", "kemendagri", 
-            "coklit", "trw2_2025", "ubah_trw 2 _2025", "ganda kab", 
-            "ganda prov", "loksus", "masyarakat", "dpk"
-        ])
-        
+        # Dropdown sumber data
+        self.update_sumber_dropdown()
+       
         # Dropdown rank status pemilih
         self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
+
+    def update_sumber_dropdown(self):
+        """Update dropdown sumber dari database."""
+        fallback_items = ["Sumber"]
+        
+        try:
+            import db_manager
+            conn = db_manager.ensure_connection_alive()
+            cur = conn.cursor()
+            
+            cur.execute("""
+                SELECT SUMBER 
+                FROM dphp 
+                WHERE SUMBER IS NOT NULL AND TRIM(SUMBER) <> ''
+                UNION
+                SELECT SUMBER 
+                FROM dpshp 
+                WHERE SUMBER IS NOT NULL AND TRIM(SUMBER) <> ''
+                UNION
+                SELECT SUMBER 
+                FROM dpshpa 
+                WHERE SUMBER IS NOT NULL AND TRIM(SUMBER) <> ''
+                ORDER BY 1
+            """)
+            
+            # Ambil dan strip (optional, untuk keamanan ekstra)
+            sumber_list = [row[0].strip() for row in cur.fetchall() if row[0]]
+            
+            # Tentukan item final
+            if sumber_list:
+                items_to_add = fallback_items + sumber_list
+            else:
+                items_to_add = fallback_items
+                
+        except Exception as e:
+            print(f"Error mengambil data sumber dari database: {e}")
+            items_to_add = fallback_items
+        
+        # Terapkan ke combobox
+        try:
+            self.sumber.clear()
+            self.sumber.addItems(items_to_add)
+        except Exception as e:
+            print(f"Error mengisi dropdown sumber: {e}")
+            try:
+                self.sumber.clear()
+                self.sumber.addItems(fallback_items)
+            except:
+                pass
     
-    def _setup_checkboxes(self, layout):
-        """Setup checkbox untuk opsi filter tambahan."""
-        # Inisialisasi checkbox dengan label yang jelas
-        self.cb_ganda = CustomCheckBox("Ganda")
-        self.cb_invalid_tgl = CustomCheckBox("Invalid Tgl")
-        self.cb_nkk_terpisah = CustomCheckBox("NKK Terpisah")
-        self.cb_analisis_tms = CustomCheckBox("Analisis TMS 8")
+    # def _setup_checkboxes(self, layout):
+    #     """Setup checkbox untuk opsi filter tambahan."""
+    #     # Inisialisasi checkbox dengan label yang jelas
+    #     self.cb_ganda = CustomCheckBox("Ganda")
+    #     self.cb_invalid_tgl = CustomCheckBox("Invalid Tgl")
+    #     self.cb_nkk_terpisah = CustomCheckBox("NKK Terpisah")
+    #     self.cb_analisis_tms = CustomCheckBox("Analisis TMS 8")
         
-        # Set tinggi yang konsisten untuk semua checkbox
-        for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
-            checkbox.setFixedHeight(22)
+    #     # Set tinggi yang konsisten untuk semua checkbox
+    #     for checkbox in [self.cb_ganda, self.cb_invalid_tgl, self.cb_nkk_terpisah, self.cb_analisis_tms]:
+    #         checkbox.setFixedHeight(22)
         
-        # Susun dalam grid 2x2 untuk tampilan yang rapi
-        layout.addWidget(self.cb_ganda, 0, 0)
-        layout.addWidget(self.cb_invalid_tgl, 0, 1)
-        layout.addWidget(self.cb_nkk_terpisah, 1, 0)
-        layout.addWidget(self.cb_analisis_tms, 1, 1)
+    #     # Susun dalam grid 2x2 untuk tampilan yang rapi
+    #     layout.addWidget(self.cb_ganda, 0, 0)
+    #     layout.addWidget(self.cb_invalid_tgl, 0, 1)
+    #     layout.addWidget(self.cb_nkk_terpisah, 1, 0)
+    #     layout.addWidget(self.cb_analisis_tms, 1, 1)
     
-    def _setup_radio_buttons(self, layout):
-        """Setup radio button untuk memilih tipe TPS."""
-        self.rb_reguler = QRadioButton("Reguler")
-        self.rb_khusus = QRadioButton("Khusus")
-        self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
+    # def _setup_radio_buttons(self, layout):
+    #     """Setup radio button untuk memilih tipe TPS."""
+    #     self.rb_reguler = QRadioButton("Reguler")
+    #     self.rb_khusus = QRadioButton("Khusus")
+    #     self.rb_reguler_khusus = QRadioButton("Reguler & Khusus")
         
-        # Set default ke "Reguler & Khusus" untuk menampilkan semua data
-        self.rb_reguler_khusus.setChecked(True)
+    #     # Set default ke "Reguler & Khusus" untuk menampilkan semua data
+    #     self.rb_reguler_khusus.setChecked(True)
         
-        # Tambahkan semua radio button ke layout
-        for radio_button in [self.rb_reguler, self.rb_khusus, self.rb_reguler_khusus]:
-            layout.addWidget(radio_button)
+    #     # Tambahkan semua radio button ke layout
+    #     for radio_button in [self.rb_reguler, self.rb_khusus, self.rb_reguler_khusus]:
+    #         layout.addWidget(radio_button)
     
     def _setup_action_buttons(self, layout):
         """Setup tombol aksi untuk reset dan apply filter."""
@@ -2695,16 +2740,16 @@ class FilterSidebar(QWidget):
         for dropdown in dropdown_fields:
             dropdown.setCurrentIndex(0)
         
-        # Reset semua checkbox ke unchecked
-        checkboxes = [
-            self.cb_ganda, self.cb_invalid_tgl, 
-            self.cb_nkk_terpisah, self.cb_analisis_tms
-        ]
-        for checkbox in checkboxes:
-            checkbox.setChecked(False)
+        # # Reset semua checkbox ke unchecked
+        # checkboxes = [
+        #     self.cb_ganda, self.cb_invalid_tgl, 
+        #     self.cb_nkk_terpisah, self.cb_analisis_tms
+        # ]
+        # for checkbox in checkboxes:
+        #     checkbox.setChecked(False)
         
-        # Reset radio button ke default (Reguler & Khusus)
-        self.rb_reguler_khusus.setChecked(True)
+        # # Reset radio button ke default (Reguler & Khusus)
+        # self.rb_reguler_khusus.setChecked(True)
         
         # Reset slider umur ke rentang penuh (0-100)
         self.umur_slider.setValues(0, 100)
@@ -2806,12 +2851,12 @@ class FilterSidebar(QWidget):
         # Simpan mode untuk dipakai popup date range
         self._current_theme_mode = mode
         # Terapkan tema ke custom checkbox
-        custom_checkboxes = [
-            self.cb_ganda, self.cb_invalid_tgl, 
-            self.cb_nkk_terpisah, self.cb_analisis_tms
-        ]
-        for checkbox in custom_checkboxes:
-            checkbox.setTheme(mode)
+        # custom_checkboxes = [
+        #     self.cb_ganda, self.cb_invalid_tgl, 
+        #     self.cb_nkk_terpisah, self.cb_analisis_tms
+        # ]
+        # for checkbox in custom_checkboxes:
+        #     checkbox.setTheme(mode)
         
         # Terapkan tema ke custom combobox
         custom_comboxes = [
@@ -4792,6 +4837,7 @@ class MainWindow(QMainWindow):
         # Reset filter form only (to avoid infinite loop)
         if self.filter_sidebar:
             self.filter_sidebar._reset_form_only()
+            self.filter_sidebar.update_sumber_dropdown()
     
     def wildcard_match(self, pattern, text):
         """Wildcard matching with % support
