@@ -40,13 +40,13 @@ except Exception as e:
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF,
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF,
     QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate
 )
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction,
     QPalette, QBrush, QPen, QRegularExpressionValidator,
-    QRadialGradient, QPolygon, QKeyEvent, QTextCursor
+    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout
 )
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
 from PyQt6.QtWidgets import (
@@ -65,7 +65,7 @@ from PyQt6.QtPdfWidgets import QPdfView
 # =========================
 # ReportLab (PDF)
 # =========================
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
@@ -75,7 +75,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from io import BytesIO
 from reportlab.lib.units import cm
-
 
 # ==========================================================
 # Konstanta path Windows (AppData\Roaming)
@@ -4102,13 +4101,13 @@ class MainWindow(QMainWindow):
                 color: #000000;                 /* font hitam */
                 border: 1px solid #000000;      /* border tipis hitam */
                 border-radius: 5px;             /* membulat lembut */
-                padding: 1px 0px;
+                padding: 5px 8px;
                 margin-top: 1px;
             }
 
             QMenu::item {
                 background-color: transparent;
-                padding: 3px 3px;              /* pas proporsional */
+                padding: 5px 5px;              /* pas proporsional */
                 border-radius: 3px;
                 color: #000000;
                 font-family: 'Segoe UI';
@@ -4159,6 +4158,10 @@ class MainWindow(QMainWindow):
         action_berita_acara = QAction(" Berita Acara", self)
         action_berita_acara.triggered.connect(self.generate_berita_acara)
         generate_menu.addAction(action_berita_acara)
+
+        action_lamp_adpp = QAction(" A-Daftar Perubahan Pemilih", self)
+        action_lamp_adpp.triggered.connect(self.generate_adpp)
+        generate_menu.addAction(action_lamp_adpp)
 
         view_menu = menubar.addMenu("View")
         view_menu.addAction(QAction(" Actual Size", self, shortcut="Ctrl+0"))
@@ -8996,6 +8999,36 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Berita Acara:\n{e}")
 
+
+    def generate_adpp(self):
+        """Fungsi utama untuk membuka jendela Daftar Perubahan Pemilih."""
+        try:
+            from db_manager import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            tbl = self._active_table()
+
+            # ⚡ Gunakan satu query agregasi besar (lebih cepat dari 4 query terpisah)
+            cur.execute(f"""
+                SELECT
+                    COUNT(DISTINCT TPS) AS jml_tps,
+                    SUM(CASE WHEN JK='L' AND (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_laki,
+                    SUM(CASE WHEN JK='P' AND (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_perempuan,
+                    SUM(CASE WHEN (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_total
+                FROM {tbl};
+            """)
+            hasil = cur.fetchone() or (0, 0, 0, 0)
+            conn.commit()
+
+            # ⚡ Simpan ke atribut (akses cepat di class BeritaAcara)
+            self._jumlah_tps, self._jumlah_laki, self._jumlah_perempuan, self._jumlah_pemilih = hasil
+
+            # ⚡ Langsung buka jendela Daftar Perubahan Pemilih tanpa query tambahan
+            self.berita_acara = self.show_window_with_transition(LampAdpp)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka A-Daftar Perubahan Pemilih:\n{e}")
+
 # =========================================================
 # 🔹 KELAS TAMPILAN REKAP
 # =========================================================
@@ -10119,6 +10152,43 @@ class BeritaAcara(QMainWindow):
         bottom.addWidget(self.btn_tutup)
         layout.addLayout(bottom)
 
+        # ====================== TOOLBAR ATAS (SAVE & PRINT) ======================
+        toolbar = QToolBar(self)
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: #f8f8f8;
+                spacing: 6px;
+                border: none;
+            }
+            QToolButton {
+                background: transparent;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+                font-weight: 600;
+                color: #333333;
+            }
+            QToolButton:hover {
+                background-color: #ff6600;
+                color: #ffffff;
+            }
+        """)
+
+        # === Tombol Save ===
+        btn_save = QAction("💾 Simpan", self)
+        btn_save.triggered.connect(self.simpan_pdf_ke_disk)
+        toolbar.addAction(btn_save)
+
+        # === Tombol Print ===
+        btn_print = QAction("🖨 Cetak", self)
+        btn_print.triggered.connect(self.print_pdf)
+        toolbar.addAction(btn_print)
+
+        # Tambahkan toolbar di sisi atas window
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
         # register font
         try:
             pdfmetrics.registerFont(TTFont("Arial", "arial.ttf"))
@@ -10348,7 +10418,7 @@ class BeritaAcara(QMainWindow):
         story.append(Spacer(1, 4))
 
         # === Poin 1 ===
-        story.append(Paragraph(f"1. Rekapitulasi {judul_tahapan.upper()}", styles["JustifyNoIndent"]))
+        story.append(Paragraph(f"1. Rekapitulasi {judul_tahapan.title()}", styles["JustifyNoIndent"]))
         story.append(Spacer(1, -6))
 
         # === Style paragraf tengah (lebih rapat) ===
@@ -10431,7 +10501,7 @@ class BeritaAcara(QMainWindow):
         story.append(Paragraph(
             "Demikian Berita Acara ini dibuat untuk digunakan sebagaimana mestinya.",
             styles["JustifyArial"]))
-        story.append(Spacer(1, 14))
+        story.append(Spacer(1, -2))
 
         # === Blok lokasi dan tanggal dibuat dalam tabel dua kolom agar titik dua sejajar ===
         data_ttd = [
@@ -10452,12 +10522,12 @@ class BeritaAcara(QMainWindow):
             # Tidak ada garis, jadi tabel transparan
         ]))
         story.append(tbl_ttd)
-        story.append(Spacer(1, 16))
+        story.append(Spacer(1, 20))
         #story.append(PageBreak())
 
         # === Halaman 2 - tanda tangan ===
         story.append(Paragraph(f"<b>PANITIA PEMUNGUTAN SUARA {self.desa.upper()}</b>", styles["CenterBold"]))
-        story.append(Spacer(1, 18))
+        story.append(Spacer(1, 20))
         data = [
             [f"1. {ketua or '............................'}", "KETUA", "1. ......................"],
             [f"2. {anggota1 or '............................'}", "ANGGOTA", "                  2. ......................"],
@@ -10639,7 +10709,7 @@ class BeritaAcara(QMainWindow):
                 styles["JustifyArial"]))
             story.append(Spacer(1, 4))
             story.append(Paragraph("Demikian Berita Acara ini dibuat untuk digunakan sebagaimana mestinya.", styles["JustifyArial"]))
-
+            story.append(Spacer(1, -2))
             # === Blok lokasi dan tanggal dibuat dalam tabel dua kolom agar titik dua sejajar ===
             data_ttd = [
                 ["Dibuat di", f": {self.desa.title()}"],
@@ -10659,12 +10729,12 @@ class BeritaAcara(QMainWindow):
                 # Tidak ada garis, jadi tabel transparan
             ]))
             story.append(tbl_ttd)
-            story.append(Spacer(1, 16))
+            story.append(Spacer(1, 20))
             #story.append(PageBreak())
 
             # === Halaman 2 - Tanda tangan ===
             story.append(Paragraph(f"<b>PANITIA PEMUNGUTAN SUARA {self.desa.upper()}</b>", styles["CenterBold"]))
-            story.append(Spacer(1, 16))
+            story.append(Spacer(1, 20))
             data_ttd = [
                 [f"1. {ketua or '............................'}", "KETUA", "1. ......................"],
                 [f"2. {anggota1 or '............................'}", "ANGGOTA", "2. ......................"],
@@ -10996,8 +11066,6 @@ class BeritaAcara(QMainWindow):
         except Exception as e:
             print(f"[Jump Error] {e}")
 
-
-
     def next_page(self):
         if not getattr(self, "document", None):
             return
@@ -11015,7 +11083,214 @@ class BeritaAcara(QMainWindow):
             self.safe_jump_to_page(cur - 1)
             self.rebuild_pager()  # 🔸 update navigasi
 
-            
+        # ======================== SIMPAN & CETAK ========================
+
+    def simpan_pdf_ke_disk(self):
+        """Simpan dokumen PDF ke C:/NexVo/<tahapan> dengan nama otomatis."""
+        try:
+            # === 1️⃣ Pastikan sudah ada dokumen PDF yang valid ===
+            if not hasattr(self, "_pdf_buffer") or self._pdf_buffer.size() == 0:
+                QMessageBox.warning(
+                    self,
+                    "Tidak Ada Dokumen",
+                    "Belum ada dokumen Berita Acara yang bisa disimpan.\n"
+                    "Silakan buat dokumen Berita Acara terlebih dahulu."
+                )
+                return
+
+            if not hasattr(self, "_nomor_berita"):
+                QMessageBox.warning(
+                    self,
+                    "Belum Ada Dokumen",
+                    "Dokumen Berita Acara belum dibuat.\n"
+                    "Silakan isi dan buat Berita Acara sebelum menyimpannya."
+                )
+                return
+
+            # === 2️⃣ Pastikan folder tujuan ada ===
+            import os, datetime
+            tahap = getattr(self, "tahap", "TAHAPAN")
+            desa = getattr(self, "desa", "DESA").title()
+            base_dir = os.path.join("C:/NexVo", tahap)
+            os.makedirs(base_dir, exist_ok=True)
+
+            # === 3️⃣ Format nama file ===
+            waktu_str = datetime.datetime.now().strftime("%d%m%Y %H%M")  # ada spasi
+            nama_file = f"BA {tahap} Desa {desa} Pemilu 2029 {waktu_str}.pdf"
+            path_file = os.path.join(base_dir, nama_file)
+
+            # === 4️⃣ Konfirmasi sebelum menyimpan (custom style) ===
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Konfirmasi Simpan")
+            msg.setText(
+                f"Apakah Anda yakin ingin menyimpan Berita Acara tahap <b>{tahap}</b>?<br><br>"
+                f"<b>Lokasi penyimpanan:</b><br>{path_file}"
+            )
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            msg.button(QMessageBox.StandardButton.Yes).setText("Simpan")
+            msg.button(QMessageBox.StandardButton.No).setText("Batal")
+
+            # === Gaya khas NexVo (title bar gelap, tombol oranye & abu) ===
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #ffffff;
+                    color: #000000;
+                    font-family: 'Segoe UI';
+                    font-size: 10.5pt;
+                }
+
+                QMessageBox QLabel {
+                    color: #000000;
+                    font-size: 11pt;
+                    font-weight: 500;
+                }
+
+                /* Title bar hitam */
+                QMessageBox QDialogButtonBox {
+                    background-color: #000000;
+                    border-top: 1px solid #222;
+                }
+
+                QPushButton {
+                    min-width: 80px;
+                    min-height: 32px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    color: white;
+                    background-color: #ff6600;    /* tombol default oranye */
+                }
+                QPushButton:hover {
+                    background-color: #e65c00;
+                }
+                QPushButton:pressed {
+                    background-color: #cc5200;
+                }
+                QPushButton[text="Batal"] {
+                    background-color: #777777;
+                }
+                QPushButton[text="Batal"]:hover {
+                    background-color: #555555;
+                }
+            """)
+
+            jawab = msg.exec()
+
+            if jawab != QMessageBox.StandardButton.Yes:
+                return
+
+            # === 5️⃣ Simpan buffer PDF ke file ===
+            with open(path_file, "wb") as f:
+                f.write(self._pdf_buffer.data())
+
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Menyimpan", f"Terjadi kesalahan:\n{e}")
+
+    def print_pdf(self):
+        """Cetak PDF langsung ke printer (fit-to-page sesuai DPI, auto orientasi, tanpa notifikasi)."""
+        try:
+            # 1️⃣ Validasi dokumen
+            if not hasattr(self, "_pdf_buffer") or self._pdf_buffer.size() == 0:
+                QMessageBox.warning(self, "Tidak Ada Dokumen",
+                                    "Belum ada dokumen Berita Acara yang bisa dicetak.\n"
+                                    "Silakan buat dokumen Berita Acara terlebih dahulu.")
+                return
+            if not hasattr(self, "_nomor_berita"):
+                QMessageBox.warning(self, "Belum Ada Dokumen",
+                                    "Dokumen Berita Acara belum dibuat.\n"
+                                    "Silakan isi dan buat Berita Acara sebelum mencetaknya.")
+                return
+
+            from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+            from PyQt6.QtGui import QPainter, QPageLayout
+            from PyQt6.QtCore import QSize, QRectF
+
+            tahap = getattr(self, "tahap", "TAHAPAN")
+
+            # 2️⃣ Konfirmasi
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Konfirmasi Cetak")
+            msg.setText(f"Apakah Anda yakin ingin mencetak Berita Acara tahap <b>{tahap}</b>?")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.button(QMessageBox.StandardButton.Yes).setText("Cetak")
+            msg.button(QMessageBox.StandardButton.No).setText("Batal")
+            msg.setStyleSheet("""
+                QMessageBox { background:#fff; color:#000; font-family:'Segoe UI'; font-size:10.5pt; }
+                QMessageBox QLabel { color:#000; font-size:11pt; font-weight:500; }
+                QPushButton { min-width:80px; min-height:32px; border-radius:6px; font-weight:bold; color:#fff; background:#ff6600; }
+                QPushButton:hover { background:#e65c00; }
+                QPushButton[text="Batal"] { background:#777; }
+                QPushButton[text="Batal"]:hover { background:#555; }
+            """)
+            if msg.exec() != QMessageBox.StandardButton.Yes:
+                return
+
+            # 3️⃣ Siapkan printer + orientasi otomatis
+            first_size = self.document.pagePointSize(0)
+            orient = (QPageLayout.Orientation.Landscape
+                    if first_size.width() > first_size.height()
+                    else QPageLayout.Orientation.Portrait)
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setPageOrientation(orient)
+            # (opsional) paksa A4:
+            # from PyQt6.QtGui import QPageSize
+            # printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+
+            dlg = QPrintDialog(printer, self)
+            dlg.setWindowTitle("Cetak Berita Acara")
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            # 4️⃣ Render dengan DPI penyesuaian
+            painter = QPainter()
+            if not painter.begin(printer):
+                raise Exception("Tidak dapat memulai printer.")
+
+            total_pages = self.document.pageCount()
+            page_rect = printer.pageRect(QPrinter.Unit.Point)
+
+            printer_dpi = printer.resolution()
+            pdf_dpi = 72  # titik per inci bawaan PDF
+            scale_dpi = printer_dpi / pdf_dpi  # konversi ke resolusi printer
+
+            for i in range(total_pages):
+                pdf_sz = self.document.pagePointSize(i)
+                if not pdf_sz.isValid():
+                    continue
+
+                # Ukuran halaman pada resolusi printer
+                scaled_width = pdf_sz.width() * scale_dpi
+                scaled_height = pdf_sz.height() * scale_dpi
+
+                # Hitung skala proporsional agar pas halaman
+                scale_x = (page_rect.width() * scale_dpi) / scaled_width
+                scale_y = (page_rect.height() * scale_dpi) / scaled_height
+                scale = min(scale_x, scale_y)
+
+                target_w = scaled_width * scale
+                target_h = scaled_height * scale
+                off_x = (page_rect.width() * scale_dpi - target_w) / 2
+                off_y = (page_rect.height() * scale_dpi - target_h) / 2
+
+                # Render halaman sesuai skala dan DPI
+                img = self.document.render(
+                    i,
+                    QSize(int(target_w), int(target_h))
+                )
+                if img:
+                    painter.drawImage(QRectF(off_x, off_y, target_w, target_h), img)
+                    if i < total_pages - 1:
+                        printer.newPage()
+
+            painter.end()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Mencetak", f"Terjadi kesalahan:\n{e}")
+         
 
     def kembali_ke_main(self):
         if self.parent_window:
@@ -11482,6 +11757,324 @@ class _DialogMasukan(QDialog):
 
     def get_text(self):
         return self.text.toPlainText()
+    
+class LampAdpp(QMainWindow):
+    """Tampilan langsung Model A – Daftar Perubahan Pemilih (PDF muncul otomatis)."""
+    def __init__(self, parent_window):
+        super().__init__()
+        self.parent_window = parent_window
+        self.desa = getattr(parent_window, "_desa", "").upper()
+        self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+
+        self.setWindowTitle(f"Berita Acara Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.setStyleSheet("background-color:#ffffff;")
+        self.showMaximized()
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(16)
+        self.setCentralWidget(central)
+
+        # ====================== PDF VIEWER ==========================
+        self.viewer = QPdfView(self)
+        layout.addWidget(self.viewer, stretch=1)
+
+        # ====================== BARIS BAWAH (INPUT + TUTUP) =====================
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 10, 0, 0)
+
+        self.btn_tutup = QPushButton("Tutup", self)
+        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setStyleSheet("""
+            QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
+            QPushButton:hover{background:#666;}
+        """)
+        self.btn_tutup.clicked.connect(self.kembali_ke_main)
+
+        bottom.addWidget(self.btn_tutup)
+        layout.addLayout(bottom)
+
+        # register font
+        try:
+            pdfmetrics.registerFont(TTFont("Arial", "arial.ttf"))
+        except Exception:
+            pass
+
+        # buat tampilan awal kosong
+        self.generate_adpp_pdf()
+
+    # ======================= PDF STYLES ========================
+    def _styles(self):
+        styles = getSampleStyleSheet()
+
+        # 🔹 Paragraf menjorok (paragraf pembuka dan narasi umum)
+        if "JustifyArial" not in styles:
+            styles.add(ParagraphStyle(
+                name="JustifyArial",
+                fontName="Arial",
+                fontSize=12,
+                leading=16,
+                alignment=4,           # justify
+                firstLineIndent=20,    # ✅ menjorok ke dalam 20 pt (~0.7 cm)
+                textColor=colors.black,
+                spaceBefore=0,
+                spaceAfter=10
+            ))
+
+        # 🔹 Paragraf rata kiri-kanan tanpa menjorok (untuk poin, daftar, atau penutup)
+        if "JustifyNoIndent" not in styles:
+            styles.add(ParagraphStyle(
+                name="JustifyNoIndent",
+                fontName="Arial",
+                fontSize=12,
+                leading=16,
+                alignment=4,           # justify
+                firstLineIndent=0,     # 🚫 tanpa indentasi
+                textColor=colors.black,
+                spaceBefore=0,
+                spaceAfter=10
+            ))
+
+        # 🔹 Paragraf tengah tebal (judul dan subjudul)
+        if "CenterBold" not in styles:
+            styles.add(ParagraphStyle(
+                name="CenterBold",
+                fontName="Arial",
+                fontSize=12,
+                alignment=1,           # center
+                leading=16,
+                spaceAfter=10,
+                textColor=colors.black
+            ))
+        # 🔹 Paragraf tengah tebal (judul dan subjudul)
+        if "ttdstyle" not in styles:
+            styles.add(ParagraphStyle(
+                name="ttdstyle",
+                fontName="Arial",
+                fontSize=12,
+                alignment=1,           # center
+                firstLineIndent=250, 
+                leading=16,
+                spaceAfter=10,
+                textColor=colors.black
+            ))
+        if "JustifyHanging" not in styles:
+            styles.add(ParagraphStyle(
+                name="JustifyHanging",
+                fontName="Arial",
+                fontSize=12,
+                leading=16,
+                alignment=4,          # justify
+                leftIndent=25,        # jarak seluruh paragraf
+                firstLineIndent=-15,  # baris pertama menjorok ke kiri (buat efek gantung)
+                textColor=colors.black,
+                spaceBefore=0,
+                spaceAfter=8
+            ))
+
+        return styles
+
+    # ======================= TEMPLATE PDF ========================
+    def generate_adpp_pdf(self):
+        if self.tahap == "DPHP":
+            judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"
+        elif self.tahap == "DPSHP":
+            judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPS</b>"
+        elif self.tahap == "DPSHPA":
+            judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPSHP</b>"
+        else:
+            judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"  # fallback
+
+        def terbilang_bilangan(n: int) -> str:
+            angka = ["", "satu", "dua", "tiga", "empat", "lima", "enam",
+                    "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"]
+            if n < 12:
+                return angka[n]
+            elif n < 20:
+                return terbilang_bilangan(n - 10) + " belas"
+            elif n < 100:
+                return terbilang_bilangan(n // 10) + " puluh " + terbilang_bilangan(n % 10)
+            elif n < 200:
+                return "seratus " + terbilang_bilangan(n - 100)
+            elif n < 1000:
+                return terbilang_bilangan(n // 100) + " ratus " + terbilang_bilangan(n % 100)
+            elif n < 2000:
+                return "seribu " + terbilang_bilangan(n - 1000)
+            elif n < 1_000_000:
+                return terbilang_bilangan(n // 1000) + " ribu " + terbilang_bilangan(n % 1000)
+            else:
+                return str(n)
+
+        def format_angka(n):
+            """Ubah angka menjadi format ribuan dengan titik (contoh: 1234567 → 1.234.567)."""
+            return f"{int(n):,}".replace(",", ".")
+
+        # Ambil data dari parent_window
+        jumlah_tps = int(getattr(self.parent_window, "_jumlah_tps", 0) or 0)
+        jumlah_laki = int(getattr(self.parent_window, "_jumlah_laki", 0) or 0)
+        jumlah_perempuan = int(getattr(self.parent_window, "_jumlah_perempuan", 0) or 0)
+        jumlah_pemilih = int(getattr(self.parent_window, "_jumlah_pemilih", 0) or 0)
+
+        # Format angka
+        tps_fmt = format_angka(jumlah_tps)
+        laki_fmt = format_angka(jumlah_laki)
+        perempuan_fmt = format_angka(jumlah_perempuan)
+        pemilih_fmt = format_angka(jumlah_pemilih)
+
+        # =============================
+        # 🔹 Siapkan PDF buffer & style
+        # =============================
+        buf = BytesIO()
+        styles = self._styles()
+        # 🔸 Ubah ke A4 landscape
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=landscape(A4),
+            leftMargin=60, rightMargin=60, topMargin=50, bottomMargin=40
+        )
+
+        try:
+            locale.setlocale(locale.LC_TIME, "id_ID.utf8")
+        except:
+            try:
+                locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
+            except:
+                pass
+
+        story = []
+
+        # === Logo KPU di atas judul ===
+        try:
+            import os
+            from reportlab.platypus import Image as RLImage
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, "KPU.png")
+
+            if os.path.exists(logo_path):
+                logo = RLImage(logo_path, width=2.2 * cm, height=2.2 * cm)
+                logo.hAlign = "CENTER"
+                story.append(logo)
+                story.append(Spacer(1, 10))  # jarak 10–12 mm
+        except Exception as e:
+            print(f"[Logo Warning] Tidak dapat memuat logo: {e}")
+
+        # === Judul utama ===
+        story.append(Paragraph("<b><u>BERITA ACARA</u></b>", styles["CenterBold"]))
+        story.append(Spacer(1, -12))
+        story.append(Paragraph(
+            f"<b>REKAPITULASI {judul_tahapan.upper()}<br/>"
+            f"TINGKAT DESA {self.desa.upper()}<br/>"
+            "PEMILIHAN UMUM TAHUN 2029</b>", styles["CenterBold"]))
+        story.append(Spacer(1, 8))
+
+        # === Paragraf pembuka ===
+        story.append(Paragraph(
+            f"Pada hari ... bertempat di Desa {self.desa.title()}, PPS {self.desa.title()} "
+            f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat Desa "
+            f"{self.desa.title()} untuk Pemilihan Umum Tahun 2029.",
+            styles["JustifyArial"]))
+        story.append(Spacer(1, 4))
+
+        story.append(Paragraph(
+            f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi {judul_tahapan.title()} "
+            f"Desa {self.desa.title()} dengan rincian sebagai berikut:",
+            styles["JustifyArial"]))
+        story.append(Spacer(1, 4))
+
+        # === Poin 1 ===
+        story.append(Paragraph(f"1. Rekapitulasi {judul_tahapan.upper()}", styles["JustifyNoIndent"]))
+        story.append(Spacer(1, -6))
+
+        # === Style paragraf tengah (lebih rapat) ===
+        style_center = ParagraphStyle(
+            name="Center",
+            fontName="Arial",
+            fontSize=12,
+            alignment=1,   # center
+            leading=14,
+            spaceBefore=0,
+            spaceAfter=0,
+        )
+
+        judul_header = Paragraph(
+            f"REKAPITULASI {judul_tahapan.upper()}<br/>DESA {self.desa.upper()}",
+            style_center
+        )
+
+        data_tabel = [
+            [judul_header, "", "", ""],
+            ["JUMLAH TPS", "LAKI-LAKI", "PEREMPUAN", "JUMLAH PEMILIH"],
+            [f"{tps_fmt}", f"{laki_fmt}", f"{perempuan_fmt}", f"{pemilih_fmt}"]
+        ]
+
+        tbl = Table(data_tabel, colWidths=[150, 150, 150, 150])
+        tbl.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
+            ("SPAN", (0, 0), (-1, 0)),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTNAME", (0, 0), (-1, -1), "Arial"),
+            ("FONTSIZE", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, 0), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+            ("TOPPADDING", (0, 1), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+        ]))
+        story.append(tbl)
+        story.append(Spacer(1, 12))
+
+        # === Build PDF dan tampilkan ===
+        doc.build(story)
+        self._show_pdf_bytes(buf.getvalue())
+
+    def create_placeholder_pdf(self):
+        buf = BytesIO()
+        styles = self._styles()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
+        doc.build([Paragraph("Belum ada dokumen yang dibuat.", styles["CenterBold"])])
+        self._show_pdf_bytes(buf.getvalue())
+
+    def _show_pdf_bytes(self, pdf_bytes: bytes):
+        """Tampilkan PDF langsung di QPdfView, stabil untuk dokumen multi-halaman."""
+        try:
+            # simpan buffer ke atribut agar tidak dihapus Python GC
+            self._pdf_buffer = QBuffer()
+            self._pdf_buffer.setData(pdf_bytes)
+            self._pdf_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+
+            # buat dokumen dan load dari buffer yang persistent
+            self.document = QPdfDocument(self)
+            status = self.document.load(self._pdf_buffer)
+
+            if status != QPdfDocument.Status.Ready:
+                print(f"[PDF Warning] Status dokumen: {status}")
+
+            # tampilkan di viewer
+            self.viewer.setDocument(self.document)
+
+            total_pages = int(self.document.pageCount() or 0)
+            #print(f"[PDF OK] Dokumen siap dengan {total_pages} halaman.")
+
+            # rebuild navigasi sesuai jumlah halaman aktual
+            self.rebuild_pager(total_pages)
+
+            # tampilkan halaman pertama
+            self.safe_jump_to_page(0)
+
+        except Exception as e:
+            print(f"[PDF Load Error] {e}")
+
+    def kembali_ke_main(self):
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
 
 #####################################*************########################################
 #####################################*************########################################
