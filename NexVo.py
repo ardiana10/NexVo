@@ -46,7 +46,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction,
     QPalette, QBrush, QPen, QRegularExpressionValidator,
-    QRadialGradient, QPolygon
+    QRadialGradient, QPolygon, QKeyEvent, QTextCursor
 )
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
 from PyQt6.QtWidgets import (
@@ -56,7 +56,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QScrollArea, QFormLayout, QInputDialog, QSlider, QGridLayout,
     QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox,
     QCheckBox, QRadioButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialogButtonBox,
-    QGraphicsSimpleTextItem, QSizePolicy, QSpacerItem, QStyleOptionButton, QDateEdit, QTextEdit
+    QGraphicsSimpleTextItem, QSizePolicy, QSpacerItem, QStyleOptionButton, QDateEdit, QTextEdit, QStyleFactory, QCalendarWidget
 )
 from PyQt6.QtWidgets import QCompleter
 from PyQt6.QtPdf import QPdfDocument
@@ -69,7 +69,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -8968,37 +8968,29 @@ class MainWindow(QMainWindow):
 
 
     def generate_berita_acara(self):
-        """Fungsi utama untuk membuka jendela Berita Acara."""
+        """Fungsi utama untuk membuka jendela Berita Acara (versi super cepat & ringan)."""
         try:
             from db_manager import get_connection
-            from PyQt6.QtWidgets import QMessageBox
-
-            # === Ambil data dari database aktif ===
             conn = get_connection()
             cur = conn.cursor()
-            tbl_name = self._active_table()
+            tbl = self._active_table()
 
-            # Hitung data (ganti nama kolom sesuai tabel Anda)
-            cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl_name}")
-            jumlah_tps = cur.fetchone()[0] or 0
-
-            cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE JK='L'")
-            jumlah_laki = cur.fetchone()[0] or 0
-
-            cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE JK='P'")
-            jumlah_perempuan = cur.fetchone()[0] or 0
-
-            jumlah_pemilih = jumlah_laki + jumlah_perempuan
-
+            # ⚡ Gunakan satu query agregasi besar (lebih cepat dari 4 query terpisah)
+            cur.execute(f"""
+                SELECT
+                    COUNT(DISTINCT TPS) AS jml_tps,
+                    SUM(CASE WHEN JK='L' AND (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_laki,
+                    SUM(CASE WHEN JK='P' AND (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_perempuan,
+                    SUM(CASE WHEN (KET NOT IN ('1','2','3','4','5','6','7','8') OR KET IS NULL) THEN 1 ELSE 0 END) AS jml_total
+                FROM {tbl};
+            """)
+            hasil = cur.fetchone() or (0, 0, 0, 0)
             conn.commit()
 
-            # Simpan ke atribut parent agar bisa diakses di class BeritaAcara
-            self._jumlah_tps = jumlah_tps
-            self._jumlah_laki = jumlah_laki
-            self._jumlah_perempuan = jumlah_perempuan
-            self._jumlah_pemilih = jumlah_pemilih
+            # ⚡ Simpan ke atribut (akses cepat di class BeritaAcara)
+            self._jumlah_tps, self._jumlah_laki, self._jumlah_perempuan, self._jumlah_pemilih = hasil
 
-            # === Sembunyikan MainWindow dan tampilkan jendela Berita Acara ===
+            # ⚡ Langsung buka jendela Berita Acara tanpa query tambahan
             self.berita_acara = self.show_window_with_transition(BeritaAcara)
 
         except Exception as e:
@@ -10076,37 +10068,9 @@ class BeritaAcara(QMainWindow):
 
         # ====================== PDF VIEWER ==========================
         self.viewer = QPdfView(self)
+        #self.viewer.setZoomMode(QPdfView.ZoomMode.FitInView)
+        #self.viewer.setPageMode(QPdfView.PageMode.SinglePage)
         layout.addWidget(self.viewer, stretch=1)
-
-        # ====================== NAVIGASI HALAMAN =====================
-        nav_layout = QHBoxLayout()
-        nav_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.btn_prev = QPushButton("<", self)
-        self.btn_next = QPushButton(">", self)
-        for btn in (self.btn_prev, self.btn_next):
-            btn.setFixedWidth(32)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background:#f0f0f0; border:1px solid #ccc;
-                    border-radius:6px; font-size:10pt;
-                }
-                QPushButton:hover { background:#ff9900; color:white; }
-            """)
-        self.btn_prev.clicked.connect(self.prev_page)
-        self.btn_next.clicked.connect(self.next_page)
-
-        self.page_buttons = []
-        for i in range(5):  # maksimal 5 halaman
-            b = QPushButton(str(i + 1), self)
-            b.setFixedWidth(32)
-            b.clicked.connect(lambda _, p=i: self.jump_to_page(p))
-            self.page_buttons.append(b)
-            nav_layout.addWidget(b)
-
-        nav_layout.insertWidget(0, self.btn_prev)
-        nav_layout.addWidget(self.btn_next)
-        layout.addLayout(nav_layout)
 
         # ====================== BARIS BAWAH (INPUT + TUTUP) =====================
         bottom = QHBoxLayout()
@@ -10126,6 +10090,20 @@ class BeritaAcara(QMainWindow):
         """)
         self.btn_input2.clicked.connect(self.open_dialog_masukan)
 
+        self.btn_hapus = QPushButton("🗑️ Hapus Tanggapan")
+        self.btn_hapus.setFixedHeight(34)
+        self.btn_hapus.setStyleSheet("""
+            QPushButton {
+                background-color: #cc0000;
+                color: white;
+                border-radius: 6px;
+                font-weight: bold;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: #ff3333; }
+        """)
+        self.btn_hapus.clicked.connect(self.konfirmasi_hapus_masukan)
+
         self.btn_tutup = QPushButton("Tutup", self)
         self.btn_tutup.setFixedSize(120, 40)
         self.btn_tutup.setStyleSheet("""
@@ -10136,6 +10114,7 @@ class BeritaAcara(QMainWindow):
 
         bottom.addWidget(self.btn_input1)
         bottom.addWidget(self.btn_input2)
+        bottom.addWidget(self.btn_hapus)
         bottom.addStretch()
         bottom.addWidget(self.btn_tutup)
         layout.addLayout(bottom)
@@ -10157,9 +10136,18 @@ class BeritaAcara(QMainWindow):
             self.generate_berita_acara_pdf(**vals)
 
     def open_dialog_masukan(self):
+        """Buka dialog input masukan/tanggapan dan perbarui dokumen langsung bila sudah tampil."""
         dlg = _DialogMasukan(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._masukan_points = [ln.strip() for ln in dlg.get_text().splitlines() if ln.strip()]
+            teks = dlg.get_text().strip()
+            if teks:
+                self._masukan_points = [ln.strip() for ln in teks.splitlines() if ln.strip()]
+
+                # Jika dokumen sudah tampil → update langsung
+                if hasattr(self, "document") and self.document.pageCount() > 0:
+                    self.update_masukan_section()
+                else:
+                    print("[Masukan] Dokumen belum dibuat; data akan dimasukkan saat generate.")
 
     # ======================= PDF STYLES ========================
     def _styles(self):
@@ -10216,24 +10204,33 @@ class BeritaAcara(QMainWindow):
                 spaceAfter=10,
                 textColor=colors.black
             ))
+        if "JustifyHanging" not in styles:
+            styles.add(ParagraphStyle(
+                name="JustifyHanging",
+                fontName="Arial",
+                fontSize=12,
+                leading=16,
+                alignment=4,          # justify
+                leftIndent=25,        # jarak seluruh paragraf
+                firstLineIndent=-15,  # baris pertama menjorok ke kiri (buat efek gantung)
+                textColor=colors.black,
+                spaceBefore=0,
+                spaceAfter=8
+            ))
 
         return styles
 
-    # ======================= SHOW PDF ========================
-    def _show_pdf_bytes(self, pdf_bytes):
-        self.document = QPdfDocument(self)
-        qbuf = QBuffer()
-        qbuf.setData(pdf_bytes)
-        qbuf.open(QIODevice.OpenModeFlag.ReadOnly)
-        self.document.load(qbuf)
-        self.viewer.setDocument(self.document)
-        self.update_page_label()
-
     # ======================= TEMPLATE PDF ========================
     def generate_berita_acara_pdf(self, nomor: str, tanggal_qdate, ketua: str, anggota1: str, anggota2: str):
-        # =============================
-        # 🔹 Fungsi bantu konversi angka → teks terbilang (bhs Indonesia)
-        # =============================
+        if self.tahap == "DPHP":
+            judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"
+        elif self.tahap == "DPSHP":
+            judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPS</b>"
+        elif self.tahap == "DPSHPA":
+            judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPSHP</b>"
+        else:
+            judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"  # fallback
+            
         def terbilang_bilangan(n: int) -> str:
             angka = ["", "satu", "dua", "tiga", "empat", "lima", "enam",
                     "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"]
@@ -10253,6 +10250,22 @@ class BeritaAcara(QMainWindow):
                 return terbilang_bilangan(n // 1000) + " ribu " + terbilang_bilangan(n % 1000)
             else:
                 return str(n)
+            
+        def format_angka(n):
+            """Ubah angka menjadi format ribuan dengan titik (contoh: 1234567 → 1.234.567)."""
+            return f"{int(n):,}".replace(",", ".")    
+        
+        # Ambil data dari parent_window
+        jumlah_tps = int(getattr(self.parent_window, "_jumlah_tps", 0) or 0)
+        jumlah_laki = int(getattr(self.parent_window, "_jumlah_laki", 0) or 0)
+        jumlah_perempuan = int(getattr(self.parent_window, "_jumlah_perempuan", 0) or 0)
+        jumlah_pemilih = int(getattr(self.parent_window, "_jumlah_pemilih", 0) or 0)
+
+        # Format angka
+        tps_fmt = format_angka(jumlah_tps)
+        laki_fmt = format_angka(jumlah_laki)
+        perempuan_fmt = format_angka(jumlah_perempuan)
+        pemilih_fmt = format_angka(jumlah_pemilih)
 
         # =============================
         # 🔹 Siapkan PDF buffer & style
@@ -10279,13 +10292,13 @@ class BeritaAcara(QMainWindow):
                 pass
 
         pydate = tanggal_qdate.toPyDate()
-        hari = pydate.strftime("%A").lower()              # contoh: jumat
-        bulan = pydate.strftime("%B").lower()             # contoh: september
+        hari = pydate.strftime("%A").capitalize()              # contoh: jumat
+        bulan = pydate.strftime("%B").capitalize()             # contoh: september
         tanggal_angka = pydate.day
         tahun_angka = pydate.year
 
-        tanggal_terbilang = terbilang_bilangan(tanggal_angka).strip()
-        tahun_terbilang = terbilang_bilangan(tahun_angka).strip()
+        tanggal_terbilang = terbilang_bilangan(tanggal_angka).strip().title()
+        tahun_terbilang = terbilang_bilangan(tahun_angka).strip().title()
         tanggal_lengkap_terbilang = f"{tanggal_terbilang} bulan {bulan} tahun {tahun_terbilang}"
 
         # =============================
@@ -10314,7 +10327,7 @@ class BeritaAcara(QMainWindow):
         story.append(Paragraph(f"Nomor: {nomor}", styles["CenterBold"]))
         story.append(Spacer(1, 8))
         story.append(Paragraph(
-            "<b>REKAPITULASI DAFTAR PEMILIH HASIL PEMUTAKHIRAN<br/>"
+            f"<b>REKAPITULASI {judul_tahapan.upper()}<br/>"
             f"TINGKAT DESA {self.desa.upper()}<br/>"
             "PEMILIHAN UMUM TAHUN 2029</b>", styles["CenterBold"]))
         story.append(Spacer(1, 8))
@@ -10323,19 +10336,19 @@ class BeritaAcara(QMainWindow):
         story.append(Paragraph(
             f"Pada hari {hari} tanggal {tanggal_lengkap_terbilang} "
             f"bertempat di Desa {self.desa.title()}, PPS {self.desa.title()} "
-            "telah melaksanakan Rapat Pleno Terbuka Rekapitulasi Daftar Pemilih Hasil Pemutakhiran Tingkat Desa "
+            f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat Desa "
             f"{self.desa.title()} untuk Pemilihan Umum Tahun 2029.",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
 
         story.append(Paragraph(
-            f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi Daftar Perubahan Pemilih Hasil "
-            f"Pemutakhiran Desa {self.desa.title()} dengan rincian sebagai berikut:",
+            f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi {judul_tahapan.title()} "
+            f"Desa {self.desa.title()} dengan rincian sebagai berikut:",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
 
         # === Poin 1 ===
-        story.append(Paragraph("1. Rekapitulasi Daftar Perubahan Pemilih Hasil Pemutakhiran", styles["JustifyNoIndent"]))
+        story.append(Paragraph(f"1. Rekapitulasi {judul_tahapan.upper()}", styles["JustifyNoIndent"]))
         story.append(Spacer(1, -6))
 
         # === Style paragraf tengah (lebih rapat) ===
@@ -10351,15 +10364,15 @@ class BeritaAcara(QMainWindow):
 
         # === Header tabel (1 cell gabungan, 2 baris teks) ===
         judul_header = Paragraph(
-            f"REKAPITULASI DAFTAR PEMILIH HASIL PEMUTAKHIRAN<br/>DESA {self.desa.upper()}",
+            f"REKAPITULASI {judul_tahapan.upper()}<br/>DESA {self.desa.upper()}",
             style_center
         )
 
         data_tabel = [
             [judul_header, "", "", ""],
             ["JUMLAH TPS", "LAKI-LAKI", "PEREMPUAN", "JUMLAH PEMILIH"],
-            #[f"{jumlah_tps}", f"{jumlah_laki}", f"{jumlah_perempuan}", f"{jumlah_pemilih}"]
-            [".....", ".....", ".....", "....."]
+            [f"{tps_fmt}", f"{laki_fmt}", f"{perempuan_fmt}", f"{pemilih_fmt}"]
+            #[".....", ".....", ".....", "....."]
         ]
 
         tbl = Table(data_tabel, colWidths=[110, 110, 110, 110])
@@ -10388,16 +10401,29 @@ class BeritaAcara(QMainWindow):
         story.append(Paragraph("2. Menerima masukan data dari:", styles["JustifyNoIndent"]))
         story.append(Spacer(1, -10))
         if points:
-            for i, p in enumerate(points, 1):
-                huruf = chr(96 + i)
-                story.append(Paragraph(f"{huruf}. {p}", styles["JustifyArial"]))
+            # Hapus baris kosong
+            points = [p.strip() for p in points if p.strip()]
+
+            # Jika hanya satu poin dan isinya mulai dengan "a."
+            if len(points) == 1 and points[0].lower().startswith("a."):
+                teks = points[0][2:].strip()  # ambil isi setelah "a."
+                if teks:  # kalau ada isi setelah "a."
+                    story.append(Paragraph(f"- {teks}", styles["JustifyHanging"]))
+                else:  # kalau cuma "a." tanpa isi
+                    story.append(Paragraph("-", styles["JustifyHanging"]))
+                    story.append(Spacer(1, -2))
+            else:
+                # Normal: tampilkan semua poin apa adanya
+                for p in points:
+                    story.append(Paragraph(p, styles["JustifyHanging"]))
         else:
             story.append(Paragraph("- Tidak ada masukan/tanggapan data", styles["JustifyArial"]))
+
         story.append(Spacer(1, 4))
 
         # === Paragraf penutup ===
         story.append(Paragraph(
-            f"Rekapitulasi Daftar Perubahan Pemilih Hasil Pemutakhiran tersebut selanjutnya ditetapkan secara lebih rinci "
+            f"Rekapitulasi {judul_tahapan.title()} tersebut selanjutnya ditetapkan secara lebih rinci "
             f"dalam dokumen Rekapitulasi Tingkat Desa {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
@@ -10427,7 +10453,7 @@ class BeritaAcara(QMainWindow):
         ]))
         story.append(tbl_ttd)
         story.append(Spacer(1, 16))
-        story.append(PageBreak())
+        #story.append(PageBreak())
 
         # === Halaman 2 - tanda tangan ===
         story.append(Paragraph(f"<b>PANITIA PEMUNGUTAN SUARA {self.desa.upper()}</b>", styles["CenterBold"]))
@@ -10446,41 +10472,219 @@ class BeritaAcara(QMainWindow):
         ]))
         story.append(tbl_ttd)
 
+        # simpan ke atribut agar bisa digunakan update_masukan_section
+        self._nomor_berita = nomor
+        self._tanggal_pleno = tanggal_qdate
+        self._ketua_pps = ketua
+        self._anggota1 = anggota1
+        self._anggota2 = anggota2
+
         # === Bangun PDF ===
         doc.build(story)
         self._show_pdf_bytes(buf.getvalue())
 
-    # ======================= NAVIGASI ========================
-    def update_page_label(self):
-        total = self.document.pageCount()
-        current = self.viewer.pageNavigator().currentPage()
-        for i, b in enumerate(self.page_buttons):
-            if i < total:
-                b.setVisible(True)
-                b.setStyleSheet(
-                    "background:#ff9900;color:white;border-radius:6px;font-weight:bold;"
-                    if i == current else
-                    "background:#fff;border:1px solid #ccc;border-radius:6px;")
+    def update_masukan_section(self):
+        """Perbarui dokumen lengkap (tetapi ringan) agar masukan baru langsung muncul di PDF viewer."""
+        try:
+            if not hasattr(self, "_masukan_points"):
+                self._masukan_points = []
+
+            # Ambil semua data terakhir dari instance
+            nomor = getattr(self, "_nomor_berita", "...")
+            tanggal_qdate = getattr(self, "_tanggal_pleno", None)
+            ketua = getattr(self, "_ketua_pps", "")
+            anggota1 = getattr(self, "_anggota1", "")
+            anggota2 = getattr(self, "_anggota2", "")
+            if not tanggal_qdate:
+                print("[Update Masukan] Dokumen belum memiliki tanggal pleno.")
+                return
+
+            # ==============================
+            # 🔹 Rebuild ulang full dokumen
+            # ==============================
+            buf = BytesIO()
+            styles = self._styles()
+            doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=60, rightMargin=60, topMargin=60, bottomMargin=50)
+
+            # Data jumlah dari parent
+            jumlah_tps = int(getattr(self.parent_window, "_jumlah_tps", 0))
+            jumlah_laki = int(getattr(self.parent_window, "_jumlah_laki", 0))
+            jumlah_perempuan = int(getattr(self.parent_window, "_jumlah_perempuan", 0))
+            jumlah_pemilih = int(getattr(self.parent_window, "_jumlah_pemilih", 0))
+
+            def format_angka(n):
+                return f"{int(n):,}".replace(",", ".")
+
+            tps_fmt = format_angka(jumlah_tps)
+            laki_fmt = format_angka(jumlah_laki)
+            perempuan_fmt = format_angka(jumlah_perempuan)
+            pemilih_fmt = format_angka(jumlah_pemilih)
+
+            # Tentukan judul tahapan
+            if self.tahap == "DPHP":
+                judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"
+            elif self.tahap == "DPSHP":
+                judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPS</b>"
+            elif self.tahap == "DPSHPA":
+                judul_tahapan = "Daftar Pemilih Hasil Perbaikan <b>DPSHP</b>"
             else:
-                b.setVisible(False)
+                judul_tahapan = "Daftar Pemilih Hasil Pemutakhiran"
 
-    def jump_to_page(self, page_index):
-        nav = self.viewer.pageNavigator()
-        if 0 <= page_index < self.document.pageCount():
-            nav.jump(page_index, QPointF(0, 0), 0)
-            self.update_page_label()
+            # Bangun story baru (full dokumen)
+            story = []
 
-    def next_page(self):
-        nav = self.viewer.pageNavigator()
-        if nav.currentPage() < self.document.pageCount() - 1:
-            nav.jump(nav.currentPage() + 1, QPointF(0, 0), 0)
-            self.update_page_label()
+            # === Logo KPU ===
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                logo_path = os.path.join(base_dir, "KPU.png")
+                if os.path.exists(logo_path):
+                    logo = RLImage(logo_path, width=2.2 * cm, height=2.2 * cm)
+                    logo.hAlign = "CENTER"
+                    story.append(logo)
+                    story.append(Spacer(1, 10))
+            except Exception as e:
+                print(f"[Logo Warning] {e}")
 
-    def prev_page(self):
-        nav = self.viewer.pageNavigator()
-        if nav.currentPage() > 0:
-            nav.jump(nav.currentPage() - 1, QPointF(0, 0), 0)
-            self.update_page_label()
+            # === Header utama ===
+            story.append(Paragraph("<b><u>BERITA ACARA</u></b>", styles["CenterBold"]))
+            story.append(Spacer(1, -12))
+            story.append(Paragraph(f"Nomor: {nomor}", styles["CenterBold"]))
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(
+                f"<b>REKAPITULASI {judul_tahapan.upper()}<br/>"
+                f"TINGKAT DESA {self.desa.upper()}<br/>"
+                "PEMILIHAN UMUM TAHUN 2029</b>", styles["CenterBold"]))
+            story.append(Spacer(1, 8))
+
+            # === Paragraf 1 ===
+            pydate = tanggal_qdate.toPyDate()
+            hari = pydate.strftime("%A").capitalize()
+            bulan = pydate.strftime("%B").capitalize()
+            tanggal_angka = pydate.day
+            tahun_angka = pydate.year
+            tanggal_terbilang = str(tanggal_angka)
+            tahun_terbilang = str(tahun_angka)
+
+            tanggal_lengkap_terbilang = f"{tanggal_terbilang} bulan {bulan} tahun {tahun_terbilang}"
+
+            story.append(Paragraph(
+                f"Pada hari {hari} tanggal {tanggal_lengkap_terbilang} "
+                f"bertempat di Desa {self.desa.title()}, PPS {self.desa.title()} "
+                f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat Desa "
+                f"{self.desa.title()} untuk Pemilihan Umum Tahun 2029.",
+                styles["JustifyArial"]))
+            story.append(Spacer(1, 4))
+
+            story.append(Paragraph(
+                f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi {judul_tahapan.title()} "
+                f"Desa {self.desa.title()} dengan rincian sebagai berikut:",
+                styles["JustifyArial"]))
+            story.append(Spacer(1, 6))
+
+            # === Tabel rekap ===
+            judul_header = Paragraph(
+                f"REKAPITULASI {judul_tahapan.upper()}<br/>DESA {self.desa.upper()}",
+                ParagraphStyle("centered", parent=styles["CenterBold"], alignment=1, leading=14)
+            )
+
+            data_tabel = [
+                [judul_header, "", "", ""],
+                ["JUMLAH TPS", "LAKI-LAKI", "PEREMPUAN", "JUMLAH PEMILIH"],
+                [tps_fmt, laki_fmt, perempuan_fmt, pemilih_fmt]
+            ]
+
+            tbl = Table(data_tabel, colWidths=[110, 110, 110, 110])
+            tbl.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
+                ("SPAN", (0, 0), (-1, 0)),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("FONTNAME", (0, 0), (-1, -1), "Arial"),
+                ("FONTSIZE", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, 0), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+                ("TOPPADDING", (0, 1), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+            ]))
+            story.append(tbl)
+            story.append(Spacer(1, 10))
+
+            # === Poin (2) — Masukan ===
+            story.append(Paragraph("2. Menerima masukan data dari:", styles["JustifyNoIndent"]))
+            story.append(Spacer(1, -6))
+            if self._masukan_points:
+                # Hapus baris kosong
+                self._masukan_points = [p.strip() for p in self._masukan_points if p.strip()]
+
+                # Jika hanya satu poin dan isinya mulai dengan "a."
+                if len(self._masukan_points) == 1 and self._masukan_points[0].lower().startswith("a."):
+                    teks = self._masukan_points[0][2:].strip()  # ambil isi setelah "a."
+                    if teks:  # kalau ada isi setelah "a."
+                        story.append(Paragraph(f"- {teks}", styles["JustifyHanging"]))
+                    else:  # kalau cuma "a." tanpa isi
+                        story.append(Paragraph("-", styles["JustifyHanging"]))
+                        story.append(Spacer(1, -2))
+                else:
+                    # Normal: tampilkan semua poin apa adanya
+                    for p in self._masukan_points:
+                        story.append(Paragraph(p, styles["JustifyHanging"]))
+            else:
+                story.append(Paragraph("- Tidak ada masukan/tanggapan data", styles["JustifyArial"]))
+            story.append(Spacer(1, 8))
+
+            # === Paragraf penutup ===
+            story.append(Paragraph(
+                f"Rekapitulasi {judul_tahapan.title()} tersebut selanjutnya ditetapkan secara lebih rinci "
+                f"dalam dokumen Rekapitulasi Tingkat Desa {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
+                styles["JustifyArial"]))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph("Demikian Berita Acara ini dibuat untuk digunakan sebagaimana mestinya.", styles["JustifyArial"]))
+
+            # === Blok lokasi dan tanggal dibuat dalam tabel dua kolom agar titik dua sejajar ===
+            data_ttd = [
+                ["Dibuat di", f": {self.desa.title()}"],
+                ["Pada Tanggal", f": {pydate.strftime('%d %B %Y')}"]
+            ]
+
+            tbl_ttd = Table(data_ttd, colWidths=[80, 100])  # kolom 1 label, kolom 2 isi
+            tbl_ttd.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), "Arial"),
+                ("FONTSIZE", (0, 0), (-1, -1), 12),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 120),  # geser tabel ke kanan
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                # Tidak ada garis, jadi tabel transparan
+            ]))
+            story.append(tbl_ttd)
+            story.append(Spacer(1, 16))
+            #story.append(PageBreak())
+
+            # === Halaman 2 - Tanda tangan ===
+            story.append(Paragraph(f"<b>PANITIA PEMUNGUTAN SUARA {self.desa.upper()}</b>", styles["CenterBold"]))
+            story.append(Spacer(1, 16))
+            data_ttd = [
+                [f"1. {ketua or '............................'}", "KETUA", "1. ......................"],
+                [f"2. {anggota1 or '............................'}", "ANGGOTA", "2. ......................"],
+                [f"3. {anggota2 or '............................'}", "ANGGOTA", "3. ......................"],
+            ]
+            tbl_ttd = Table(data_ttd, colWidths=[180, 100, 180])
+            tbl_ttd.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), "Arial"),
+                ("FONTSIZE", (0, 0), (-1, -1), 12),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 35),
+            ]))
+            story.append(tbl_ttd)
+
+            doc.build(story)
+            self._show_pdf_bytes(buf.getvalue())
+
+            #print("[Masukan Update] Dokumen lengkap diperbarui (ringan).")
+        except Exception as e:
+            print(f"[Masukan Update Error] {e}")
 
     def create_placeholder_pdf(self):
         buf = BytesIO()
@@ -10488,6 +10692,330 @@ class BeritaAcara(QMainWindow):
         doc = SimpleDocTemplate(buf, pagesize=A4)
         doc.build([Paragraph("Belum ada dokumen yang dibuat.", styles["CenterBold"])])
         self._show_pdf_bytes(buf.getvalue())
+
+    def konfirmasi_hapus_masukan(self):
+        """Tampilkan dialog konfirmasi hapus dengan tema merah NexVo."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("Konfirmasi Hapus")
+        msg.setText("Yakin ingin menghapus seluruh masukan/tanggapan dari dokumen?")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+
+        # === Styling dialog & tombol ===
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #ffffff;
+                color: #000000;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+            }
+
+            QMessageBox QLabel {
+                color: #000000;
+                font-size: 11pt;
+                font-weight: 500;
+            }
+
+            QPushButton {
+                min-width: 80px;
+                min-height: 30px;
+                border-radius: 6px;
+                font-weight: bold;
+                color: white;
+                background-color: #cc0000;        /* 🔴 warna dasar */
+            }
+
+            QPushButton:hover {
+                background-color: #ff3333;        /* 🟠 hover terang */
+            }
+
+            QPushButton:pressed {
+                background-color: #b30000;        /* 🔴 efek ditekan */
+            }
+
+            QPushButton:disabled {
+                background-color: #aaaaaa;
+                color: #f0f0f0;
+            }
+        """)
+
+        # Eksekusi dialog dan ambil hasilnya
+        reply = msg.exec()
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 🔹 Logika hapus asli kamu tetap sama
+            self._masukan_points = []
+            if hasattr(self, "document") and self.document.pageCount() > 0:
+                self.update_masukan_section()
+
+
+    # ======================= NAVIGASI HALAMAN (ANTI CRASH) =======================
+    from PyQt6.QtCore import QTimer, QPointF
+
+    def _clear_layout(self, layout):
+        """Hapus semua widget di dalam layout dengan aman."""
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def rebuild_pager(self, total=None):
+        """Bangun ulang pagination PDF seperti tabel (dinamis & profesional)."""
+        cw = self.centralWidget()
+        if not cw:
+            return
+        main_layout = cw.layout()
+        if not main_layout:
+            return
+
+        # Siapkan layout navigasi jika belum ada
+        if not hasattr(self, "_nav_layout"):
+            self._nav_layout = QHBoxLayout()
+            self._nav_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._nav_layout.setSpacing(6)
+            main_layout.insertLayout(1, self._nav_layout)
+
+        # Bersihkan layout lama
+        for i in reversed(range(self._nav_layout.count())):
+            w = self._nav_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        # Dapatkan total halaman PDF
+        if total is None:
+            total = int(self.document.pageCount() if hasattr(self, "document") and self.document else 0)
+        if total <= 0:
+            return
+
+        current_page = getattr(self, "current_page_index", 0) + 1  # ubah ke 1-based
+        self.total_pages = total
+        window = 3  # jumlah tombol numerik yang terlihat
+        half = window // 2
+
+        # === Utility untuk membuat tombol ===
+        def make_page_button(text, handler, checked=False, enabled=True):
+            btn = QPushButton(text)
+            btn.setEnabled(enabled)
+            btn.setCheckable(True)
+            btn.setChecked(checked)
+            btn.clicked.connect(handler)
+            btn.setFixedSize(25, 25)  # 🔸 bentuk persegi
+            btn.setStyleSheet("""
+                QPushButton {
+                    border: 1px solid #aaa;
+                    border-radius: 6px;
+                    background-color: #ffffff;
+                    color: #000000;
+                    font-size: 12px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #ffeed9;    /* 🟠 lembut saat hover */
+                    border: 1px solid #ff9900;
+                    color: #000000;
+                }
+                QPushButton:checked {
+                    border: 2px solid #ff9900;
+                    background-color: #fff5e6;
+                    font-weight: bold;
+                    color: #000000;
+                }
+                QPushButton:disabled {
+                    color: #999999;
+                    border: 1px solid #ddd;
+                    background-color: #f5f5f5;
+                }
+            """)
+            return btn
+
+
+        # === Tombol sebelumnya ===
+        prev_btn = make_page_button("‹", lambda: self.safe_jump_to_page(current_page - 2),
+                                    checked=False, enabled=(current_page > 1))
+        self._nav_layout.addWidget(prev_btn)
+
+        # === Hitung jendela tampilan halaman ===
+        start = max(1, current_page - half)
+        end = min(total, start + window - 1)
+        start = max(1, end - window + 1)
+
+        # Jika masih ada halaman sebelum start
+        if start > 1:
+            self._nav_layout.addWidget(make_page_button("1", lambda: self.safe_jump_to_page(0)))
+            if start > 2:
+                self._nav_layout.addWidget(QLabel("..."))
+
+        # === Tombol halaman utama ===
+        for p in range(start, end + 1):
+            btn = make_page_button(
+                str(p),
+                lambda _, x=p: self.safe_jump_to_page(x - 1),
+                checked=(p == current_page)
+            )
+            self._nav_layout.addWidget(btn)
+
+        # Jika masih ada halaman setelah end
+        if end < total:
+            if end < total - 1:
+                self._nav_layout.addWidget(QLabel("..."))
+            self._nav_layout.addWidget(
+                make_page_button(str(total), lambda: self.safe_jump_to_page(total - 1))
+            )
+
+        # === Tombol berikutnya ===
+        next_btn = make_page_button("›", lambda: self.safe_jump_to_page(current_page),
+                                    checked=False, enabled=(current_page < total))
+        self._nav_layout.addWidget(next_btn)
+
+        # === Label kecil status halaman (opsional)
+        lbl_info = QLabel(f"Halaman {current_page} / {total}")
+        lbl_info.setStyleSheet("color:#444; font-size:11px; padding-left:10px;")
+        self._nav_layout.addWidget(lbl_info)
+
+
+
+    def _show_pdf_bytes(self, pdf_bytes: bytes):
+        """Tampilkan PDF langsung di QPdfView, stabil untuk dokumen multi-halaman."""
+        try:
+            # simpan buffer ke atribut agar tidak dihapus Python GC
+            self._pdf_buffer = QBuffer()
+            self._pdf_buffer.setData(pdf_bytes)
+            self._pdf_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+
+            # buat dokumen dan load dari buffer yang persistent
+            self.document = QPdfDocument(self)
+            status = self.document.load(self._pdf_buffer)
+
+            if status != QPdfDocument.Status.Ready:
+                print(f"[PDF Warning] Status dokumen: {status}")
+
+            # tampilkan di viewer
+            self.viewer.setDocument(self.document)
+
+            total_pages = int(self.document.pageCount() or 0)
+            #print(f"[PDF OK] Dokumen siap dengan {total_pages} halaman.")
+
+            # rebuild navigasi sesuai jumlah halaman aktual
+            self.rebuild_pager(total_pages)
+
+            # tampilkan halaman pertama
+            self.safe_jump_to_page(0)
+
+        except Exception as e:
+            print(f"[PDF Load Error] {e}")
+
+
+
+    def update_page_label(self):
+        """Highlight tombol aktif sesuai halaman saat ini."""
+        if not getattr(self, "document", None):
+            return
+
+        total = int(self.document.pageCount() or 0)
+        if total <= 0 or not hasattr(self, "page_buttons"):
+            return
+
+        current = self.viewer.pageNavigator().currentPage()
+        for i, b in enumerate(self.page_buttons):
+            if i == current:
+                b.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ff6600;
+                        color: white;
+                        font-weight: bold;
+                        border-radius: 6px;
+                    }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton {
+                        background-color: #999;
+                        color: white;
+                        border-radius: 6px;
+                    }
+                    QPushButton:hover {background-color: #ff6600;}
+                """)
+
+
+    # ---------------- SAFE NAVIGATION ----------------
+
+    def safe_jump_to_page(self, page_index):
+        if not getattr(self, "document", None):
+            return
+        total = int(self.document.pageCount() or 0)
+        if page_index < 0 or page_index >= total:
+            return
+        self.current_page_index = page_index
+        QTimer.singleShot(200, lambda: self._do_jump(page_index))
+        self.rebuild_pager()  # 🔸 update navigasi juga saat loncat langsung
+
+
+
+    def jump_to_page(self, page_index):
+        """Wrapper cepat untuk melompat halaman (gunakan versi aman)."""
+        self.safe_jump_to_page(page_index)
+
+
+
+    def _do_jump(self, page_index):
+        """Melompat ke halaman tertentu, aman dan sinkron dengan pagination."""
+        try:
+            if not hasattr(self, "document") or not self.document:
+                print("[Jump] Dokumen belum siap.")
+                return
+
+            total = int(self.document.pageCount() or 0)
+            if total <= 0 or page_index < 0 or page_index >= total:
+                print(f"[Jump] Halaman {page_index} tidak valid (total {total}).")
+                return
+
+            nav = self.viewer.pageNavigator()
+
+            # Proteksi ekstra: tunggu dokumen benar-benar siap
+            if self.document.status() != QPdfDocument.Status.Ready:
+                print("[Jump] Dokumen belum fully loaded, retry dalam 150ms...")
+                QTimer.singleShot(150, lambda: self._do_jump(page_index))
+                return
+
+            # Lakukan lompatan yang aman
+            nav.jump(page_index, QPointF(0, 0), 0)
+
+            # Update status halaman aktif
+            self.current_page_index = page_index
+
+            # Refresh label & navigasi pagination agar warna aktif berpindah
+            QTimer.singleShot(100, self.update_page_label)
+            if hasattr(self, "rebuild_pager"):
+                QTimer.singleShot(120, self.rebuild_pager)
+
+            # Log opsional
+            # print(f"[Jump] Pindah ke halaman {page_index + 1}/{total}")
+
+        except Exception as e:
+            print(f"[Jump Error] {e}")
+
+
+
+    def next_page(self):
+        if not getattr(self, "document", None):
+            return
+        total = int(self.document.pageCount() or 0)
+        cur = getattr(self, "current_page_index", 0)
+        if cur < total - 1:
+            self.safe_jump_to_page(cur + 1)
+            self.rebuild_pager()  # 🔸 update navigasi
+
+    def prev_page(self):
+        if not getattr(self, "document", None):
+            return
+        cur = getattr(self, "current_page_index", 0)
+        if cur > 0:
+            self.safe_jump_to_page(cur - 1)
+            self.rebuild_pager()  # 🔸 update navigasi
+
+            
 
     def kembali_ke_main(self):
         if self.parent_window:
@@ -10499,6 +11027,36 @@ class BeritaAcara(QMainWindow):
             QTimer.singleShot(150, self.parent_window.repaint)
         self.close()
 
+class EmptyDateEdit(QDateEdit):
+    """QDateEdit yang bisa benar-benar kosong sampai user pilih tanggal."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._hasDate = False
+        self.setDisplayFormat("dd MMMM yyyy")
+        self.setCalendarPopup(True)
+        self.lineEdit().setReadOnly(True)
+        self.setDate(QDate.currentDate())   # tetap butuh internal date valid
+        self.lineEdit().clear()              # tapi tampilan dikosongkan
+        self.setSpecialValueText("")
+        self.dateChanged.connect(self._on_date_selected)
+
+    def _on_date_selected(self, qdate):
+        """Aktifkan tampilan tanggal saat user memilih dari kalender."""
+        if qdate.isValid():
+            self._hasDate = True
+            # perbarui tampilan teks
+            self.lineEdit().setText(qdate.toString(self.displayFormat()))
+
+    def textFromDateTime(self, dt):
+        # kalau belum ada tanggal dipilih, tampilkan kosong
+        if not self._hasDate:
+            return ""
+        return super().textFromDateTime(dt)
+
+    def clear(self):
+        """Kosongkan field kembali seperti semula."""
+        self._hasDate = False
+        self.lineEdit().clear()
 
 # ===================== Dialog Input =====================
 class _DialogDataBA(QDialog):
@@ -10510,69 +11068,185 @@ class _DialogDataBA(QDialog):
         self.setMinimumWidth(420)
         self.setStyleSheet("""
             QDialog {
-                background-color: #ffffff;
+                background-color: #f9f9f9;
+                font-family: 'Segoe UI', sans-serif;
             }
 
             QLineEdit, QDateEdit {
-                border: 1px solid #aaaaaa;
-                border-radius: 6px;
-                padding: 6px;
-                font-family: 'Segoe UI';
-                font-size: 10.5pt;
+                border: 1px solid #dcdcdc;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 10pt;
+                background-color: #ffffff;
+                color: #000000;
+            }
+
+            QDateEdit QLineEdit {
                 color: #000000;
                 background-color: #ffffff;
+            }
+
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 24px;
+                border-left: 1px solid #000000;
+                background-color: #ff6600;
+                border-top-right-radius: 5px;
+                border-bottom-right-radius: 5px;
+            }
+
+            QDateEdit::down-arrow {
+                image: url(:/qt-project.org/styles/commonstyle/images/calendar-16.png);
+                width: 16px;
+                height: 16px;
+                margin-right: 4px;
+            }
+            QDateEdit::down-arrow:hover {
+                background-color: #9b59b6;
             }
 
             QLabel {
                 color: #000000;
-                font-family: 'Segoe UI';
                 font-size: 10pt;
             }
 
-            /* Kalender popup */
+            /* === KALENDER STYLING === */
             QCalendarWidget {
-                background-color: #ffffff;
-                color: #000000;
-                border: 2px solid #444444;      /* tebal elegan */
+                background-color: #000000;
+                border: 1px solid #e0e0e0;
                 border-radius: 8px;
-                padding: 8px 8px 2px 8px;      /* atas, kanan, bawah, kiri (kanan & bawah dikurangi) */
-                min-width: 255px;
-                min-height: 200px;
             }
 
-            QCalendarWidget QAbstractItemView {
-                selection-background-color: #ff9900;
-                selection-color: #ffffff;
-                font-family: 'Segoe UI';
-                font-size: 10.5pt;              /* sedikit lebih besar */
+            /* Navigation bar atas kalender */
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #9b59b6;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 4px 10px;
+            }
+
+            /* Styling dropdown bulan pada navigation bar */
+            QCalendarWidget QComboBox {
+                color: #000000;                 /* Pastikan dropdown bulan font-nya hitam */
+                background-color: #ffffff;      /* Background putih pada tombol dropdown bulan */
+                border: none;
+                font-size: 12pt;
+                font-weight: bold;
+            }
+
+            /* Hilangkan panah kecil pada tombol dropdown bulan */
+            QCalendarWidget QComboBox::drop-down {
+                image: none;
+                border: none;
+                width: 0px;
+                height: 0px;
+            }
+
+            /* Styling daftar bulan (popup) */
+            QCalendarWidget QComboBox QAbstractItemView {
+                background-color: #ffffff;       /* Background popup daftar bulan */
+                color: #000000;                  /* Font item default hitam */
+                border: 1px solid #9b59b6;
+                selection-background-color: #9b59b6; 
+                selection-color: #000000;        /* Font jadi putih saat dipilih/hover */
+                padding: 5px;
+            }
+
+            /* Item daftar bulan, default hitam */
+            QCalendarWidget QComboBox QAbstractItemView::item {
                 color: #000000;
                 background-color: #ffffff;
-                border: 1px solid #888888;
-                border-radius: 6px;
-                gridline-color: #cccccc;
-                padding: 8px;                   /* semua sisi longgar */
+                padding: 5px;
             }
 
-            QCalendarWidget QToolButton {
-                color: #000000;
-                font-weight: bold;
-                background-color: #f5f5f5;
-                border: 1px solid #999999;
-                border-radius: 4px;
-                padding: 4px 8px;
-            }
-
-            QCalendarWidget QToolButton:hover {
-                background-color: #ff9900;
+            /* Item dipilih/hover, font putih di atas latar ungu */
+            QCalendarWidget QComboBox QAbstractItemView::item:selected {
+                background-color: #9b59b6; 
                 color: #ffffff;
             }
 
-            QCalendarWidget QSpinBox,
-            QCalendarWidget QComboBox {
-                color: #000000;
+            /* Tombol navigasi bulan */
+            QCalendarWidget QToolButton {
+                color: #ffffff;
+                font-size: 12pt;
+                font-weight: bold;
+                background-color: transparent;
+                border: none;
+                margin: 5px;
+            }
+
+            QCalendarWidget QToolButton:hover {
+                background-color: #8e44ad;
+                border-radius: 15px;
+            }
+
+            QCalendarWidget QToolButton#qt_calendar_prevmonth,
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {
+                width: 30px;
+                height: 30px;
+                border-radius: 15px;
+                icon-size: 18px;
+            }
+
+            /* Teks bulan-tahun pada navigation bar */
+            QCalendarWidget QWidget#qt_calendar_monthyear {
+                color: #ffffff;
+                font-size: 12pt;
+                font-weight: bold;
+            }
+
+            /* Hari-hari kalender */
+            QCalendarWidget QTableView {
                 background-color: #ffffff;
-                border: 1px solid #999999;
-                border-radius: 4px;
+                border: none;
+                selection-background-color: #9b59b6;
+                selection-color: #000000;
+            }
+
+            QCalendarWidget QTableView QHeaderView::section {
+                background-color: #ffffff;
+                padding: 8px;
+                color: #7f8c8d;
+                font-weight: bold;
+                text-transform: uppercase;
+                border: none;
+            }
+
+            QCalendarWidget QTableView::item {
+                border-radius: 16px;
+                background-color: transparent;
+                color: #34495e;
+                padding: 2px;
+                margin: 2px;
+            }
+
+            QCalendarWidget QTableView::item:hover {
+                background-color: #ecf0f1;
+                color: #2c3e50;
+            }
+
+            QCalendarWidget QTableView::item:selected {
+                background-color: #9b59b6;
+                color: #ffffff;
+                font-weight: bold;
+            }
+
+            QCalendarWidget QTableView::item#qt_calendar_today {
+                border: 2px solid #9b59b6;
+                color: #ffffff;
+                font-weight: bold;
+                background-color: transparent;
+            }
+
+            QCalendarWidget QTableView::item#qt_calendar_today:selected {
+                background-color: #9b59b6;
+                color: #000000;
+                border: none;
+            }
+
+            QCalendarWidget QTableView::item:disabled {
+                color: #dcdcdc;
             }
         """)
 
@@ -10582,11 +11256,35 @@ class _DialogDataBA(QDialog):
 
         # --- Input fields ---
         self.nomor = QLineEdit()
-        self.tanggal = QDateEdit(QDate.currentDate())
+        self.tanggal = EmptyDateEdit()
         self.tanggal.setDisplayFormat("dd MMMM yyyy")
         self.tanggal.setCalendarPopup(True)
         self.tanggal.lineEdit().setReadOnly(True)
+        self.tanggal.setStyle(QStyleFactory.create("Fusion"))
         self.tanggal.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # === Kosongkan total tanpa tanggal default ===
+        # Jangan pakai setDate() sama sekali
+        self.tanggal.clear()
+        self.tanggal.lineEdit().clear()
+        self.tanggal.setSpecialValueText("")  # pastikan tidak ada teks default
+
+        # === Mencegah QDateEdit mengisi otomatis setelah show() ===
+        def eventFilter(obj, event):
+            if obj == self.tanggal and event.type() == QEvent.Type.Show:
+                self.tanggal.clear()
+                self.tanggal.lineEdit().clear()
+            return super(type(self), self).eventFilter(obj, event)
+
+        self.tanggal.installEventFilter(self)
+
+        # === Jika user hapus tanggal secara manual (tidak mungkin karena readOnly)
+        # tapi jika reset programatik, kosongkan kembali
+        def on_date_changed(qdate):
+            if not qdate.isValid():
+                self.tanggal.clear()
+                self.tanggal.lineEdit().clear()
+        self.tanggal.dateChanged.connect(on_date_changed)
 
         self.ketua = QLineEdit()
         self.anggota1 = QLineEdit()
@@ -10605,14 +11303,49 @@ class _DialogDataBA(QDialog):
 
         # --- Tombol OK & Batal ---
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Simpan")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Batal")
-        btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
-            "background-color: #ff6600; color: white; font-weight: bold; border-radius: 6px; padding: 6px 14px;"
-        )
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setStyleSheet(
-            "background-color: #999999; color: white; border-radius: 6px; padding: 6px 14px;"
-        )
+        btn_ok = btns.button(QDialogButtonBox.StandardButton.Ok)
+        btn_cancel = btns.button(QDialogButtonBox.StandardButton.Cancel)
+
+        btn_ok.setText("Simpan")
+        btn_cancel.setText("Batal")
+
+        # 🎨 Styling tombol dengan efek hover
+        style_buttons = """
+        QPushButton {
+            background-color: #ff6600;
+            color: white;
+            font-weight: bold;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: none;
+        }
+        QPushButton:hover {
+            background-color: #e65c00; /* oranye sedikit lebih gelap */
+        }
+        QPushButton:pressed {
+            background-color: #cc5200; /* efek ditekan */
+        }
+        """
+
+        style_cancel = """
+        QPushButton {
+            background-color: #999999;
+            color: white;
+            border-radius: 6px;
+            padding: 6px 14px;
+            border: none;
+        }
+        QPushButton:hover {
+            background-color: #7f7f7f; /* abu-abu lebih gelap saat hover */
+        }
+        QPushButton:pressed {
+            background-color: #666666; /* efek ditekan */
+        }
+        """
+
+        btn_ok.setStyleSheet(style_buttons)
+        btn_cancel.setStyleSheet(style_cancel)
+
         btns.accepted.connect(self.validate_and_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
@@ -10622,6 +11355,13 @@ class _DialogDataBA(QDialog):
         if not self.nomor.text().strip():
             self.show_warning("Nomor Berita Acara wajib diisi.")
             return
+
+        # 🔹 Validasi tanggal wajib diisi
+        # Cek apakah user sudah memilih tanggal di EmptyDateEdit
+        if hasattr(self.tanggal, "_hasDate") and not self.tanggal._hasDate:
+            self.show_warning("Tanggal Pleno wajib diisi.")
+            return
+
         if not self.ketua.text().strip():
             self.show_warning("Nama Ketua PPS wajib diisi.")
             return
@@ -10631,7 +11371,9 @@ class _DialogDataBA(QDialog):
         if not self.anggota2.text().strip():
             self.show_warning("Nama Anggota 2 wajib diisi.")
             return
+
         self.accept()
+
 
     def show_warning(self, pesan):
         """Tampilkan popup peringatan modern."""
@@ -10674,16 +11416,69 @@ class _DialogMasukan(QDialog):
         self.setWindowTitle("Input Masukan / Tanggapan")
         self.setModal(True)
         self.setMinimumWidth(520)
-        lay = QVBoxLayout(self)
+        self.setStyleSheet("""
+            QLabel, QTextEdit {
+                color: #000000;
+                font-family: Arial;
+                font-size: 11pt;
+            }
+            QTextEdit {
+                border: 1px solid #c0c0c0;
+                border-radius: 4px;
+                padding: 6px;
+                background-color: #ffffff;
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 90px;
+                min-height: 32px;
+                border-radius: 6px;
+                font-weight: bold;
+                color: white;
+                background-color: #ff6600;
+            }
+            QDialogButtonBox QPushButton:hover {
+                background-color: #ff9900;
+            }
+            QDialogButtonBox QPushButton:disabled {
+                background-color: #aaaaaa;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
         lbl = QLabel("Tulis setiap masukan/tanggapan di baris baru (otomatis jadi a., b., c., ...):")
+        lbl.setStyleSheet("font-weight: bold; margin-bottom: 4px;")
+
         self.text = QTextEdit()
-        self.text.setPlaceholderText("Contoh:\nData TPS 001 perlu diperbaiki\nVerifikasi NIK ganda\n...")
-        lay.addWidget(lbl)
-        lay.addWidget(self.text)
+        self.text.setPlaceholderText("Isi dari tanggapan/masukkan data ........")
+        self.text.keyPressEvent = self.handle_keypress
+
+        layout.addWidget(lbl)
+        layout.addWidget(self.text)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Simpan")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Batal")
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        lay.addWidget(btns)
+        layout.addWidget(btns)
+
+        # Awali otomatis dengan "a. " dan kursor langsung di posisi setelahnya
+        self.text.setText("a. ")
+        cursor = self.text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.text.setTextCursor(cursor)
+        self.text.setFocus()
+
+    def handle_keypress(self, event: QKeyEvent):
+        """Tangani Enter agar otomatis menambah huruf a., b., c., ..."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            text = self.text.toPlainText().strip().split("\n")
+            next_char = chr(ord('a') + len(text)) + ". "
+            cursor = self.text.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.insertText("\n" + next_char)
+        else:
+            QTextEdit.keyPressEvent(self.text, event)
 
     def get_text(self):
         return self.text.toPlainText()
@@ -11336,6 +12131,8 @@ if __name__ == "__main__":
 
     # 🔹 Bangun aplikasi Qt
     app = QApplication(sys.argv)
+    app.setStyle(QStyleFactory.create("Fusion"))
+    apply_global_palette(app, mode="light")
     app.setApplicationName("NexVo")
 
     # ===================================================
