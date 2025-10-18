@@ -12102,6 +12102,8 @@ class RegisterWindow(QMainWindow):
 
     # 🔹 Jalankan aplikasi Qt
 #    app = QApplication(sys.argv)
+#    app.setStyle(QStyleFactory.create("Fusion"))
+#    apply_global_palette(app, mode="light")
 #    app.setApplicationName("NexVo")
 
     # 🔹 Jalankan halaman login
