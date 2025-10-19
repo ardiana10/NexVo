@@ -9047,7 +9047,7 @@ class MainWindow(QMainWindow):
 
             conn.commit()
             self._adpp_data = rows
-            print(f"[ADPP] Berhasil memuat {len(rows):,} baris data real-time ✅")
+            #print(f"[ADPP] Berhasil memuat {len(rows):,} baris data real-time ✅")
 
             # 🔹 Buka jendela PDF langsung
             self.show_window_with_transition(LampAdpp)
@@ -9073,7 +9073,7 @@ class MainWindow(QMainWindow):
 
             self._distinct_tps_list = result or ["-"]
             self._current_tps_index = 0
-            print(f"[TPS List] Ditemukan {len(result)} TPS aktif: {result}")
+            #print(f"[TPS List] Ditemukan {len(result)} TPS aktif: {result}")
             return result
         except Exception as e:
             print(f"[TPS Error] {e}")
@@ -12046,6 +12046,26 @@ class LampAdpp(QMainWindow):
             spaceAfter=0,
         ))
 
+        styles.add(ParagraphStyle(
+            name="ketstyle",
+            fontName=self._font_base,  # misal Arial atau Helvetica
+            fontSize=10,
+            leading=9,                 # tinggi baris disesuaikan biar vertikalnya pas
+            alignment=0,               # 1 = center horizontal
+            spaceBefore=0,
+            spaceAfter=0,
+        ))
+
+        styles.add(ParagraphStyle(
+            name="adppttd",
+            fontName=self._font_base,  # misal Arial atau Helvetica
+            fontSize=11,
+            leading=9,                 # tinggi baris disesuaikan biar vertikalnya pas
+            alignment=1,               # 1 = center horizontal
+            spaceBefore=0,
+            spaceAfter=0,
+        ))
+
         return styles
     
     def _center_progress_overlay(self):
@@ -12229,10 +12249,10 @@ class LampAdpp(QMainWindow):
                 tbl_title.setStyle(TableStyle([
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("ALIGN", (1, 0), (1, 0), "CENTER"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                    ("TOPPADDING", (0, 0), (-1, -1), 18),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ("LEFTPADDING", (0, 0), (0, 0), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]))
                 story.append(tbl_title)
                 story.append(Spacer(1, 4))
@@ -12245,7 +12265,7 @@ class LampAdpp(QMainWindow):
             style_ident = ParagraphStyle(
                 "IdentitasRapat",
                 fontName=self._font_base,
-                fontSize=10.5,
+                fontSize=11,
                 leading=11,  # 🔹 lebih rapat dari default (biasanya 13)
                 alignment=TA_LEFT,
             )
@@ -12366,7 +12386,7 @@ class LampAdpp(QMainWindow):
             t_data = LongTable(
                 table_matrix,
                 colWidths=[1*cm, 2.8*cm, 2.8*cm, 4.2*cm, 2.7*cm, 1.8*cm,
-                        1.9*cm, 1.6*cm, 3.8*cm, 0.9*cm, 0.9*cm,
+                        2*cm, 1.6*cm, 3.8*cm, 0.9*cm, 0.9*cm,
                         1*cm, 1.3*cm, 1.2*cm],
                 repeatRows=2,
             )
@@ -12380,6 +12400,111 @@ class LampAdpp(QMainWindow):
                 ("WORDWRAP", (0, 0), (-1, -1), True),
             ]))
             story.append(t_data)
+            story.append(Spacer(1, 12))
+
+
+            # === Definisi style dasar ===
+            ket_style = ParagraphStyle(
+                name="ket_style",
+                fontName=self._font_base,
+                fontSize=10,
+                leading=10,
+                alignment=TA_LEFT
+            )
+
+            ttd_style = ParagraphStyle(
+                name="ttd_style",
+                fontName=self._font_base,
+                fontSize=11,
+                leading=10,
+                alignment=TA_CENTER
+            )
+
+            nama_style = ParagraphStyle(
+                name="nama_style",
+                fontName=self._font_base,
+                fontSize=11,
+                leading=10,
+                alignment=TA_LEFT
+            )
+
+            # ============================================================
+            # 🧾 BAGIAN 1 — TABEL KETERANGAN (tabel utama)
+            # ============================================================
+            data_keterangan = [
+                [Paragraph("Keterangan Status", ket_style), Paragraph("Keterangan Disabilitas (12)", ket_style), Paragraph("Kolom Keterangan Status", ket_style),
+                Paragraph("Kolom Keterangan (14):", ket_style), "", Paragraph("Ditetapkan di", nama_style), Paragraph(": <desa>", nama_style)],
+
+                [Paragraph("Perkawinan (7):", ket_style), Paragraph("1: Disabilitas Fisik", ket_style), Paragraph("Kepemilikan KTP-el (13)", ket_style),
+                Paragraph("B: Pemilih Baru", ket_style), "", Paragraph("Tanggal", nama_style), Paragraph(": Tgl_pleno", nama_style)],
+
+                [Paragraph("B: Belum kawin", ket_style), Paragraph("2: Disabilitas Intelektual", ket_style), Paragraph("S: Sudah memiliki KTP-el", ket_style),
+                Paragraph("U: Ubah elemen data", ket_style), "", "", ""],
+
+                [Paragraph("S: Sudah kawin", ket_style), Paragraph("3: Disabilitas Mental", ket_style), Paragraph("B: Belum memiliki KTP-el", ket_style),
+                Paragraph("1: Meninggal", ket_style), Paragraph("5: WNA", ket_style), Paragraph("PPS CIKADONGDONG", ttd_style), ""],
+
+                [Paragraph("P: Pernah kawin", ket_style), Paragraph("4: Disabilitas Sensorik Wicara", ket_style), "",
+                Paragraph("2: Ganda", ket_style), Paragraph("6: TNI", ket_style), Paragraph("Ketua", ttd_style), ""],
+
+                ["", Paragraph("5: Disabilitas Sensorik Rungu", ket_style), "",
+                Paragraph("3: Dibawah umur", ket_style), Paragraph("7: Polri", ket_style), "", ""],
+
+                ["", Paragraph("6: Disabilitas Sensorik Netra", ket_style), "",
+                Paragraph("4: Pindah domisili", ket_style), Paragraph("8: TPS tidak sesuai", ket_style), "", ""],
+            ]
+
+            tabel_keterangan = Table(
+                data_keterangan,
+                colWidths=[3*cm, 4.5*cm, 4*cm, 4*cm, 5*cm, 3*cm, 4*cm],
+                hAlign="CENTER",
+            )
+            tabel_keterangan.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), self._font_base),
+                ("FONTSIZE", (0, 0), (-1, -1), 10.5),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("SPAN", (5, 3), (6, 3)),
+                ("ALIGN", (5, 3), (6, 3), "CENTER"),
+                ("SPAN", (5, 4), (6, 4)),
+                ("ALIGN", (5, 4), (6, 4), "CENTER"),
+            ]))
+
+            story.append(tabel_keterangan)
+
+            # ============================================================
+            # ✍️ BAGIAN 2 — AREA TANDA TANGAN (terpisah)
+            # ============================================================
+
+            # Spacer = jarak vertikal antara tabel utama dan tanda tangan
+            story.append(Spacer(1, 1.5 * cm))
+
+            # Tabel tanda tangan di kanan bawah
+            data_ttd = [
+                ["", "", "", "", "", Paragraph("LIONEL AHMAD MESSI", ttd_style), ""],
+            ]
+
+            tabel_ttd = Table(
+                data_ttd,
+                colWidths=[3*cm, 4.5*cm, 4*cm, 4*cm, 5*cm, 3*cm, 4*cm],
+                hAlign="CENTER",
+            )
+            tabel_ttd.setStyle(TableStyle([
+                ("FONTNAME", (0, 0), (-1, -1), self._font_base),
+                ("FONTSIZE", (0, 0), (-1, -1), 12),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("SPAN", (5, 0), (6, 0)),
+                ("ALIGN", (5, 0), (6, 0), "CENTER"),
+            ]))
+
+            story.append(tabel_ttd)
 
             # ---------- Build dua kali (agar dapat total halaman) ----------
             doc.build(story, canvasmaker=PageNumCanvas)
