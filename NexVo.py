@@ -12642,6 +12642,39 @@ class LampAdpp(QMainWindow):
 
             story = []
 
+            #Nama Form
+            style_ident = ParagraphStyle(
+                "IdentitasRapat",
+                fontName=self._font_bold,
+                fontSize=12,
+                leading=16,  # 🔹 lebih rapat dari default (biasanya 13)
+                alignment=TA_CENTER,
+            )
+            data_form = [
+                ["", "","", Paragraph("Model A-Daftar Perubahan Pemilih", style_ident)],
+            ]
+
+            tabel_form = Table(
+                data_form,
+                colWidths=[4*cm,10*cm, 7*cm, 7*cm],
+                hAlign="CENTER",
+            )
+            tabel_form.setStyle(TableStyle([
+                ("BOX", (0, 0), (-1, -1), 0, colors.white),
+                ("BOX", (-1, 0), (-1, -1), 0.9, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 1), colors.white),
+                ("FONTNAME", (0, 0), (-1, -1), self._font_bold),
+                ("FONTSIZE", (0, 0), (-1, -1), 10.5),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),      # 🔹 lebih rapat
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),   # 🔹 lebih rapat
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ]))
+            story.append(tabel_form)
+            #story.append(Spacer(1, 12))
+
             # ---------- Header Judul + Logo ----------
             base_dir = os.path.dirname(os.path.abspath(__file__))
             logo_path = os.path.join(base_dir, "KPU.png")
