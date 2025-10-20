@@ -13,7 +13,7 @@ Catatan:
 - Jalankan: python nexvo.py
 """
 
-import os, sys, subprocess, csv, hashlib, random, string, re, locale
+import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from contextlib import contextmanager
@@ -320,6 +320,33 @@ def hapus_semua_data(conn):
     except Exception as e:
         print(f"[PERINGATAN] Gagal hapus data: {e}")
 
+
+def cleanup_badan_adhoc():
+    """Bersihkan isi tabel badan_adhoc saat aplikasi keluar (tanpa menghapus tabel)."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # 🔹 Pastikan tabel ada — buat jika belum ada
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS badan_adhoc (
+                nomor_ba TEXT,
+                tanggal_ba TEXT,
+                ketua_pps TEXT,
+                anggota_satu TEXT,
+                anggota_dua TEXT
+            )
+        """)
+
+        # 🔹 Hapus semua data tanpa menghapus tabel
+        cur.execute("DELETE FROM badan_adhoc")
+        conn.commit()
+
+    except Exception as e:
+        print("")
+
+# 🔹 Daftarkan agar otomatis dijalankan ketika program berakhir
+atexit.register(cleanup_badan_adhoc)
 
 
 def show_modern_warning(parent, title, text):
@@ -12509,7 +12536,7 @@ class LampAdpp(QMainWindow):
         def format_tanggal_indonesia(tanggal_str: str) -> str:
             """Konversi '2025-10-20' menjadi '20 Oktober 2025' (Bahasa Indonesia)."""
             if not tanggal_str or not isinstance(tanggal_str, str):
-                return "Tanggal Belum Diisi"
+                return "..................."
 
             try:
                 try:
@@ -12529,11 +12556,11 @@ class LampAdpp(QMainWindow):
         data_ba = _DialogDataBA.load_last_badan_adhoc()
 
         if data_ba:
-            ketua_pps = data_ba.get("ketua_pps", "").strip() or "NAMA KETUA PPS"
+            ketua_pps = data_ba.get("ketua_pps", "").strip() or "..................."
             tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", ""))
         else:
-            ketua_pps = "NAMA KETUA PPS"
-            tanggal_ba = "Tanggal Belum Diisi"
+            ketua_pps = "..................."
+            tanggal_ba = "..................."
             
         def draw_footer(canv: canvas.Canvas, doc):
             """Footer tengah: 'Hal X dari Y'."""
@@ -12763,8 +12790,8 @@ class LampAdpp(QMainWindow):
                 alignment=TA_CENTER
             )
 
-            nama_style = ParagraphStyle(
-                name="nama_style",
+            paraf_style = ParagraphStyle(
+                name="paraf_style",
                 fontName=self._font_base,
                 fontSize=11,
                 leading=10,
@@ -12776,10 +12803,10 @@ class LampAdpp(QMainWindow):
             # ============================================================
             data_keterangan = [
                 [Paragraph("Keterangan Status", ket_style), Paragraph("Keterangan Disabilitas (12)", ket_style), Paragraph("Kolom Keterangan Status", ket_style),
-                Paragraph("Kolom Keterangan (14):", ket_style), "", Paragraph("Ditetapkan di", nama_style), Paragraph(f": {str(nama_desa).capitalize()}", ket_style)],
+                Paragraph("Kolom Keterangan (14):", ket_style), "", Paragraph("Ditetapkan di", paraf_style), Paragraph(f": {str(nama_desa).capitalize()}", paraf_style)],
 
                 [Paragraph("Perkawinan (7):", ket_style), Paragraph("1: Disabilitas Fisik", ket_style), Paragraph("Kepemilikan KTP-el (13)", ket_style),
-                Paragraph("B: Pemilih Baru", ket_style), "", Paragraph("Tanggal", nama_style), Paragraph(f": {tanggal_ba}", nama_style)],
+                Paragraph("B: Pemilih Baru", ket_style), "", Paragraph("Tanggal", paraf_style), Paragraph(f": {tanggal_ba}", paraf_style)],
 
                 [Paragraph("B: Belum kawin", ket_style), Paragraph("2: Disabilitas Intelektual", ket_style), Paragraph("S: Sudah memiliki KTP-el", ket_style),
                 Paragraph("U: Ubah elemen data", ket_style), "", "", ""],
