@@ -3968,7 +3968,7 @@ class LoginWindow(QMainWindow):
             )
             self.main_window.show()
 
-            self.main_window.create_filter_sidebar()
+            #self.main_window.create_filter_sidebar()
 
             # ✅ Tunda sedikit agar fullscreen bekerja sempurna di Windows
             QTimer.singleShot(100, self.main_window.showMaximized)
@@ -9144,26 +9144,25 @@ class MainWindow(QMainWindow):
                     pass
 
         return sumber_list
-
     
+
     def create_filter_sidebar(self):
-        """Membuat dan menempelkan Filter Sidebar di sisi kiri window."""
-        self.filter_sidebar = FilterSidebar(self)
-
-        # Hapus sidebar lama kalau ada
-        if self.filter_dock:
-            self.removeDockWidget(self.filter_dock)
-
-        # Buat sidebar baru
-        self.filter_sidebar = FilterSidebar(self)
-
-        self.filter_dock = QDockWidget("Filter", self)
-        self.filter_dock.setWidget(self.filter_sidebar)
-        self.filter_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.filter_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        self.filter_dock.setFixedWidth(self.filter_sidebar._dock_width)
-
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.filter_dock)
+        """Compatibility wrapper — gunakan toggle_filter_sidebar() sebagai satu-satunya implementasi."""
+        try:
+            # canonical implementation: toggle_filter_sidebar sudah membuat FixedDockWidget di kanan
+            self.toggle_filter_sidebar()
+        except Exception:
+            # fallback minimal agar tidak crash jika toggle_filter_sidebar belum tersedia
+            self.filter_sidebar = FilterSidebar(self)
+            if getattr(self, "filter_dock", None):
+                try:
+                    self.removeDockWidget(self.filter_dock)
+                except Exception:
+                    pass
+            fixed_width = getattr(self.filter_sidebar, "_dock_width", 260)
+            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=fixed_width)
+            self.filter_dock.setWidget(self.filter_sidebar)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
 
 
     def generate_berita_acara(self):
