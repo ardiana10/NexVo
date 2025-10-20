@@ -3020,7 +3020,8 @@ class FilterSidebar(QWidget):
             "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
             "rank": rank_value,
             "last_update_start": last_update_start,
-            "last_update_end": last_update_end
+            "last_update_end": last_update_end,
+            "alamat": self.alamat.text().strip() 
         }
     def _is_valid_date(self, date_string: str) -> bool:
         """Validasi apakah string merupakan tanggal yang valid.
@@ -5217,6 +5218,12 @@ class MainWindow(QMainWindow):
                 return True
 
             if not matches_rank():
+                return False
+
+        # Alamat filter
+        if filters["alamat"]:
+            alamat_item = item.get("ALAMAT", "")
+            if not self.wildcard_match(filters["alamat"], alamat_item):
                 return False
 
         # LastUpdate date range filter
