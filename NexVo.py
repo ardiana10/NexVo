@@ -61,6 +61,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtWidgets import QCompleter
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
 # =========================
 # ReportLab (PDF)
@@ -11202,9 +11203,6 @@ class BeritaAcara(QMainWindow):
             self.document = QPdfDocument(self)
             status = self.document.load(self._pdf_buffer)
 
-            if status != QPdfDocument.Status.Ready:
-                print(f"[PDF Warning] Status dokumen: {status}")
-
             # tampilkan di viewer
             self.viewer.setDocument(self.document)
 
@@ -11429,6 +11427,8 @@ class BeritaAcara(QMainWindow):
             with open(path_file, "wb") as f:
                 f.write(self._pdf_buffer.data())
 
+            QMessageBox.information(self, "Berhasil", f"Dokumen berhasil disimpan:\n{path_file}")
+
         except Exception as e:
             QMessageBox.critical(self, "Gagal Menyimpan", f"Terjadi kesalahan:\n{e}")
 
@@ -11446,10 +11446,6 @@ class BeritaAcara(QMainWindow):
                                     "Dokumen Berita Acara belum dibuat.\n"
                                     "Silakan isi dan buat Berita Acara sebelum mencetaknya.")
                 return
-
-            from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
-            from PyQt6.QtGui import QPainter, QPageLayout
-            from PyQt6.QtCore import QSize, QRectF
 
             tahap = getattr(self, "tahap", "TAHAPAN")
 
@@ -12316,6 +12312,43 @@ class LampAdpp(QMainWindow):
         bottom.addWidget(self.btn_tutup)
         layout.addLayout(bottom)
 
+        # ====================== TOOLBAR ATAS (SAVE & PRINT) ======================
+        toolbar = QToolBar(self)
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: #f8f8f8;
+                spacing: 6px;
+                border: none;
+            }
+            QToolButton {
+                background: transparent;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+                font-weight: 600;
+                color: #333333;
+            }
+            QToolButton:hover {
+                background-color: #ff6600;
+                color: #ffffff;
+            }
+        """)
+
+        # === Tombol Save ===
+        btn_save = QAction("💾 Simpan", self)
+        btn_save.triggered.connect(self.simpan_adpp)
+        toolbar.addAction(btn_save)
+
+        # === Tombol Print ===
+        btn_print = QAction("🖨 Cetak", self)
+        btn_print.triggered.connect(self.print_adpp)
+        toolbar.addAction(btn_print)
+
+        # Tambahkan toolbar di sisi atas window
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
         # ====================== TAMPILKAN PDF AWAL ======================
         self.showMaximized()  # <== penting! harus terakhir
         self.generate_adpp_pdf(tps_filter=self.current_tps)
@@ -12590,7 +12623,6 @@ class LampAdpp(QMainWindow):
                 pagesize=landscape(A4),
                 leftMargin=40, rightMargin=40, topMargin=20, bottomMargin=40,  # bottomMargin lebih besar untuk footer
             )
-
 
             story = []
 
@@ -12880,6 +12912,162 @@ class LampAdpp(QMainWindow):
             pdf_bytes = buf.getvalue()
             buf.close()
             self._show_pdf_bytes(pdf_bytes)
+
+    def simpan_adpp(self):
+        """Simpan dokumen PDF ke C:/NexVo/<tahapan> dengan nama otomatis."""
+        try:
+            # === 1️⃣ Pastikan buffer PDF valid ===
+            if not hasattr(self, "_pdf_buffer") or self._pdf_buffer.size() == 0:
+                QMessageBox.warning(self, "Tidak Ada Dokumen", "Belum ada dokumen untuk disimpan.")
+                return
+
+            # === 2️⃣ Pastikan folder tujuan ada ===
+            import os, datetime
+            tahap = getattr(self, "tahap", "TAHAPAN")
+            desa = getattr(self, "desa", "DESA").title()
+            base_dir = os.path.join("C:/NexVo", tahap)
+            os.makedirs(base_dir, exist_ok=True)
+
+            # === 3️⃣ Format nama file ===
+            waktu_str = datetime.datetime.now().strftime("%d%m%Y %H%M")  # ada spasi
+            nama_file = f"Model A-DPP {tahap} Desa {desa} Pemilu 2029 {waktu_str}.pdf"
+            path_file = os.path.join(base_dir, nama_file)
+
+            # === 4️⃣ Konfirmasi sebelum menyimpan ===
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Konfirmasi Simpan")
+            msg.setText(
+                f"Apakah Anda yakin ingin menyimpan Model A-DPP tahap <b>{tahap}</b>?<br><br>"
+                f"<b>Lokasi penyimpanan:</b><br>{path_file}"
+            )
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.button(QMessageBox.StandardButton.Yes).setText("Simpan")
+            msg.button(QMessageBox.StandardButton.No).setText("Batal")
+
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #ffffff;
+                    color: #000000;
+                    font-family: 'Segoe UI';
+                    font-size: 10.5pt;
+                }
+                QMessageBox QLabel {
+                    color: #000000;
+                    font-size: 11pt;
+                    font-weight: 500;
+                }
+                QPushButton {
+                    min-width: 80px;
+                    min-height: 32px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    color: white;
+                    background-color: #ff6600;
+                }
+                QPushButton:hover { background-color: #e65c00; }
+                QPushButton:pressed { background-color: #cc5200; }
+                QPushButton[text="Batal"] { background-color: #777777; }
+                QPushButton[text="Batal"]:hover { background-color: #555555; }
+            """)
+
+            jawab = msg.exec()
+            if jawab != QMessageBox.StandardButton.Yes:
+                return
+
+            # === 5️⃣ Simpan buffer PDF ke file ===
+            with open(path_file, "wb") as f:
+                f.write(self._pdf_buffer.data())
+
+            QMessageBox.information(self, "Berhasil", f"Dokumen berhasil disimpan:\n{path_file}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Menyimpan", f"Terjadi kesalahan:\n{e}")
+
+
+    def print_adpp(self):
+        """Cetak PDF langsung ke printer (fit-to-page sesuai DPI, auto orientasi, tanpa notifikasi)."""
+        try:
+            from PyQt6.QtGui import QPainter
+            from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+            from PyQt6.QtCore import QSize, QRectF
+            from PyQt6.QtGui import QPageLayout
+
+            tahap = getattr(self, "tahap", "TAHAPAN")
+
+            # === 2️⃣ Konfirmasi ===
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Konfirmasi Cetak")
+            msg.setText(f"Apakah Anda yakin ingin mencetak Model A-DPP tahap <b>{tahap}</b>?")
+            msg.setIcon(QMessageBox.Icon.Question)
+            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg.button(QMessageBox.StandardButton.Yes).setText("Cetak")
+            msg.button(QMessageBox.StandardButton.No).setText("Batal")
+            msg.setStyleSheet("""
+                QMessageBox { background:#fff; color:#000; font-family:'Segoe UI'; font-size:10.5pt; }
+                QMessageBox QLabel { color:#000; font-size:11pt; font-weight:500; }
+                QPushButton { min-width:80px; min-height:32px; border-radius:6px; font-weight:bold; color:#fff; background:#ff6600; }
+                QPushButton:hover { background:#e65c00; }
+                QPushButton[text="Batal"] { background:#777; }
+                QPushButton[text="Batal"]:hover { background:#555; }
+            """)
+            if msg.exec() != QMessageBox.StandardButton.Yes:
+                return
+
+            # === 3️⃣ Siapkan printer + orientasi otomatis ===
+            first_size = self.document.pagePointSize(0)
+            orient = (
+                QPageLayout.Orientation.Landscape
+                if first_size.width() > first_size.height()
+                else QPageLayout.Orientation.Portrait
+            )
+
+            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+            printer.setPageOrientation(orient)
+
+            dlg = QPrintDialog(printer, self)
+            dlg.setWindowTitle("Cetak Model A-DPP")
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            # === 4️⃣ Render ke printer ===
+            painter = QPainter()
+            if not painter.begin(printer):
+                raise Exception("Tidak dapat memulai printer.")
+
+            total_pages = self.document.pageCount()
+            page_rect = printer.pageRect(QPrinter.Unit.Point)
+
+            printer_dpi = printer.resolution()
+            pdf_dpi = 72
+            scale_dpi = printer_dpi / pdf_dpi
+
+            for i in range(total_pages):
+                pdf_sz = self.document.pagePointSize(i)
+                if not pdf_sz.isValid():
+                    continue
+
+                scaled_width = pdf_sz.width() * scale_dpi
+                scaled_height = pdf_sz.height() * scale_dpi
+                scale_x = (page_rect.width() * scale_dpi) / scaled_width
+                scale_y = (page_rect.height() * scale_dpi) / scaled_height
+                scale = min(scale_x, scale_y)
+
+                target_w = scaled_width * scale
+                target_h = scaled_height * scale
+                off_x = (page_rect.width() * scale_dpi - target_w) / 2
+                off_y = (page_rect.height() * scale_dpi - target_h) / 2
+
+                img = self.document.render(i, QSize(int(target_w), int(target_h)))
+                if img:
+                    painter.drawImage(QRectF(off_x, off_y, target_w, target_h), img)
+                    if i < total_pages - 1:
+                        printer.newPage()
+
+            painter.end()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Gagal Mencetak", f"Terjadi kesalahan:\n{e}")
 
     # ===========================================================
     # Navigasi TPS
