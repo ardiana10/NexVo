@@ -3048,7 +3048,8 @@ class FilterSidebar(QWidget):
             "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
             "rank": rank_value,
             "last_update_start": last_update_start,
-            "last_update_end": last_update_end
+            "last_update_end": last_update_end,
+            "alamat": self.alamat.text().strip() 
         }
     def _is_valid_date(self, date_string: str) -> bool:
         """Validasi apakah string merupakan tanggal yang valid.
@@ -5013,6 +5014,15 @@ class MainWindow(QMainWindow):
         
         # Toggle visibility
         self.filter_dock.setVisible(not self.filter_dock.isVisible())
+
+     # Sembunyikan checkbox dan radio button
+        self.filter_sidebar.cb_ganda.hide()
+        self.filter_sidebar.cb_invalid_tgl.hide()
+        self.filter_sidebar.cb_nkk_terpisah.hide()
+        self.filter_sidebar.cb_analisis_tms.hide()
+        self.filter_sidebar.rb_reguler.hide()
+        self.filter_sidebar.rb_khusus.hide()
+        self.filter_sidebar.rb_reguler_khusus.hide()
     
     def apply_filters(self):
         """Apply filters from the filter sidebar"""
@@ -5245,6 +5255,12 @@ class MainWindow(QMainWindow):
                 return True
 
             if not matches_rank():
+                return False
+
+        # Alamat filter
+        if filters["alamat"]:
+            alamat_item = item.get("ALAMAT", "")
+            if not self.wildcard_match(filters["alamat"], alamat_item):
                 return False
 
         # LastUpdate date range filter
