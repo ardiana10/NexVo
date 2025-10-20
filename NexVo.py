@@ -4986,6 +4986,15 @@ class MainWindow(QMainWindow):
         
         # Toggle visibility
         self.filter_dock.setVisible(not self.filter_dock.isVisible())
+
+     # Sembunyikan checkbox dan radio button
+        self.filter_sidebar.cb_ganda.hide()
+        self.filter_sidebar.cb_invalid_tgl.hide()
+        self.filter_sidebar.cb_nkk_terpisah.hide()
+        self.filter_sidebar.cb_analisis_tms.hide()
+        self.filter_sidebar.rb_reguler.hide()
+        self.filter_sidebar.rb_khusus.hide()
+        self.filter_sidebar.rb_reguler_khusus.hide()
     
     def apply_filters(self):
         """Apply filters from the filter sidebar"""
