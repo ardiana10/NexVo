@@ -18,10 +18,10 @@ from pathlib import Path
 from datetime import datetime, date, timedelta
 from contextlib import contextmanager
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from io import BytesIO
 import pyotp, qrcode
-import datetime  # jika ada kode yang memakai gaya: datetime.date.today()
+#import datetime  # jika ada kode yang memakai gaya: datetime.date.today()
 
 # =========================
 # Database / SQLCipher
@@ -41,7 +41,7 @@ except Exception as e:
 # =========================
 from PyQt6.QtCore import (
     Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF,
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
 )
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction,
@@ -1166,12 +1166,82 @@ class CustomComboBox(QComboBox):
 # =====================================================
 # RangeSlider: Komponen Slider Ganda untuk Rentang Umur
 # =====================================================
+#class baru
+class AgeCalculator:
+    """
+    Utility class untuk menghitung usia dari tanggal lahir format DD|MM|YYYY
+    """
+    
+    @staticmethod
+    def parse_birthdate(birthdate_str: str) -> Optional[datetime]:
+        """Parse tanggal lahir dari format DD|MM|YYYY"""
+        try:
+            parts = birthdate_str.split('|')
+            if len(parts) != 3:
+                return None
+            
+            day, month, year = parts
+            birth_date = datetime(year=int(year), month=int(month), day=int(day))
+            return birth_date
+        except (ValueError, AttributeError):
+            return None
+    
+    @staticmethod
+    def calculate_age(birthdate_str: str, reference_date: Optional[datetime] = None) -> Optional[int]:
+        """Menghitung usia dari tanggal lahir"""
+        birth_date = AgeCalculator.parse_birthdate(birthdate_str)
+        
+        if birth_date is None:
+            return None
+        
+        if reference_date is None:
+            reference_date = datetime.now()
+        
+        age = reference_date.year - birth_date.year
+        
+        if (reference_date.month, reference_date.day) < (birth_date.month, birth_date.day):
+            age -= 1
+        
+        return age
+    
+    @staticmethod
+    def is_in_age_range(birthdate_str: str, min_age: int, max_age: int) -> bool:
+        """Cek apakah usia dalam rentang tertentu"""
+        age = AgeCalculator.calculate_age(birthdate_str)
+        
+        if age is None:
+            return False
+        
+        return min_age <= age <= max_age
+    
+    @staticmethod
+    def filter_by_age_range(data_list: List[Any], 
+                           birthdate_key: str,
+                           min_age: int, 
+                           max_age: int) -> List[Any]:
+        """Filter list data berdasarkan rentang usia"""
+        filtered_data = []
+        
+        for item in data_list:
+            if isinstance(item, dict):
+                birthdate = item.get(birthdate_key)
+            else:
+                birthdate = getattr(item, birthdate_key, None)
+            
+            if birthdate and AgeCalculator.is_in_age_range(birthdate, min_age, max_age):
+                filtered_data.append(item)
+        
+        return filtered_data
+    
 class RangeSlider(QWidget):
     """
     Widget slider dengan dua handle untuk memilih rentang nilai (min-max).
     
     PERUBAHAN: Widget otomatis non-aktif ketika kehilangan focus
     """
+
+    # Signal yang dipancarkan saat nilai berubah
+    valuesChanged = pyqtSignal(int, int)  # (min_age, max_age)
     
     def __init__(self, minimum=0, maximum=100, parent=None):
         super().__init__(parent)
@@ -1212,6 +1282,14 @@ class RangeSlider(QWidget):
         
         self._label_opacity = {'lower': 0.0, 'upper': 0.0}
         self._target_opacity = {'lower': 0.0, 'upper': 0.0}
+
+        #baru
+        # === Search Integration ===
+        self._search_debounce_timer = QTimer(self)
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.timeout.connect(self._trigger_search)
+        self._search_delay_ms = 300
+        self._auto_search_enabled = False
         
         # === Pengaturan Widget ===
         self.setMouseTracking(True)
@@ -1222,6 +1300,57 @@ class RangeSlider(QWidget):
         self._accent_color = QColor('#ff9900')
         
         self.setFixedHeight(self._handle_radius * 2 + 50)
+
+     # ============================================================
+    # METODE INTEGRASI AGE FILTER
+    # ============================================================
+    
+    def filterDataByAge(self, data_list: List[Any], birthdate_key: str = 'tanggal_lahir') -> List[Any]:
+        """
+        Filter data berdasarkan rentang usia yang dipilih di slider.
+        """
+        min_age, max_age = self.getCurrentValues()
+        return AgeCalculator.filter_by_age_range(data_list, birthdate_key, min_age, max_age)
+    
+    def calculateAge(self, birthdate_str: str) -> Optional[int]:
+        """
+        Menghitung usia dari tanggal lahir (format DD|MM|YYYY).
+        """
+        return AgeCalculator.calculate_age(birthdate_str)
+    
+    def isInRange(self, birthdate_str: str) -> bool:
+        """
+        Cek apakah usia dari tanggal lahir masuk dalam rentang slider.
+        """
+        min_age, max_age = self.getCurrentValues()
+        return AgeCalculator.is_in_age_range(birthdate_str, min_age, max_age)
+
+    #baru
+    # ============================================================
+    # METODE SEARCH INTEGRATION
+    # ============================================================
+    
+    def setAutoSearch(self, enabled: bool):
+        """
+        Mengaktifkan/menonaktifkan pencarian otomatis saat slider berubah.
+        """
+        self._auto_search_enabled = enabled
+    
+    def setSearchDelay(self, milliseconds: int):
+        """
+        Mengatur delay sebelum pencarian dipicu (default: 300ms).
+        """
+        self._search_delay_ms = milliseconds
+    
+    def _trigger_search(self):
+        """Memicu signal untuk melakukan pencarian"""
+        self.valuesChanged.emit(int(self._lower), int(self._upper))
+    
+    def _schedule_search(self):
+        """Menjadwalkan pencarian dengan debounce"""
+        if self._auto_search_enabled:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer.start(self._search_delay_ms)
 
     # ============================================================
     # METODE BARU: Focus Event Handler
@@ -1339,13 +1468,30 @@ class RangeSlider(QWidget):
         self.update()
 
     def lowerValue(self):
-        return self._lower
+        val = getattr(self, '_target_lower', None)
+        if val is None:
+            val = self._lower
+        return int(round(val))
         
     def upperValue(self):
-        return self._upper
-        
+        val = getattr(self, '_target_upper', None)
+        if val is None:
+            val = self._upper
+        return int(round(val))
+
     def values(self):
-        return self._lower, self._upper
+        return self.lowerValue(), self.upperValue()
+    
+    #baru
+    def getCurrentValues(self):
+        """
+        Mengembalikan nilai saat ini dalam bentuk integer.
+        Digunakan saat tombol filter ditekan.
+        
+        Returns:
+            tuple: (min_age, max_age) sebagai integer
+        """
+        return int(self._lower), int(self._upper)
 
     def setValues(self, lower_val, upper_val):
         self._target_lower = max(self._min, min(lower_val, upper_val))
@@ -1400,12 +1546,18 @@ class RangeSlider(QWidget):
         else:
             self._label_fade_timer.stop()
 
+    #baru revisi
     def _emit_value_changed(self):
+        """Emit value changed dengan legacy callback support"""
+        # Legacy callback (backward compatibility)
         if hasattr(self.parent(), 'on_age_range_changed'):
             try:
                 self.parent().on_age_range_changed(int(self._lower), int(self._upper))
             except Exception:
                 pass
+
+        # Emit signal untuk koneksi baru
+        self.valuesChanged.emit(int(self._lower), int(self._upper))
 
     # ============================================================
     # PAINTING METHODS
@@ -2842,6 +2994,15 @@ class FilterSidebar(QWidget):
             if self._is_valid_date(start_part) and self._is_valid_date(end_part):
                 last_update_start = start_part
                 last_update_end = end_part
+        
+        # === 🔹 Integrasi Filter Umur (RangeSlider) ===
+        umur_min, umur_max = 0, 100
+        if hasattr(self, "umur_slider") and self.umur_slider is not None:
+            try:
+                umur_min, umur_max = self.umur_slider.getCurrentValues()
+            except Exception:
+                # fallback jika slider belum siap
+                umur_min, umur_max = 0, 100
         
         # Kembalikan dictionary dengan semua nilai filter
         return {
@@ -4957,12 +5118,13 @@ class MainWindow(QMainWindow):
             
             # Skip if age range is default (0-100)
             if not (umur_min == 0 and umur_max == 100):
-                tgl_lahir_str = item.get("TGL_LHR", "").strip()
+                 # Gunakan key sesuai dataset
+                tgl_lahir_str = (item.get("tgl_lahir", "") or item.get("TGL_LHR", "")).strip()
                 if tgl_lahir_str:
                     try:
                         # Try different date formats
                         birth_date = None
-                        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+                        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d|%m|%Y"):
                             try:
                                 birth_date = datetime.strptime(tgl_lahir_str, fmt).date()
                                 break
@@ -4971,13 +5133,18 @@ class MainWindow(QMainWindow):
                         
                         if birth_date:
                             today = date.today()
-                            age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
-                            
+                            age = today.year - birth_date.year - (
+                                (today.month, today.day) < (birth_date.month, birth_date.day)
+                            )
+
+                            # Jika di luar rentang slider, buang data
                             if age < umur_min or age > umur_max:
                                 return False
+
                     except Exception:
-                        # If we can't parse the date, don't filter by age
+                        # Jika parsing gagal, jangan filter berdasarkan umur
                         pass
+
             
         # Keterangan filter
         if filters["keterangan"]:
