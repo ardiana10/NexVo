@@ -11793,6 +11793,9 @@ class _DialogDataBA(QDialog):
         form.addRow("Anggota 2:", self.anggota2)
         layout.addLayout(form)
 
+        # === Isi otomatis data terakhir jika ada ===
+        self.fill_from_last_badan_adhoc()
+
         # --- Tombol OK & Batal ---
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_ok = btns.button(QDialogButtonBox.StandardButton.Ok)
@@ -11843,13 +11846,12 @@ class _DialogDataBA(QDialog):
         layout.addWidget(btns)
 
     def validate_and_accept(self):
-        """Validasi wajib isi semua kolom sebelum menutup dialog."""
+        """Validasi wajib isi semua kolom sebelum menutup dialog, lalu simpan ke tabel badan_adhoc."""
         if not self.nomor.text().strip():
             self.show_warning("Nomor Berita Acara wajib diisi.")
             return
 
         # 🔹 Validasi tanggal wajib diisi
-        # Cek apakah user sudah memilih tanggal di EmptyDateEdit
         if hasattr(self.tanggal, "_hasDate") and not self.tanggal._hasDate:
             self.show_warning("Tanggal Pleno wajib diisi.")
             return
@@ -11864,8 +11866,160 @@ class _DialogDataBA(QDialog):
             self.show_warning("Nama Anggota 2 wajib diisi.")
             return
 
-        self.accept()
+        try:
+            # ===========================================================
+            # 🔹 1. Koneksi database SQLCipher aktif
+            # ===========================================================
+            conn = get_connection()
+            cur = conn.cursor()
 
+            # ===========================================================
+            # 🔹 2. Buat tabel jika belum ada
+            # ===========================================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS badan_adhoc (
+                    nomor_ba TEXT,
+                    tanggal_ba TEXT,
+                    ketua_pps TEXT,
+                    anggota_satu TEXT,
+                    anggota_dua TEXT
+                )
+            """)
+
+            # ===========================================================
+            # 🔹 3. Hapus baris lama (maksimal 1 baris saja)
+            # ===========================================================
+            cur.execute("DELETE FROM badan_adhoc")
+
+            # ===========================================================
+            # 🔹 4. Masukkan baris baru
+            # ===========================================================
+            cur.execute("""
+                INSERT INTO badan_adhoc (nomor_ba, tanggal_ba, ketua_pps, anggota_satu, anggota_dua)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                self.nomor.text().strip(),
+                self.tanggal.date().toString("yyyy-MM-dd"),
+                self.ketua.text().strip(),
+                self.anggota1.text().strip(),
+                self.anggota2.text().strip()
+            ))
+
+            conn.commit()
+
+            # ===========================================================
+            # 🔹 5. Tutup dialog
+            # ===========================================================
+            self.accept()
+
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Kesalahan Database")
+            msg.setText(f"Gagal menyimpan data ke tabel badan_adhoc:\n{e}")
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.exec()
+
+    @staticmethod
+    def ensure_badan_adhoc_exists():
+        """
+        Pastikan tabel badan_adhoc ada dan memiliki minimal 1 baris (placeholder kosong).
+        """
+        from db_manager import get_connection
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Buat tabel jika belum ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS badan_adhoc (
+                    nomor_ba TEXT,
+                    tanggal_ba TEXT,
+                    ketua_pps TEXT,
+                    anggota_satu TEXT,
+                    anggota_dua TEXT
+                )
+            """)
+
+            # Cek apakah tabel masih kosong
+            cur.execute("SELECT COUNT(*) FROM badan_adhoc")
+            count = cur.fetchone()[0]
+            if count == 0:
+                # Isi placeholder kosong
+                cur.execute("""
+                    INSERT INTO badan_adhoc (nomor_ba, tanggal_ba, ketua_pps, anggota_satu, anggota_dua)
+                    VALUES ('', '', '', '', '')
+                """)
+                conn.commit()
+
+        except Exception as e:
+            print(f"[DB ERROR] ensure_badan_adhoc_exists: {e}")
+
+
+    @staticmethod
+    def load_last_badan_adhoc():
+        """
+        Ambil 1 baris terakhir dari tabel badan_adhoc (jika ada).
+        Return: dict {nomor_ba, tanggal_ba, ketua_pps, anggota_satu, anggota_dua}
+                atau None jika belum ada data.
+        """
+        from db_manager import get_connection
+        try:
+            # Pastikan tabel dan placeholder ada
+            _DialogDataBA.ensure_badan_adhoc_exists()
+
+            conn = get_connection()
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT nomor_ba, tanggal_ba, ketua_pps, anggota_satu, anggota_dua
+                FROM badan_adhoc
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+            conn.commit()
+
+            if not row:
+                return None
+
+            return {
+                "nomor_ba": row[0],
+                "tanggal_ba": row[1],
+                "ketua_pps": row[2],
+                "anggota_satu": row[3],
+                "anggota_dua": row[4],
+            }
+
+        except Exception as e:
+            print(f"[DB ERROR] load_last_badan_adhoc: {e}")
+            return None
+
+
+    def fill_from_last_badan_adhoc(self):
+        """
+        Isi otomatis field form dari data terakhir di tabel badan_adhoc (jika ada).
+        Dipanggil saat dialog dibuka.
+        """
+        data = self.load_last_badan_adhoc()
+        if not data:
+            return  # Tidak ada data sebelumnya
+
+        try:
+            # Nomor & nama-nama langsung diisi
+            self.nomor.setText(data["nomor_ba"] or "")
+            self.ketua.setText(data["ketua_pps"] or "")
+            self.anggota1.setText(data["anggota_satu"] or "")
+            self.anggota2.setText(data["anggota_dua"] or "")
+
+            # Tanggal dikonversi kembali dari string yyyy-MM-dd
+            from PyQt6.QtCore import QDate
+            if data["tanggal_ba"]:
+                qd = QDate.fromString(data["tanggal_ba"], "yyyy-MM-dd")
+                if qd.isValid():
+                    self.tanggal.setDate(qd)
+                    self.tanggal._hasDate = True
+        except Exception as e:
+            print(f"[Form Fill Warning] Gagal memuat data badan_adhoc: {e}")
 
     def show_warning(self, pesan):
         """Tampilkan popup peringatan modern."""
@@ -12350,6 +12504,36 @@ class LampAdpp(QMainWindow):
     # ===========================================================
     def generate_adpp_pdf(self, tps_filter=None):
         """Membuat PDF ADPP (KET ≠ 0) super cepat, dengan header dan footer 'Hal X dari Y'."""
+        # ---------- Locale ----------
+        def format_tanggal_indonesia(tanggal_str: str) -> str:
+            """Konversi '2025-10-20' menjadi '20 Oktober 2025' (Bahasa Indonesia)."""
+            if not tanggal_str or not isinstance(tanggal_str, str):
+                return "Tanggal Belum Diisi"
+
+            try:
+                try:
+                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")  # Linux/macOS
+                except Exception:
+                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")  # Windows
+
+                tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
+                return tgl.strftime("%d %B %Y")
+            except Exception as e:
+                print(f"[Warning] format_tanggal_indonesia gagal: {e}")
+                return str(tanggal_str)
+                
+        # ==========================================================
+        # 🔹 Ambil data badan_adhoc (ketua_pps dan tanggal_ba)
+        # ==========================================================
+        data_ba = _DialogDataBA.load_last_badan_adhoc()
+
+        if data_ba:
+            ketua_pps = data_ba.get("ketua_pps", "").strip() or "NAMA KETUA PPS"
+            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", ""))
+        else:
+            ketua_pps = "NAMA KETUA PPS"
+            tanggal_ba = "Tanggal Belum Diisi"
+            
         def draw_footer(canv: canvas.Canvas, doc):
             """Footer tengah: 'Hal X dari Y'."""
             page_num = canv.getPageNumber()
@@ -12380,14 +12564,6 @@ class LampAdpp(QMainWindow):
                 leftMargin=40, rightMargin=40, topMargin=20, bottomMargin=40,  # bottomMargin lebih besar untuk footer
             )
 
-            # ---------- Locale ----------
-            try:
-                locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-            except Exception:
-                try:
-                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
-                except Exception:
-                    pass
 
             story = []
 
@@ -12599,16 +12775,16 @@ class LampAdpp(QMainWindow):
             # ============================================================
             data_keterangan = [
                 [Paragraph("Keterangan Status", ket_style), Paragraph("Keterangan Disabilitas (12)", ket_style), Paragraph("Kolom Keterangan Status", ket_style),
-                Paragraph("Kolom Keterangan (14):", ket_style), "", Paragraph("Ditetapkan di", nama_style), Paragraph(": <desa>", nama_style)],
+                Paragraph("Kolom Keterangan (14):", ket_style), "", Paragraph("Ditetapkan di", nama_style), Paragraph(f": {str(nama_desa).capitalize()}", ket_style)],
 
                 [Paragraph("Perkawinan (7):", ket_style), Paragraph("1: Disabilitas Fisik", ket_style), Paragraph("Kepemilikan KTP-el (13)", ket_style),
-                Paragraph("B: Pemilih Baru", ket_style), "", Paragraph("Tanggal", nama_style), Paragraph(": Tgl_pleno", nama_style)],
+                Paragraph("B: Pemilih Baru", ket_style), "", Paragraph("Tanggal", nama_style), Paragraph(f": {tanggal_ba}", nama_style)],
 
                 [Paragraph("B: Belum kawin", ket_style), Paragraph("2: Disabilitas Intelektual", ket_style), Paragraph("S: Sudah memiliki KTP-el", ket_style),
                 Paragraph("U: Ubah elemen data", ket_style), "", "", ""],
 
                 [Paragraph("S: Sudah kawin", ket_style), Paragraph("3: Disabilitas Mental", ket_style), Paragraph("B: Belum memiliki KTP-el", ket_style),
-                Paragraph("1: Meninggal", ket_style), Paragraph("5: WNA", ket_style), Paragraph("PPS CIKADONGDONG", ttd_style), ""],
+                Paragraph("1: Meninggal", ket_style), Paragraph("5: WNA", ket_style), Paragraph(f"PPS {str(nama_desa).capitalize()}", ttd_style), ""],
 
                 [Paragraph("P: Pernah kawin", ket_style), Paragraph("4: Disabilitas Sensorik Wicara", ket_style), "",
                 Paragraph("2: Ganda", ket_style), Paragraph("6: TNI", ket_style), Paragraph("Ketua", ttd_style), ""],
@@ -12651,7 +12827,7 @@ class LampAdpp(QMainWindow):
 
             # Tabel tanda tangan di kanan bawah
             data_ttd = [
-                ["", "", "", "", "", Paragraph("LIONEL AHMAD MESSI", ttd_style), ""],
+                ["", "", "", "", "", Paragraph(str(ketua_pps).upper(), ttd_style), ""],
             ]
 
             tabel_ttd = Table(
