@@ -41,7 +41,7 @@ except Exception as e:
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF,
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray,
     QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
 )
 
@@ -82,7 +82,6 @@ from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfMerger
-
 
 # ==========================================================
 # Konstanta path Windows (AppData\Roaming)
@@ -4359,6 +4358,10 @@ class MainWindow(QMainWindow):
         action_lamp_adpp = QAction(" A-Daftar Perubahan Pemilih", self)
         action_lamp_adpp.triggered.connect(self.generate_adpp)
         generate_menu.addAction(action_lamp_adpp)
+
+        action_lamp_arpp = QAction(" A-Rekap Perubahan Pemilih", self)
+        action_lamp_arpp.triggered.connect(self.generate_arpp)
+        generate_menu.addAction(action_lamp_arpp)
 
         view_menu = menubar.addMenu("View")
         view_menu.addAction(QAction(" Actual Size", self, shortcut="Ctrl+0"))
@@ -9312,6 +9315,114 @@ class MainWindow(QMainWindow):
             show_modern_error(self, "Error", f"Gagal memuat data ADPP:\n{e}")
 
 
+    def generate_arpp(self, tps_filter=None):
+        """Rekap ARPP per TPS — versi super ultra kilat dengan turbo PRAGMA."""
+        from db_manager import get_connection
+
+        try:
+            # ================================================================
+            # 🔹 0️⃣ Verifikasi tanggal BA
+            # ================================================================
+            def format_tanggal_indonesia(tanggal_str):
+                if not tanggal_str or not isinstance(tanggal_str, str):
+                    return "..................."
+                try:
+                    try:
+                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
+                    except Exception:
+                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
+                    tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
+                    return tgl.strftime("%d %B %Y")
+                except Exception:
+                    return str(tanggal_str)
+
+            data_ba = _DialogDataBA.load_last_badan_adhoc()
+            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", "") if data_ba else "...................")
+            if tanggal_ba.strip() == "...................":
+                show_modern_error(
+                    self,
+                    "Data Pleno Belum Diisi",
+                    "Tanggal pleno belum diisi.\n\n"
+                    "Silakan buka menu **Berita Acara** dan isi terlebih dahulu sebelum membuat ARPP."
+                )
+                return
+
+            # ================================================================
+            # 🔹 1️⃣ Turbo PRAGMA Mode
+            # ================================================================
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.executescript("""
+                PRAGMA synchronous = OFF;
+                PRAGMA journal_mode = MEMORY;
+                PRAGMA locking_mode = EXCLUSIVE;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA cache_size = 500000;
+                PRAGMA mmap_size = 268435456; -- 256 MB memory map
+                PRAGMA page_size = 4096;
+                PRAGMA threads = 4;
+            """)
+
+            # ================================================================
+            # 🔹 2️⃣ Validasi tabel aktif
+            # ================================================================
+            tbl = self._active_table()
+            if not tbl:
+                show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            # ================================================================
+            # 🔹 3️⃣ Query super ringan (tanpa total keseluruhan)
+            # ================================================================
+            cur.execute(f"""
+                SELECT 
+                    tps.TPS,
+                    IFNULL(SUM(CASE WHEN UPPER(a.KET)='B' THEN 1 ELSE 0 END), 0) AS PemilihBaru,
+                    IFNULL(SUM(CASE WHEN a.KET IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END), 0) AS TidakMemenuhiSyarat,
+                    IFNULL(SUM(CASE WHEN UPPER(a.KET)='U' THEN 1 ELSE 0 END), 0) AS PerbaikanData,
+                    IFNULL(SUM(CASE 
+                        WHEN UPPER(a.KET) IN ('B','U') OR a.KET IN ('1','2','3','4','5','6','7','8') 
+                        THEN 1 ELSE 0 END), 0) AS Total
+                FROM (SELECT DISTINCT CAST(TPS AS INTEGER) AS TPS FROM {tbl} WHERE TPS IS NOT NULL) tps
+                LEFT JOIN {tbl} a ON CAST(a.TPS AS INTEGER)=tps.TPS
+                GROUP BY tps.TPS
+                ORDER BY tps.TPS;
+            """)
+
+            # ================================================================
+            # 🔹 4️⃣ Format hasil
+            # ================================================================
+            def fmt(x):
+                return "-" if x == 0 else f"{x:,}".replace(",", ".")
+
+            result = [(tps, fmt(baru), fmt(tms), fmt(ubah), fmt(total))
+                    for tps, baru, tms, ubah, total in cur.fetchall()]
+
+            conn.commit()
+            self._arpp_data = result
+
+            if not result:
+                show_modern_error(self, "Kosong", "Tidak ada data untuk direkap di tabel aktif.")
+                return
+
+            # ================================================================
+            # 🔹 5️⃣ Debug output ke konsol
+            # ================================================================
+            print("=== REKAP ARPP PER TPS (Turbo Mode) ===")
+            print("TPS | Baru | TMS | Perbaikan | Total")
+            print("--------------------------------------")
+            for r in result:
+                print(f"{str(r[0]):<5} | {r[1]:>6} | {r[2]:>6} | {r[3]:>10} | {r[4]:>6}")
+
+            # ================================================================
+            # 🔹 6️⃣ Buka tampilan viewer hasil
+            # ================================================================
+            self.show_window_with_transition(LampArpp)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memuat data ARPP:\n{e}")
+
+
     def get_distinct_tps(self):
         """Ambil daftar distinct TPS dari tabel aktif, abaikan baris dengan KET=0."""
         try:
@@ -13723,6 +13834,530 @@ class LampAdpp(QMainWindow):
             self.parent_window.repaint()
             QTimer.singleShot(150, self.parent_window.repaint)
         self.close()
+
+class LampArpp(QMainWindow):
+    """Tampilan langsung Model A – Rekap Perubahan Pemilih (PDF muncul otomatis)."""
+    def __init__(self, parent_window):
+        super().__init__()
+        self.parent_window = parent_window
+        self.desa = getattr(parent_window, "_desa", "").upper()
+        self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+
+        # === Ambil daftar TPS ===
+        self.tps_list = self.parent_window.get_distinct_tps()
+        self.current_tps_index = 0
+        self.current_tps = self.tps_list[0] if self.tps_list else "-"
+
+        self.setWindowTitle(f"Daftar Perubahan Pemilih Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.setStyleSheet("background-color:#ffffff;")
+
+        # ====================== REGISTER FONT ==========================
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        import os
+
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            font_dir = os.path.join(base_dir, "Fonts")
+            pdfmetrics.registerFont(TTFont("ARIAL", os.path.join(font_dir, "ARIAL.ttf")))
+            pdfmetrics.registerFont(TTFont("ARIALBD", os.path.join(font_dir, "ARIALBD.ttf")))
+            #print("[Font OK] calibri-regular dan calibri-bold berhasil diregistrasi dari folder Fonts/")
+            self._font_base = "ARIAL"
+            self._font_bold = "ARIALBD"
+        except Exception as e:
+            #print("[Font Warning] Gagal memuat Arial, fallback ke Helvetica:", e)
+            self._font_base = "Helvetica"
+            self._font_bold = "Helvetica-Bold"
+
+        # ====================== LAYOUT UTAMA ==========================
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(16)
+        self.setCentralWidget(central)
+
+        # ====================== PDF VIEWER ==========================
+        self.viewer = QPdfView(self)
+        layout.addWidget(self.viewer, stretch=1)
+
+        # === PROGRESS BAR FLOATING DI TENGAH ===
+        self.progress_overlay = QWidget(self)
+        self.progress_overlay.setStyleSheet("""
+            QWidget {
+                background-color: rgba(255, 255, 255, 210);
+                border: 1px solid #bbb;
+                border-radius: 12px;
+            }
+        """)
+        self.progress_overlay.setFixedSize(280, 60)
+        self.progress_overlay.hide()
+
+        overlay_layout = QVBoxLayout(self.progress_overlay)
+        overlay_layout.setContentsMargins(20, 10, 20, 10)
+        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.progress = QProgressBar(self.progress_overlay)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("Membuat PDF... %p%")
+        self.progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #888;
+                border-radius: 8px;
+                background: #f2f2f2;
+                text-align: center;
+                height: 18px;
+                color: #000000;
+            }
+            QProgressBar::chunk {
+                background-color: #ff9900;
+                border-radius: 7px;
+            }
+        """)
+        overlay_layout.addWidget(self.progress)
+
+        # ====================== BARIS BAWAH (NAVIGASI TPS) ======================
+        nav_layout = QHBoxLayout()
+        nav_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.btn_prev_tps = QPushButton("◀")
+        self.btn_next_tps = QPushButton("▶")
+        self.lbl_tps = QLabel(f"TPS: {self.current_tps}")
+
+        for btn in (self.btn_prev_tps, self.btn_next_tps):
+            btn.setFixedWidth(40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    font-family: 'Segoe UI';
+                    font-size: 10pt;
+                    padding: 4px;
+                    border: 1px solid #aaa;
+                    border-radius: 5px;
+                    background-color: #ff6600;
+                }
+                QPushButton:hover {
+                    background-color: #f8f8f8;
+                }
+            """)
+
+        self.lbl_tps.setStyleSheet("font-family:'Segoe UI'; font-size:10pt; margin-left:8px;")
+
+        nav_layout.addWidget(self.btn_prev_tps)
+        nav_layout.addWidget(self.btn_next_tps)
+        nav_layout.addWidget(self.lbl_tps)
+        layout.addLayout(nav_layout)
+
+        self.btn_prev_tps.clicked.connect(lambda: self.change_tps(-1))
+        self.btn_next_tps.clicked.connect(lambda: self.change_tps(1))
+
+        # ====================== TOMBOL TUTUP ======================
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 10, 0, 0)
+
+        self.btn_tutup = QPushButton("Tutup", self)
+        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setStyleSheet("""
+            QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
+            QPushButton:hover{background:#666;}
+        """)
+        self.btn_tutup.clicked.connect(self.kembali_ke_main)
+
+        bottom.addWidget(self.btn_tutup)
+        layout.addLayout(bottom)
+
+        # ====================== TOOLBAR ATAS (SAVE & PRINT) ======================
+        toolbar = QToolBar(self)
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: #f8f8f8;
+                spacing: 6px;
+                border: none;
+            }
+            QToolButton {
+                background: transparent;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: 'Segoe UI';
+                font-size: 11pt;
+                font-weight: 600;
+                color: #333333;
+            }
+            QToolButton:hover {
+                background-color: #ff6600;
+                color: #ffffff;
+            }
+        """)
+
+        # === Tombol Save ===
+        btn_save = QAction("💾 Simpan", self)
+        #btn_save.triggered.connect(self.simpan_arpp)
+        toolbar.addAction(btn_save)
+
+        # === Tombol Print ===
+        btn_print = QAction("🖨 Cetak", self)
+        #btn_print.triggered.connect(self.print_arpp)
+        toolbar.addAction(btn_print)
+
+        # Tambahkan toolbar di sisi atas window
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        # ====================== TAMPILKAN PDF AWAL ======================
+        self.showMaximized()  # <== penting! harus terakhir
+        QTimer.singleShot(0, lambda: self.generate_arpp_pdf(self.current_tps))
+
+        # ===========================================================
+        # HELPER: Freeze UI + overlay progress
+        # ===========================================================
+        @contextmanager
+        def freeze_ui(self):
+            try:
+                self.setEnabled(False)
+                self._show_progress(True)
+                yield
+            finally:
+                self._show_progress(False)
+                self.setEnabled(True)
+
+        def _show_progress(self, show: bool):
+            if show:
+                self.progress_overlay.move(
+                    (self.width() - self.progress_overlay.width()) // 2,
+                    (self.height() - self.progress_overlay.height()) // 2,
+                )
+                self.progress.setValue(35)
+                self.progress_overlay.show()
+                self.progress.repaint()
+            else:
+                self.progress_overlay.hide()
+
+        # ===========================================================
+        # HELPER: Format angka & label TPS
+        # ===========================================================
+        def _fmt_angka(self, n: int) -> str:
+            """0 -> '-', selain itu pakai pemisah ribuan titik."""
+            if not n:
+                return "-"
+            return f"{n:,}".replace(",", ".")
+
+        def _fmt_tps(self, v) -> str:
+            return f"{int(v):03d}" if (v is not None and str(v).isdigit()) else str(v or "-")
+
+        # ===========================================================
+        # DATA: Ambil rekap per TPS super-cepat (SQL agregat)
+        # ===========================================================
+        def _generate_arpp_rows(self, tps_filter=None):
+            """
+            Return: list of rows [no, tps, baru, tms, ubah, total] (angka mentah, belum diformat)
+            Urut TPS numerik jika bisa.
+            """
+            from db_manager import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+
+            tbl = getattr(self.parent_window, "_active_table", lambda: None)()
+            if not tbl:
+                return []
+
+            # Filter opsional TPS
+            where = ""
+            params = ()
+            if tps_filter not in (None, "", "-"):
+                where = "WHERE TPS = ?"
+                params = (str(tps_filter),)
+
+            # Agregasi langsung di SQL (super kilat)
+            sql = f"""
+                SELECT
+                    TPS,
+                    SUM(CASE WHEN KET IN ('b','B') THEN 1 ELSE 0 END) AS baru,
+                    SUM(CASE WHEN KET IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS tms,
+                    SUM(CASE WHEN KET IN ('u','U') THEN 1 ELSE 0 END) AS ubah
+                FROM {tbl}
+                {where}
+                GROUP BY TPS
+                ORDER BY CAST(TPS AS INTEGER) ASC, TPS ASC
+            """
+            cur.execute(sql, params)
+            rows = []
+            no = 1
+            for tps, baru, tms, ubah in cur.fetchall():
+                baru = int(baru or 0)
+                tms  = int(tms or 0)
+                ubah = int(ubah or 0)
+                total = baru + tms + ubah
+                rows.append([no, self._fmt_tps(tps), baru, tms, ubah, total])
+                no += 1
+            return rows
+
+        # ===========================================================
+        # VIEWER: Tampilkan PDF ke QPdfView (stabil)
+        # ===========================================================
+        def _show_pdf_bytes(self, pdf_bytes: bytes):
+            try:
+                if not pdf_bytes or len(pdf_bytes) < 300:
+                    # buat placeholder 1 halaman
+                    buf = BytesIO()
+                    c = canvas.Canvas(buf, pagesize=landscape(A4))
+                    c.setFont("Helvetica-Bold", 14)
+                    c.drawCentredString(landscape(A4)[0]/2, landscape(A4)[1]/2, "Tidak Ada Data untuk Ditampilkan")
+                    c.showPage()
+                    c.save()
+                    pdf_bytes = buf.getvalue()
+
+                # siapkan QPdfDocument
+                self._pdf_doc = QPdfDocument(self)
+                qba = QByteArray(pdf_bytes)
+                self._pdf_buf = QBuffer()
+                self._pdf_buf.setData(qba)
+                self._pdf_buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                self._pdf_doc.load(self._pdf_buf)
+
+                self.viewer.setDocument(self._pdf_doc)
+                # Jika kamu punya pager sendiri, panggil di sini:
+                # self.rebuild_pager()
+            except Exception as e:
+                print(f"[PDF Load Error] {e}")
+
+        # ===========================================================
+        # NAV TPS
+        # ===========================================================
+        def change_tps(self, step: int):
+            if not self.tps_list:
+                return
+            self.current_tps_index = (self.current_tps_index + step) % len(self.tps_list)
+            self.current_tps = self.tps_list[self.current_tps_index]
+            self.lbl_tps.setText(f"TPS: {self._fmt_tps(self.current_tps)}")
+            self.generate_arpp_pdf(self.current_tps)
+
+    # ===========================================================
+    # BANGUN PDF ARPP SESUAI SPESIFIKASI
+    # ===========================================================
+    def generate_arpp_pdf(self, tps_filter=None):
+        """Bangun PDF ARPP dari data yang sudah dihasilkan di MainWindow.generate_arpp()."""
+        try:
+            # 🔹 Ambil data ARPP yang sudah disiapkan oleh MainWindow
+            data_rows = getattr(self.parent_window, "_arpp_data", [])
+            if not data_rows:
+                print("[ARPP WARN] Tidak ada data ARPP yang tersedia.")
+                return
+
+            # 🔹 Fungsi bantu format angka
+            def fmt(x):
+                """Ubah 0 → '-', angka → 1.000"""
+                if str(x).strip() in ["0", "0.0", "-", ""]:
+                    return "-"
+                try:
+                    return f"{int(str(x).replace('.', '')):,}".replace(",", ".")
+                except:
+                    return str(x)
+
+            # 🔹 Konversi semua data agar tetap muncul meski 0
+            fixed_rows = []
+            for tps, baru, tms, ubah, total in data_rows:
+                # ubah “-” kembali ke 0 agar penjumlahan benar
+                def to_int(val):
+                    try:
+                        return int(str(val).replace(".", "")) if str(val).strip() != "-" else 0
+                    except:
+                        return 0
+                fixed_rows.append((
+                    str(tps),
+                    to_int(baru),
+                    to_int(tms),
+                    to_int(ubah),
+                    to_int(total)
+                ))
+
+            # 🔹 Hitung total keseluruhan
+            total_baru = sum(r[1] for r in fixed_rows)
+            total_tms  = sum(r[2] for r in fixed_rows)
+            total_ubah = sum(r[3] for r in fixed_rows)
+            total_semua = sum(r[4] for r in fixed_rows)
+
+            # 🔹 Mulai bangun PDF
+           
+            buf = BytesIO()
+            doc = SimpleDocTemplate(
+                buf,
+                pagesize=landscape(A4),
+                leftMargin=28, rightMargin=28, topMargin=24, bottomMargin=32,
+            )
+
+            story = []
+
+            # === Header Form ===
+            title_style = ParagraphStyle(
+                "TitleSmall", fontName=self._font_bold, fontSize=12,
+                leading=14, alignment=TA_CENTER
+            )
+            tbl_form = Table(
+                [["", "", "", Paragraph("Model A-Rekap PPS Perubahan Pemilih", title_style)]],
+                colWidths=[4*cm, 9*cm, 7*cm, 8*cm],
+                hAlign="CENTER"
+            )
+            tbl_form.setStyle(TableStyle([
+                ("BOX", (-1, 0), (-1, -1), 0.9, colors.black),
+                ("BOX", (0, 0), (-2, -1), 0, colors.white),
+                ("FONTNAME", (0, 0), (-1, -1), self._font_bold),
+                ("FONTSIZE", (0, 0), (-1, -1), 10.5),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(tbl_form)
+
+            # === Header Judul & Logo ===
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            logo_path = os.path.join(base_dir, "KPU.png")
+            judul_tahap = {"DPHP": "DPS", "DPSHP": "DPSHP", "DPSHPA": "DPT"}.get(self.tahap, "DPHP")
+
+            teks_judul = Paragraph(
+                f"<b>REKAPITULASI PERUBAHAN PEMILIH UNTUK {judul_tahap}</b><br/>"
+                "PEMILIHAN UMUM TAHUN 2029<br/>OLEH PPS",
+                ParagraphStyle("TitleCenter", fontName=self._font_bold, fontSize=13, alignment=TA_CENTER, leading=14)
+            )
+
+            if os.path.exists(logo_path):
+                head_tbl = Table([[RLImage(logo_path, 1.5*cm, 1.6*cm), teks_judul, ""]],
+                                colWidths=[3*cm, 20*cm, 3*cm], hAlign="CENTER")
+                head_tbl.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]))
+                story.append(head_tbl)
+            else:
+                story.append(teks_judul)
+
+            story.append(Spacer(1, 8))
+
+            # === Identitas Wilayah ===
+            ident_style = ParagraphStyle("Ident", fontName=self._font_base, fontSize=12, alignment=TA_LEFT)
+            tps_text = f"{int(tps_filter):03d}" if (tps_filter and str(tps_filter).isdigit()) else str(tps_filter or "-")
+
+            ident_tbl = Table([
+                [Paragraph("PROVINSI", ident_style), Paragraph(":", ident_style), Paragraph("JAWA BARAT", ident_style),
+                "", Paragraph("KECAMATAN", ident_style), Paragraph(":", ident_style), Paragraph(self.kecamatan, ident_style)],
+                [Paragraph("KABUPATEN", ident_style), Paragraph(":", ident_style), Paragraph("TASIKMALAYA", ident_style),
+                "", Paragraph("DESA", ident_style), Paragraph(":", ident_style), Paragraph(self.desa, ident_style)],
+            ], colWidths=[2.5*cm, 0.5*cm, 5*cm, 1*cm, 3*cm, 0.5*cm, 6*cm])
+            story.append(ident_tbl)
+            story.append(Spacer(1, 12))
+
+            # === Tabel Data ===
+            center_header = ParagraphStyle("CenterHeader", fontName=self._font_bold, fontSize=12, alignment=TA_CENTER)
+            angka_style = ParagraphStyle("AngkaTabel", fontName=self._font_base, fontSize=12, alignment=TA_CENTER)
+            left_style  = ParagraphStyle("LeftCell", fontName=self._font_base, fontSize=12, alignment=TA_LEFT)
+
+            header = [[
+                Paragraph("<b>No</b>", center_header),
+                Paragraph("<b>Nomor TPS</b>", center_header),
+                Paragraph("<b>Jumlah<br/>Pemilih Baru</b>", center_header),
+                Paragraph("<b>Jumlah Pemilih<br/>Tidak Memenuhi<br/>Syarat</b>", center_header),
+                Paragraph("<b>Jumlah Perbaikan<br/>Data Pemilih</b>", center_header),
+                Paragraph("<b>Total</b>", center_header),
+            ]]
+
+            body = []
+            for idx, (tps, baru, tms, ubah, total) in enumerate(fixed_rows, start=1):
+                body.append([
+                    Paragraph(str(idx), angka_style),
+                    Paragraph(str(tps), left_style),
+                    Paragraph(fmt(baru), angka_style),
+                    Paragraph(fmt(tms), angka_style),
+                    Paragraph(fmt(ubah), angka_style),
+                    Paragraph(fmt(total), angka_style),
+                ])
+
+            footer = [[
+                Paragraph("<b>TOTAL</b>", center_header),
+                Paragraph("", left_style),
+                Paragraph(f"<b>{fmt(total_baru)}</b>", angka_style),
+                Paragraph(f"<b>{fmt(total_tms)}</b>", angka_style),
+                Paragraph(f"<b>{fmt(total_ubah)}</b>", angka_style),
+                Paragraph(f"<b>{fmt(total_semua)}</b>", angka_style),
+            ]]
+
+            tbl = Table(header + body + footer,
+                        colWidths=[1.2*cm, 3.0*cm, 4.1*cm, 5.3*cm, 4.8*cm, 2.8*cm],
+                        repeatRows=1,
+                        hAlign="CENTER")
+            tbl.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -2), 0.3, colors.black),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("FONTNAME", (0, 0), (-1, 0), self._font_bold),
+                ("FONTNAME", (0, -1), (-1, -1), self._font_bold),
+            ]))
+            story.append(tbl)
+
+            def footer_fn(canv: canvas.Canvas, _doc):
+                canv.saveState()
+                canv.setFont(self._font_base, 7)
+                canv.drawCentredString(landscape(A4)[0]/2, 0.5*cm, f"Hal {canv.getPageNumber()}")
+                canv.restoreState()
+
+            doc.build(story, onFirstPage=footer_fn, onLaterPages=footer_fn)
+            self._show_pdf_bytes(buf.getvalue())
+
+        except Exception as e:
+            print(f"[ARPP ERROR] {e}")
+
+
+    def _show_pdf_bytes(self, pdf_bytes: bytes):
+        """Menampilkan PDF langsung di QPdfView tanpa crash."""
+        try:
+            if not pdf_bytes or len(pdf_bytes) < 300:
+                # 🔸 Jika PDF kosong atau rusak, buat PDF placeholder
+                from io import BytesIO
+                from reportlab.pdfgen import canvas
+                from reportlab.lib.pagesizes import A4, landscape
+                buf = BytesIO()
+                c = canvas.Canvas(buf, pagesize=landscape(A4))
+                c.setFont("Helvetica-Bold", 16)
+                c.drawCentredString(
+                    landscape(A4)[0] / 2,
+                    landscape(A4)[1] / 2,
+                    "Tidak Ada Data untuk Ditampilkan"
+                )
+                c.save()
+                pdf_bytes = buf.getvalue()
+
+            # === Siapkan dokumen PDF ===
+            self._pdf_doc = QPdfDocument(self)
+            qba = QByteArray(pdf_bytes)
+            self._pdf_buf = QBuffer()
+            self._pdf_buf.setData(qba)
+            self._pdf_buf.open(QIODevice.OpenModeFlag.ReadOnly)
+            self._pdf_doc.load(self._pdf_buf)
+
+            # === Tampilkan di QPdfView ===
+            self.viewer.setDocument(self._pdf_doc)
+
+            # Debug aman
+            total_pages = self._pdf_doc.pageCount()
+            print(f"[PDF OK] Dokumen ARPP tampil ({total_pages} halaman).")
+
+        except Exception as e:
+            print(f"[PDF Load Error] {e}")
+
+
+    def kembali_ke_main(self):
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
 
 #####################################*************########################################
 #####################################*************########################################
