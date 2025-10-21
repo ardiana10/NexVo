@@ -9216,11 +9216,47 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Berita Acara:\n{e}")
 
+
     def generate_adpp(self, tps_filter=None):
         """Ambil data ADPP dari database SQLCipher aktif secara real-time, super cepat, dan aman."""
         from db_manager import get_connection
 
         try:
+            # ================================================================
+            # 🔹 0️⃣ Verifikasi: Pastikan tanggal BA sudah diisi
+            # ================================================================
+            def format_tanggal_indonesia(tanggal_str):
+                if not tanggal_str or not isinstance(tanggal_str, str):
+                    return "..................."
+                try:
+                    try:
+                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
+                    except Exception:
+                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
+                    tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
+                    return tgl.strftime("%d %B %Y")
+                except Exception:
+                    return str(tanggal_str)
+
+            # ambil data adhoc terakhir
+            data_ba = _DialogDataBA.load_last_badan_adhoc()
+            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", "") if data_ba else "...................")
+
+            # jika belum diisi (masih titik-titik), tolak proses
+            if tanggal_ba.strip() == "...................":
+                show_modern_error(
+                    self,
+                    "Data Pleno Belum Diisi",
+                    (
+                        "Data Pleno belum diisi.\n\n"
+                        "Silakan buka menu **Berita Acara** dan isi terlebih dahulu "
+                    )
+                )
+                return
+
+            # ================================================================
+            # 🔹 1️⃣ Koneksi database dan optimasi cache
+            # ================================================================
             conn = get_connection()
             cur = conn.cursor()
             cur.executescript("""
@@ -9233,7 +9269,9 @@ class MainWindow(QMainWindow):
                 show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # 🔹 Query cepat sesuai filter TPS (jika ada)
+            # ================================================================
+            # 🔹 2️⃣ Query cepat sesuai filter TPS (jika ada)
+            # ================================================================
             if tps_filter:
                 cur.execute(f"""
                     SELECT NKK, NIK, NAMA, TMPT_LHR, TGL_LHR, STS, JK,
@@ -9251,7 +9289,9 @@ class MainWindow(QMainWindow):
                     ORDER BY TPS, RW, RT, NKK, NAMA;
                 """)
 
-            # 🔹 Batch fetch (super cepat)
+            # ================================================================
+            # 🔹 3️⃣ Batch fetch untuk performa tinggi
+            # ================================================================
             rows = []
             fetch = cur.fetchmany
             while True:
@@ -9262,9 +9302,10 @@ class MainWindow(QMainWindow):
 
             conn.commit()
             self._adpp_data = rows
-            #print(f"[ADPP] Berhasil memuat {len(rows):,} baris data real-time ✅")
 
-            # 🔹 Buka jendela PDF langsung
+            # ================================================================
+            # 🔹 4️⃣ Buka tampilan PDF
+            # ================================================================
             self.show_window_with_transition(LampAdpp)
 
         except Exception as e:
@@ -13066,12 +13107,8 @@ class LampAdpp(QMainWindow):
         # ---------- Ambil data badan adhoc ----------
         data_ba = _DialogDataBA.load_last_badan_adhoc()
 
-        if data_ba:
-            ketua_pps = data_ba.get("ketua_pps", "").strip() or "..................."
-            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", ""))
-        else:
-            ketua_pps = "..................."
-            tanggal_ba = "..................."
+        ketua_pps = (data_ba.get("ketua_pps", "").strip() if data_ba else "") or "..................."
+        tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", "") if data_ba else "...................")
             
         def draw_footer(canv: canvas.Canvas, doc):
             """Footer tengah: 'Hal X dari Y'."""
@@ -13432,7 +13469,7 @@ class LampAdpp(QMainWindow):
 
             data_ba = _DialogDataBA.load_last_badan_adhoc()
             ketua_pps = (data_ba.get("ketua_pps", "").strip() if data_ba else "") or "..................."
-            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", "") if data_ba else "")
+            tanggal_ba = format_tanggal_indonesia(data_ba.get("tanggal_ba", "") if data_ba else "...................")
 
             # ======================================================
             # 3️⃣ Buat PDF per TPS dan gabungkan
