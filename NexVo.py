@@ -8103,19 +8103,31 @@ class MainWindow(QMainWindow):
     # =================================================
     def sort_data(self, auto=False):
         """
-        Urutkan data seluruh halaman (super cepat, prioritas 3 saja):
-        🔹 Urut berdasarkan TPS, RW, RT, NKK, NAMA
-        Tanpa popup konfirmasi atau notifikasi.
+        Urutkan data seluruh halaman:
+        🔹 Berdasarkan TPS, RW, RT, NKK, NAMA
+        🔹 Angka di depan dianggap numerik (1,2,...,10,11)
+        tapi tetap bisa menangani nilai seperti '1A', '1B'
         """
+        def num_text_key(val):
+            """
+            Pisahkan angka dan huruf.
+            Contoh: '10B' -> (10, 'B'), '3' -> (3, '')
+            """
+            s = str(val).strip()
+            match = re.match(r"(\d+)([A-Za-z]*)", s)
+            if match:
+                num = int(match.group(1))
+                suf = match.group(2).upper()
+                return (num, suf)
+            return (0, s.upper())
 
-        # 🔹 Fungsi kunci sortir sederhana
         def kunci_sortir(d):
             return (
-                str(d.get("TPS", "")),
-                str(d.get("RW", "")),
-                str(d.get("RT", "")),
-                str(d.get("NKK", "")),
-                str(d.get("NAMA", "")),
+                num_text_key(d.get("TPS", "")),
+                num_text_key(d.get("RW", "")),
+                num_text_key(d.get("RT", "")),
+                str(d.get("NKK", "")).strip(),
+                str(d.get("NAMA", "")).strip().upper(),
             )
 
         # 🔹 Jalankan pengurutan
