@@ -3669,7 +3669,7 @@ class LoginWindow(QMainWindow):
                 color: black;
             }
             QPushButton {
-                background-color: transparent;
+                background-color: #F0F0F0;
             }
         """)
 
@@ -3690,9 +3690,9 @@ class LoginWindow(QMainWindow):
             if event.type() == QEvent.Type.Enter:
                 self.toggle_pw.setStyleSheet("""
                     QPushButton {
-                        font-size: 18pt;
+                        font-size: 16pt;
                         color: #ff6600;
-                        background: transparent;
+                        background: #F0F0F0;
                         border: none;
                         border-radius: 6px;
                     }
@@ -3702,7 +3702,7 @@ class LoginWindow(QMainWindow):
                     QPushButton {
                         font-size: 14pt;
                         color: #000000;
-                        background: transparent;
+                        background: #F0F0F0;
                         border: none;
                     }
                 """)
@@ -5055,12 +5055,20 @@ class MainWindow(QMainWindow):
     def reset_tampilkan_semua_data(self, silent=False):
         """
         🔁 Menampilkan kembali seluruh data dari tabel aktif (reset hasil filter/pemeriksaan)
-        Data diurutkan kembali berdasar TPS, RW, RT, NKK, NAMA.
+        Data akan diurutkan ulang dengan metode numerik-alfabetik yang sama seperti sort_data().
         
         Jika silent=True → tidak menampilkan popup sama sekali (digunakan oleh import_csv / batch).
         """
         from db_manager import get_connection
         try:
+            # 🔹 Tutup sidebar filter jika sedang aktif
+            try:
+                if hasattr(self, "filter_dock") and self.filter_dock and self.filter_dock.isVisible():
+                    self.filter_dock.hide()
+                    #print("[UI] Sidebar filter ditutup otomatis.")
+            except Exception as e:
+                print("[UI WARNING] Gagal menutup sidebar filter:", e)
+
             tahap = getattr(self, "_tahapan", "").strip().upper()
             tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
 
@@ -5072,34 +5080,25 @@ class MainWindow(QMainWindow):
 
             # Jika tabel kosong
             if not rows:
-                if not silent:  # hanya tampilkan popup bila tidak silent
+                if not silent:
                     show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
                 return
 
             # Muat semua data ke memori
-            all_data = []
+            self.all_data = []
             for r in rows:
                 d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                all_data.append(d)
+                self.all_data.append(d)
 
-            # Urutkan kembali ke urutan standar
-            all_data.sort(key=lambda d: (
-                d.get("TPS", ""),
-                d.get("RW", ""),
-                d.get("RT", ""),
-                d.get("NKK", ""),
-                d.get("NAMA", "")
-            ))
-
-            # Tampilkan kembali di tabel utama
+            # 🔹 Tampilkan kembali di tabel utama (belum disort)
             with self.freeze_ui():
-                self._refresh_table_with_new_data(all_data)
+                self._refresh_table_with_new_data(self.all_data)
                 self._warnai_baris_berdasarkan_ket()
-                QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
-                
 
-            # 🔹 Warnai kembali baris-baris
-            self._warnai_baris_berdasarkan_ket()
+            # 🔹 Jalankan sortir numerik seperti di fungsi sort_data()
+            self.sort_data(auto=True)
+            self.clear_filters(auto=True)
+
             QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
         except Exception as e:
@@ -5281,7 +5280,7 @@ class MainWindow(QMainWindow):
         self.lbl_total.setText(f"{len(filtered_data)} dari {len(self.original_data)} total (filtered)")
         self.update_statusbar()
     
-    def clear_filters(self):
+    def clear_filters(self, auto=False):
         """Clear all filters and restore original data"""
         if hasattr(self, 'original_data') and self.original_data is not None:
             self.all_data = self.original_data.copy()
