@@ -13725,7 +13725,7 @@ class LampAdpp(QMainWindow):
     def print_adpp(self):
         """Cetak PDF Model A-DPP langsung ke printer (fit-to-page 300–600 DPI, auto orientasi, bisa semua TPS)."""
         try:
-            # 🔇 Hilangkan log dari GDI (User System - ... = Gray)
+            # 🔇 Hilangkan log GDI yang mengganggu (Windows)
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
 
                 tahap = getattr(self, "tahap", "TAHAPAN").upper()
@@ -13784,8 +13784,10 @@ class LampAdpp(QMainWindow):
 
                 painter = QPainter()
                 if not painter.begin(printer):
-                    raise Exception("Tidak dapat memulai printer.")
+                    QMessageBox.warning(self, "Printer Error", "Tidak dapat memulai printer.")
+                    return
 
+                # === 4️⃣ Mode cetak seluruh TPS atau satu TPS ===
                 if cetak_semua:
                     # ======================================================
                     # Cetak seluruh TPS
@@ -13806,8 +13808,6 @@ class LampAdpp(QMainWindow):
                     total_tps = len(semua_tps)
                     total_dicetak = 0
 
-                    from PyQt6.QtPdf import QPdfDocument
-
                     for i, tps in enumerate(semua_tps, start=1):
                         cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE KET <> '0' AND TPS = ?;", (tps,))
                         if cur.fetchone()[0] == 0:
@@ -13816,12 +13816,18 @@ class LampAdpp(QMainWindow):
                         total_dicetak += 1
                         print(f"[ADPP PRINT] Mencetak TPS {tps} ({i}/{total_tps})")
 
+                        # 🔹 Bangun PDF di memory
                         buf = BytesIO()
                         self._generate_adpp_pdf_to_buffer(buf, tps)
                         buf.seek(0)
 
+                        # 🔹 Load PDF dari buffer (pakai QBuffer agar kompatibel)
+                        qbuf = QBuffer()
+                        qbuf.setData(buf.getvalue())
+                        qbuf.open(QIODevice.OpenModeFlag.ReadOnly)
+
                         temp_doc = QPdfDocument(self)
-                        temp_doc.load(buf.getvalue())
+                        temp_doc.load(qbuf)
 
                         total_pages = temp_doc.pageCount()
                         page_rect = printer.pageRect(QPrinter.Unit.Point)
