@@ -13,7 +13,9 @@ Catatan:
 - Jalankan: python nexvo.py
 """
 
-import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib
+import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib, base64, zipfile, shutil
+from Crypto.Cipher import AES
+from Crypto.Protocol.KDF import PBKDF2
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from contextlib import contextmanager
@@ -3545,7 +3547,7 @@ class LoginWindow(QMainWindow):
         self.pass_input = QLineEdit()
         self.pass_input.setPlaceholderText("Masukkan Password...")
         self.pass_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.toggle_pw = QPushButton("😍")  ###😎😒👁️🤪😝🙄😙😄
+        self.toggle_pw = QPushButton("👁️")  ###😎😒👁️🤪😝🙄😙😄
         self.toggle_pw.setFixedWidth(30)
         self.toggle_pw.clicked.connect(lambda: self.toggle_password(self.pass_input))
         pw_layout.addWidget(self.pass_input)
@@ -3598,6 +3600,23 @@ class LoginWindow(QMainWindow):
 
         self.buat_akun.clicked.connect(self.konfirmasi_buat_akun)
         form_layout.addWidget(self.buat_akun, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # === Tombol Reset Password ===
+        self.reset_pw = QPushButton("Pulihkan Data (Restore)")
+        self.reset_pw.setStyleSheet("""
+            QPushButton {
+                color: #0078d7;
+                font-weight: bold;
+                text-decoration: underline;
+                background: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #ff6600;
+            }
+        """)
+        self.reset_pw.clicked.connect(lambda: restore_nexvo(self))
+        form_layout.addWidget(self.reset_pw, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # === Tombol Reset Password ===
         self.reset_pw = QPushButton("Lupa Password?")
@@ -4215,6 +4234,195 @@ class CustomTable(QTableWidget):
         # ⚡️ Abaikan hilangnya fokus supaya warna seleksi/hover tidak berubah
         event.ignore()
 
+
+#### =================== Fungsi BackUp dan Restore ===================
+BACKUP_DIR = Path("C:/NexVo/BackUp")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _derive_key_from_otp(otp_code: str, otp_secret: str) -> bytes:
+    """Turunkan kunci AES-256 dari kombinasi OTP dan secret."""
+    salt = hashlib.sha256(otp_secret.encode()).digest()
+    key = PBKDF2(otp_code, salt, dkLen=32, count=100_000)
+    return key
+
+def backup_nexvo(parent=None):
+    """Backup lengkap NexVo (.bakx) menyertakan database, key, dan OTP secret (self-contained)."""
+    ensure_dirs()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    from db_manager import get_connection
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT otp_secret FROM users LIMIT 1")
+    row = cur.fetchone()
+    if not row or not row[0]:
+        show_modern_error(parent, "Gagal", "OTP secret tidak ditemukan di database.")
+        return
+    otp_secret = row[0]
+
+    # Verifikasi user aktif melalui OTP 6 digit dari aplikasi
+    import pyotp
+    code, ok = ModernInputDialog(
+        "Verifikasi OTP",
+        "Masukkan kode OTP 6 digit dari aplikasi autentikator Anda:",
+        parent
+    ).getText()
+    if not ok or not code.strip():
+        show_modern_warning(parent, "Dibatalkan", "Backup dibatalkan — OTP kosong.")
+        return
+    totp = pyotp.TOTP(otp_secret)
+    if not totp.verify(code.strip()):
+        show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
+        return
+
+    # Kompres seluruh file penting ke memori
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if DB_PATH.exists():
+            zf.write(DB_PATH, "nexvo.db")
+        else:
+            print("[BACKUP WARNING] Database tidak ditemukan:", DB_PATH)
+        if KEY_PATH.exists():
+            zf.write(KEY_PATH, "nexvo.key")
+        else:
+            print("[BACKUP WARNING] File key tidak ditemukan:", KEY_PATH)
+        zf.writestr("otp.secret", otp_secret)
+        zf.writestr("meta.txt", f"Backup dibuat: {datetime.now()}")
+
+    data = buf.getvalue()
+
+    # === Enkripsi AES-GCM dan embed OTP secret di header ===
+    salt = os.urandom(16)
+    key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
+    iv = os.urandom(12)
+    cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+    ciphertext, tag = cipher.encrypt_and_digest(data)
+
+    # Header: panjang secret + secret + salt + iv + tag + ciphertext
+    secret_bytes = otp_secret.encode()
+    secret_len = len(secret_bytes).to_bytes(2, "big")
+
+    backup_name = f"backup_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.bakx"
+    backup_path = BACKUP_DIR / backup_name
+
+    with open(backup_path, "wb") as f:
+        f.write(secret_len + secret_bytes + salt + iv + tag + ciphertext)
+
+    show_modern_info(parent, "Backup Selesai", f"File backup tersimpan di:\n{backup_path}")
+
+
+def restore_nexvo(parent=None):
+    """Pulihkan seluruh data NexVo dari file .bakx, termasuk OTP secret bawaan file."""
+    ensure_dirs()
+
+    bakx_path = QFileDialog.getOpenFileName(
+        parent,
+        "Pilih File Backup NexVo",
+        "C:/NexVo/BackUp",
+        "Backup NexVo (*.bakx)"
+    )[0]
+    if not bakx_path:
+        return
+
+    try:
+        with open(bakx_path, "rb") as f:
+            blob = f.read()
+
+        # === Baca header: secret_len, secret, salt, iv, tag, ciphertext ===
+        secret_len = int.from_bytes(blob[:2], "big")
+        otp_secret = blob[2:2 + secret_len].decode()
+        salt = blob[2 + secret_len:18 + secret_len]
+        iv = blob[18 + secret_len:30 + secret_len]
+        tag = blob[30 + secret_len:46 + secret_len]
+        ciphertext = blob[46 + secret_len:]
+
+        # === Dekripsi dengan secret bawaan ===
+        key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
+        cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+        data = cipher.decrypt_and_verify(ciphertext, tag)
+
+    except Exception as e:
+        show_modern_error(parent, "Gagal Dekripsi",
+                          f"Backup rusak atau kode OTP salah.\n\n{e}")
+        print("[RESTORE ERROR]", e)
+        return
+
+    try:
+        # === Ekstraksi ZIP hasil dekripsi ===
+        temp_dir = Path(APPDATA) / "NexVoTempRestore"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(BytesIO(data), "r") as zf:
+            zf.extractall(temp_dir)
+
+        restored_db = temp_dir / "nexvo.db"
+        restored_key = temp_dir / "nexvo.key"
+        restored_otp = (temp_dir / "otp.secret").read_text().strip()
+
+        # === Pastikan folder tujuan ada ===
+        dest_db = DB_PATH
+        dest_key = KEY_PATH
+        (Path(APPDATA) / "NexVo").mkdir(parents=True, exist_ok=True)
+        (Path(APPDATA) / "Aplikasi").mkdir(parents=True, exist_ok=True)
+
+        # === Tutup koneksi aktif ===
+        try:
+            from db_manager import close_connection
+            close_connection()
+            #print("[RESTORE] Koneksi database ditutup sebelum penggantian file.")
+        except Exception as e:
+            print("[RESTORE WARNING] Tidak dapat menutup koneksi:", e)
+
+        import os, time
+
+        # === Hapus file lama dengan aman ===
+        for target in [dest_db, dest_key]:
+            for _ in range(3):
+                try:
+                    if target.exists():
+                        os.chmod(target, 0o666)
+                        target.unlink()
+                    break
+                except PermissionError:
+                    print(f"[RESTORE WARNING] File {target} masih terkunci, mencoba ulang...")
+                    time.sleep(0.5)
+
+        # === Salin file hasil restore ===
+        shutil.move(str(restored_db), str(dest_db))
+        shutil.move(str(restored_key), str(dest_key))
+
+        # === Update OTP secret ===
+        from db_manager import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET otp_secret = ?", (restored_otp,))
+        conn.commit()
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print("[RESTORE] File berhasil dipindahkan & koneksi ditutup rapi.")
+
+        # === Buka ulang jendela login ===
+        show_modern_info(
+            parent,
+            "Restore Berhasil",
+            "Semua data NexVo berhasil dipulihkan."
+        )
+
+        # Pastikan transisi UI aman
+        win = LoginWindow()
+        win.show()
+
+        # Tutup window lama
+        parent.close()
+
+    except Exception as e:
+        show_modern_error(parent, "Gagal Restore", f"Kesalahan saat ekstraksi:\n\n{e}")
+        print("[RESTORE EXTRACT ERROR]", e)
+
+
 class MainWindow(QMainWindow):
     """Halaman utama sederhana sementara (dengan ikon di title bar bawaan)."""
     def __init__(self, nama, kecamatan, desa, db_name, tahapan):
@@ -4389,8 +4597,10 @@ class MainWindow(QMainWindow):
         action_hapus_data.triggered.connect(self.hapus_data_pemilih)
         help_menu.addAction(action_hapus_data)
 
-        help_menu.addAction(QAction(" Backup", self))
-        help_menu.addAction(QAction(" Restore", self))
+        action_backup = QAction(" BackUp Data", self)
+        action_backup.triggered.connect(lambda: backup_nexvo(self))
+        help_menu.addAction(action_backup)
+
         help_menu.addAction(QAction(" About", self))
 
         # ==========================================================
@@ -8108,6 +8318,7 @@ class MainWindow(QMainWindow):
         🔹 Angka di depan dianggap numerik (1,2,...,10,11)
         tapi tetap bisa menangani nilai seperti '1A', '1B'
         """
+
         def num_text_key(val):
             """
             Pisahkan angka dan huruf.
@@ -15342,7 +15553,7 @@ if __name__ == "__main__":
         if is_dev_mode_requested():
             if confirm_dev_mode(None):
                 print("[DEV MODE] Melewati proses login & OTP...")
-                dev_nama = "Riparip"
+                dev_nama = "ARI ARDIANA"
                 dev_kecamatan = "TANJUNGJAYA"
                 dev_desa = "SUKASENANG"
                 dev_tahapan = "DPHP"
