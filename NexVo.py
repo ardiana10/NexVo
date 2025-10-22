@@ -4367,6 +4367,10 @@ class MainWindow(QMainWindow):
         action_lamp_arpp.triggered.connect(self.generate_arpp)
         generate_menu.addAction(action_lamp_arpp)
 
+        action_lamp_arpps = QAction(" A-Rekap PPS", self)
+        #action_lamp_arpps.triggered.connect(self.rekap_pps)
+        generate_menu.addAction(action_lamp_arpps)
+
         view_menu = menubar.addMenu("View")
         view_menu.addAction(QAction(" Actual Size", self, shortcut="Ctrl+0"))
         view_menu.addAction(QAction(" Zoom In", self, shortcut="Ctrl+Shift+="))
