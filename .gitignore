@@ -9,6 +9,7 @@
 *.enc
 *.env
 .env.*
+*.json
 nexvo.key
 config.json
 secrets.json
@@ -24,6 +25,7 @@ temp_*.db
 __pycache__/
 *.py[cod]
 *$py.class
+*.vscode
 
 # 🧩 Virtual environment
 venv/
