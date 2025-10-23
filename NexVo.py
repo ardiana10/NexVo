@@ -16156,17 +16156,24 @@ class LampRekapPps(QMainWindow):
             cell_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=12, alignment=TA_CENTER)
 
             data = [
-                [Paragraph("No", header_style),
-                Paragraph("Nomor TPS", header_style),
-                Paragraph("L", header_style),
-                Paragraph("P", header_style),
-                Paragraph("L + P", header_style),
-                Paragraph("Keterangan", header_style)],
-                [Paragraph(str(i), cell_style) for i in range(1, 7)]
+                [
+                    Paragraph("No", header_style),
+                    Paragraph("Nomor TPS", header_style),
+                    Paragraph("Jumlah Pemilih", header_style),
+                    "", "",  # kolom 4-5 akan di-merge ke baris atas
+                    Paragraph("Keterangan", header_style)
+                ],
+                [
+                    "", "",  # merge kolom 1–2 ke atas
+                    Paragraph("L", header_style),
+                    Paragraph("P", header_style),
+                    Paragraph("L + P", header_style),
+                    ""  # merge kolom 6 ke atas
+                ]
             ]
 
+            # === Data isi ===
             for i, (tps, l, p, total) in enumerate(fixed_rows, start=1):
-                # 🔹 Pastikan nomor TPS tampil tiga digit, misal 1 → 001
                 try:
                     tps_text = f"{int(tps):03d}"
                 except:
@@ -16178,10 +16185,10 @@ class LampRekapPps(QMainWindow):
                     Paragraph(fmt(l), cell_style),
                     Paragraph(fmt(p), cell_style),
                     Paragraph(fmt(total), cell_style),
-                    Paragraph("", cell_style),  # kolom 'Keterangan' biar struktur tabel konsisten
+                    Paragraph("", cell_style)
                 ])
 
-            # 🔹 Baris total di bawah
+            # === Baris total ===
             data.append([
                 Paragraph("<b>TOTAL</b>", header_style),
                 Paragraph(fmt(total_tps), header_style),
@@ -16192,14 +16199,23 @@ class LampRekapPps(QMainWindow):
             ])
 
             tbl = Table(data, colWidths=[2*cm, 3.5*cm, 3*cm, 3*cm, 3*cm, 3*cm], hAlign="CENTER")
+
             tbl.setStyle(TableStyle([
+                # === Struktur garis dan merge ===
                 ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")),
+                ("SPAN", (0, 0), (0, 1)),  # kolom 1 baris 1–2 merge
+                ("SPAN", (1, 0), (1, 1)),  # kolom 2 baris 1–2 merge
+                ("SPAN", (2, 0), (4, 0)),  # baris 1 kolom 3–5 merge
+                ("SPAN", (5, 0), (5, 1)),  # kolom 6 baris 1–2 merge
+
+                ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#f2f2f2")),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("FONTNAME", (0, -1), (-1, -1), self._font_base),
+                ("FONTNAME", (0, -1), (-1, -1), self._font_bold),
                 ("TOPPADDING", (0, -1), (-1, -1), 4),
                 ("BOTTOMPADDING", (0, -1), (-1, -1), 4),
             ]))
+
             story.append(tbl)
             story.append(Spacer(1, 24))
 
