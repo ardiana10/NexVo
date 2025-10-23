@@ -86,6 +86,9 @@ from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfMerger
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment
+
 # ==========================================================
 # Konstanta path Windows (AppData\Roaming)
 # ==========================================================
@@ -5447,6 +5450,10 @@ class MainWindow(QMainWindow):
         action_lamp_arpps.triggered.connect(self.rekap_pps)
         generate_menu.addAction(action_lamp_arpps)
 
+        action_bulk_sidalih = QAction(" Bulk Sidalih", self)
+        action_bulk_sidalih.triggered.connect(self.bulk_sidalih)
+        generate_menu.addAction(action_bulk_sidalih)
+
         view_menu = menubar.addMenu("View")
         view_menu.addAction(QAction(" Actual Size", self, shortcut="Ctrl+0"))
         view_menu.addAction(QAction(" Zoom In", self, shortcut="Ctrl+Shift+="))
@@ -10712,6 +10719,150 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[TPS Error] {e}")
             return []
+        
+
+    def bulk_sidalih(self):
+        """Ekspor data tabel aktif ke Excel 'Bulk Sidalih' dengan format dan urutan kolom sesuai spesifikasi."""
+        # === 1️⃣ Konfirmasi awal ===
+        tahap = getattr(self, "_tahapan", "TAHAPAN").upper()
+        desa = getattr(self, "_desa", "DESA").title()
+
+        res = show_modern_question(
+            self,
+            "Konfirmasi Ekspor",
+            (
+                f"Apakah Anda ingin mengekspor data <b>Bulk Sidalih</b> "
+                f"untuk Desa <b>{desa}</b> pada tahap <b>{tahap}</b>?"
+            )
+        )
+        if not res:
+            return
+
+        try:
+            # === 2️⃣ Siapkan folder & nama file ===
+            folder_path = "C:/NexVo/Bulk Sidalih"
+            os.makedirs(folder_path, exist_ok=True)
+            waktu_str = datetime.now().strftime("%d%m%Y %H.%M")
+            file_name = f"Bulk Sidalih Desa {desa} tahap {tahap} {waktu_str}.xlsx"
+            file_path = os.path.join(folder_path, file_name)
+
+            # === 3️⃣ Ambil data dari tabel aktif ===
+            from db_manager import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            tbl = self._active_table()
+            if not tbl:
+                QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            cur.execute(f"""
+                SELECT KECAMATAN, DESA, DPID, NKK, NIK, NAMA, TMPT_LHR, TGL_LHR,
+                    STS, JK, ALAMAT, RT, RW, DIS, KTPel, KET, SUMBER, TPS
+                FROM {tbl}
+                WHERE KET <> '0'
+                ORDER BY CAST(TPS AS INTEGER), CAST(RW AS INTEGER), CAST(RT AS INTEGER), NKK, NAMA;
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                QMessageBox.warning(self, "Kosong", "Tidak ada data untuk diekspor.")
+                return
+
+            # === 4️⃣ Buat file Excel ===
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Bulk Sidalih"
+
+            headers = [
+                "KECAMATAN", "DESA",
+                "DPID", "NKK", "NIK", "NAMA", "TMPLHR", "TGLLHR", "STS", "L/P",
+                "JALAN", "RT", "RW", "DIS", "EKTP", "KET", "SMBR", "TPS"
+            ]
+            ws.append(headers)
+
+            # === 5️⃣ Masukkan data ===
+            for r in rows:
+                (
+                    kec, desa_val, dpid, nkk, nik, nama, tmplhr, tgllhr, sts, jk,
+                    alamat, rt, rw, dis, ktpel, ket, sumber, tps
+                ) = r
+
+                def safe(v): return "" if v in (None, "None") else str(v).strip()
+
+                # handle kolom KET campuran
+                ket_val = safe(ket)
+                if ket_val.upper() in ("B", "U"):
+                    ket_val = ket_val.upper()
+                else:
+                    try:
+                        ket_val = int(ket_val)
+                    except Exception:
+                        ket_val = ket_val
+
+                # handle numeric conversion
+                try:
+                    dpid_val = int(float(dpid)) if str(dpid).strip().replace(".", "").isdigit() else None
+                except Exception:
+                    dpid_val = None
+
+                row_excel = [
+                    safe(kec),
+                    safe(desa_val),
+                    dpid_val,
+                    safe(nkk),
+                    safe(nik),
+                    safe(nama),
+                    safe(tmplhr),
+                    safe(tgllhr),
+                    safe(sts),
+                    safe(jk),
+                    safe(alamat),
+                    int(rt) if safe(rt).isdigit() else None,
+                    int(rw) if safe(rw).isdigit() else None,
+                    int(dis) if safe(dis).isdigit() else None,
+                    safe(ktpel),
+                    ket_val,
+                    safe(sumber),
+                    int(tps) if safe(tps).isdigit() else None,
+                ]
+                ws.append(row_excel)
+
+            # === 6️⃣ Rata tengah semua sel ===
+            align_center = Alignment(horizontal="left", vertical="center")
+            for col in ws.columns:
+                for cell in col:
+                    cell.alignment = align_center
+
+            # === 7️⃣ Freeze baris pertama ===
+            ws.freeze_panes = "A2"
+
+            # === 8️⃣ Auto width kolom ===
+            for column_cells in ws.columns:
+                max_length = 0
+                column = column_cells[0].column_letter
+                for cell in column_cells:
+                    try:
+                        # ambil panjang string isi sel
+                        value_length = len(str(cell.value)) if cell.value is not None else 0
+                        if value_length > max_length:
+                            max_length = value_length
+                    except Exception:
+                        pass
+                # sedikit buffer agar tidak terpotong
+                adjusted_width = (max_length + 2) * 1
+                ws.column_dimensions[column].width = adjusted_width
+
+            # === 9️⃣ Simpan file ===
+            wb.save(file_path)
+
+            # === 🔟 Notifikasi selesai ===
+            show_modern_info(
+                self,
+                "Ekspor Selesai",
+                f"Data Bulk Sidalih berhasil diekspor ke:<br><b>{file_path}</b>"
+            )
+
+        except Exception as e:
+            show_modern_error(self, "Gagal Ekspor", f"Terjadi kesalahan saat ekspor:<br><b>{e}</b>")
 
 
 # =========================================================
