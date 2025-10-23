@@ -79,6 +79,7 @@ from reportlab.platypus import (
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen.canvas import Canvas
 from io import BytesIO
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
@@ -13608,14 +13609,13 @@ class _DialogMasukan(QDialog):
 
     def get_text(self):
         return self.text.toPlainText()
-    
-from reportlab.pdfgen.canvas import Canvas
 
 class PageNumCanvas(Canvas):
     """Canvas khusus dengan footer tengah 'Hal X dari Y' otomatis."""
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, font_name="Helvetica", **kwargs):
         Canvas.__init__(self, *args, **kwargs)
         self._saved_page_states = []
+        self._font_name = font_name
 
     def showPage(self):
         self._saved_page_states.append(dict(self.__dict__))
@@ -13633,7 +13633,7 @@ class PageNumCanvas(Canvas):
         page = self._pageNumber
         text = f"Hal {page} dari {total_pages}"
         self.setFont(self._fontname, 9)
-        self.drawCentredString(landscape(A4)[0] / 2.0, 1.2 * cm, text)
+        self.drawCentredString(landscape(A4)[0] / 2.0, 1 * cm, text)
 
     
 class LampAdpp(QMainWindow):
@@ -14056,10 +14056,10 @@ class LampAdpp(QMainWindow):
             page_num = canv.getPageNumber()
             text = f"Hal {page_num} dari {doc.page_count}"
             canv.saveState()
-            canv.setFont(self._font_base, 7)
+            canv.setFont("calibri-reguler", 10)
             canv.drawCentredString(
                 landscape(A4)[0] / 2.0,  # posisi tengah (lebar kertas)
-                0.5 * cm,               # jarak dari bawah
+                1 * cm,               # jarak dari bawah
                 text
             )
             canv.restoreState()
@@ -14086,7 +14086,7 @@ class LampAdpp(QMainWindow):
             #Nama Form
             style_ident = ParagraphStyle(
                 "IdentitasRapat",
-                fontName=self._font_bold,
+                fontName=self._font_base,
                 fontSize=12,
                 leading=16,  # 🔹 lebih rapat dari default (biasanya 13)
                 alignment=TA_CENTER,
@@ -14128,7 +14128,7 @@ class LampAdpp(QMainWindow):
                 """
                 teks_judul = Paragraph(judul_html, ParagraphStyle(
                     "TitleCenter",
-                    fontName=self._font_bold,
+                    fontName=self._font_base,
                     fontSize=13,
                     alignment=TA_CENTER,
                     leading=14,
@@ -14236,11 +14236,17 @@ class LampAdpp(QMainWindow):
                 self._cache_adpp[cache_key] = rows
 
             # ---------- Styles ----------
-            wrap_left = ParagraphStyle("WrapLeft", fontName=self._font_base, fontSize=9, leading=10, alignment=TA_LEFT)
-            center_header = ParagraphStyle("CenterHeader", fontName=self._font_bold, fontSize=9, leading=10, alignment=TA_CENTER)
+            wrap_left = ParagraphStyle(
+                "WrapLeft", fontName=self._font_base, fontSize=9, leading=10, alignment=TA_LEFT
+            )
+            center_header = ParagraphStyle(
+                "CenterHeader", fontName=self._font_bold, fontSize=9, leading=10, alignment=TA_CENTER
+            )
 
+            # ---------- Header Bertingkat ----------
             # ---------- Header ----------
             header_top = [
+                # Baris 0: header utama (Alamat akan span 3 kolom)
                 [
                     Paragraph("<b>No</b>", center_header),
                     Paragraph("<b>No KK</b>", center_header),
@@ -14250,13 +14256,22 @@ class LampAdpp(QMainWindow):
                     Paragraph("<b>Tanggal<br/>Lahir</b>", center_header),
                     Paragraph("<b>Status<br/>Perkawinan<br/>B/S/P</b>", center_header),
                     Paragraph("<b>Jenis<br/>Kelamin<br/>L/P</b>", center_header),
-                    Paragraph("<b>Alamat</b>", center_header),
-                    Paragraph("<b>RT</b>", center_header),
-                    Paragraph("<b>RW</b>", center_header),
+                    Paragraph("<b>Alamat</b>", center_header),  # span ke (10,0)
+                    Paragraph("", center_header),                # placeholder
+                    Paragraph("", center_header),                # placeholder
                     Paragraph("<b>Disabilitas</b>", center_header),
                     Paragraph("<b>Status KTP-el</b>", center_header),
                     Paragraph("<b>Keterangan</b>", center_header),
                 ],
+                # Baris 1: subheader khusus kolom 9–11 (yang lain kosong karena di-SPAN vertikal)
+                [
+                    "", "", "", "", "", "", "", "",
+                    Paragraph("<b>Jalan/Dukuh</b>", center_header),
+                    Paragraph("<b>RT</b>", center_header),
+                    Paragraph("<b>RW</b>", center_header),
+                    "", "", "",
+                ],
+                # Baris 2: baris nomor – TETAP dengan list comprehension yang kamu minta
                 [Paragraph(str(i), center_header) for i in range(1, 15)],
             ]
 
@@ -14272,23 +14287,43 @@ class LampAdpp(QMainWindow):
                         new_row.append(text)
                 data_matrix.append(new_row)
 
-            table_matrix = header_top + (data_matrix if data_matrix else [[""] + [""]*13])
+            table_matrix = header_top + (data_matrix if data_matrix else [[""] + [""] * 13])
 
+            # ---------- Tabel ----------
             t_data = LongTable(
                 table_matrix,
                 colWidths=[1*cm, 2.8*cm, 2.8*cm, 4.2*cm, 2.7*cm, 1.8*cm,
                         2*cm, 1.6*cm, 3.8*cm, 0.9*cm, 0.9*cm,
                         1*cm, 1.3*cm, 1.2*cm],
-                repeatRows=2,
+                repeatRows=3,  # <- dari 2 menjadi 3
             )
+
             t_data.setStyle(TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.9, colors.black),
-                ("BACKGROUND", (0, 0), (-1, 1), colors.whitesmoke),
+                ("BACKGROUND", (0, 0), (-1, 2), colors.whitesmoke),  # header 3 baris
                 ("FONTNAME", (0, 0), (-1, -1), self._font_base),
                 ("FONTSIZE", (0, 0), (-1, -1), 9),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("WORDWRAP", (0, 0), (-1, -1), True),
+
+                # ----- SPAN: kolom selain 9–11 menutupi baris 0–1 (tetap 1 sel tinggi) -----
+                ("SPAN", (0, 0), (0, 1)),   # No
+                ("SPAN", (1, 0), (1, 1)),   # No KK
+                ("SPAN", (2, 0), (2, 1)),   # NIK
+                ("SPAN", (3, 0), (3, 1)),   # Nama
+                ("SPAN", (4, 0), (4, 1)),   # Tempat Lahir
+                ("SPAN", (5, 0), (5, 1)),   # Tanggal Lahir
+                ("SPAN", (6, 0), (6, 1)),   # Status Perkawinan
+                ("SPAN", (7, 0), (7, 1)),   # Jenis Kelamin
+
+                # ----- SPAN: "Alamat" di baris 0 membentang 3 kolom (9–11) -----
+                ("SPAN", (8, 0), (10, 0)),
+
+                # ----- SPAN: kolom setelah alamat juga tetap 1 sel tinggi di baris 0–1 -----
+                ("SPAN", (11, 0), (11, 1)), # Disabilitas
+                ("SPAN", (12, 0), (12, 1)), # Status KTP-el
+                ("SPAN", (13, 0), (13, 1)), # Keterangan
             ]))
             story.append(t_data)
             story.append(Spacer(1, 12))
@@ -14398,7 +14433,7 @@ class LampAdpp(QMainWindow):
             story.append(tabel_ttd)
 
             # ---------- Build dua kali (agar dapat total halaman) ----------
-            doc.build(story, canvasmaker=PageNumCanvas)
+            doc.build(story, canvasmaker=lambda *a, **kw: PageNumCanvas(*a, font_name=self._font_base, **kw))
             pdf_bytes = buf.getvalue()
             buf.close()
             self._show_pdf_bytes(pdf_bytes)
@@ -14420,10 +14455,10 @@ class LampAdpp(QMainWindow):
                     canvas.Canvas.showPage(self)
                 canvas.Canvas.save(self)
             def draw_page_number(self, total):
-                self.setFont("Helvetica", 7)
+                self.setFont("calibri-regular", 10)
                 self.drawCentredString(
                     landscape(A4)[0] / 2.0,
-                    0.5 * cm,
+                    1 * cm,
                     f"Hal {self._pageNumber} dari {total}"
                 )
 
@@ -14469,7 +14504,7 @@ class LampAdpp(QMainWindow):
         )
 
         try:
-            doc.build(valid_story, canvasmaker=PageNumCanvas)
+            doc.build(valid_story, canvasmaker=lambda *a, **kw: PageNumCanvas(*a, font_name=self._font_base, **kw))
         except Exception as e:
             print(f"[ADPP SAVE] ⚠️ doc.build gagal TPS {tps_filter}: {e}")
             from reportlab.pdfgen import canvas as rcanvas
@@ -14510,7 +14545,7 @@ class LampAdpp(QMainWindow):
             page_num = canv.getPageNumber()
             text = f"Hal {page_num} dari {doc.page_count}"
             canv.saveState()
-            canv.setFont(self._font_base, 7)
+            canv.setFont("calibri-regular", 10)
             canv.drawCentredString(
                 landscape(A4)[0] / 2.0,  # posisi tengah (lebar kertas)
                 0.5 * cm,               # jarak dari bawah
@@ -14540,7 +14575,7 @@ class LampAdpp(QMainWindow):
             #Nama Form
             style_ident = ParagraphStyle(
                 "IdentitasRapat",
-                fontName=self._font_bold,
+                fontName=self._font_base,
                 fontSize=12,
                 leading=16,  # 🔹 lebih rapat dari default (biasanya 13)
                 alignment=TA_CENTER,
@@ -14582,7 +14617,7 @@ class LampAdpp(QMainWindow):
                 """
                 teks_judul = Paragraph(judul_html, ParagraphStyle(
                     "TitleCenter",
-                    fontName=self._font_bold,
+                    fontName=self._font_base,
                     fontSize=13,
                     alignment=TA_CENTER,
                     leading=14,
@@ -14642,7 +14677,6 @@ class LampAdpp(QMainWindow):
             story.append(Spacer(1, 12))
 
         # ---------- Ambil data DB ----------
-        from db_manager import get_connection
         conn = get_connection()
         cur = conn.cursor()
         tbl = self.parent_window._active_table()
@@ -14656,56 +14690,81 @@ class LampAdpp(QMainWindow):
         rows = cur.fetchall()
 
         # ---------- Header tabel ----------
-        wrap_left = ParagraphStyle("WrapLeft", fontName=self._font_base, fontSize=9, alignment=TA_LEFT)
-        center_header = ParagraphStyle("CenterHeader", fontName=self._font_bold, fontSize=9, alignment=TA_CENTER)
+        wrap_left = ParagraphStyle("WrapLeft", fontName=self._font_base, fontSize=9, leading=10, alignment=TA_LEFT)
+        center_header = ParagraphStyle("CenterHeader", fontName=self._font_bold, fontSize=9, leading=10, alignment=TA_CENTER)
+
         header_top = [
-            [Paragraph("<b>No</b>", center_header),
-            Paragraph("<b>No KK</b>", center_header),
-            Paragraph("<b>NIK</b>", center_header),
-            Paragraph("<b>Nama</b>", center_header),
-            Paragraph("<b>Tempat<br/>Lahir</b>", center_header),
-            Paragraph("<b>Tanggal<br/>Lahir</b>", center_header),
-            Paragraph("<b>Status<br/>Perkawinan<br/>B/S/P</b>", center_header),
-            Paragraph("<b>Jenis<br/>Kelamin<br/>L/P</b>", center_header),
-            Paragraph("<b>Alamat</b>", center_header),
-            Paragraph("<b>RT</b>", center_header),
-            Paragraph("<b>RW</b>", center_header),
-            Paragraph("<b>Disabilitas</b>", center_header),
-            Paragraph("<b>Status KTP-el</b>", center_header),
-            Paragraph("<b>Keterangan</b>", center_header)],
-            [Paragraph(str(i), center_header) for i in range(1, 15)]
+            [
+                Paragraph("<b>No</b>", center_header),
+                Paragraph("<b>No KK</b>", center_header),
+                Paragraph("<b>NIK</b>", center_header),
+                Paragraph("<b>Nama</b>", center_header),
+                Paragraph("<b>Tempat<br/>Lahir</b>", center_header),
+                Paragraph("<b>Tanggal<br/>Lahir</b>", center_header),
+                Paragraph("<b>Status<br/>Perkawinan<br/>B/S/P</b>", center_header),
+                Paragraph("<b>Jenis<br/>Kelamin<br/>L/P</b>", center_header),
+                Paragraph("<b>Alamat</b>", center_header),
+                Paragraph("", center_header),
+                Paragraph("", center_header),
+                Paragraph("<b>Disabilitas</b>", center_header),
+                Paragraph("<b>Status KTP-el</b>", center_header),
+                Paragraph("<b>Keterangan</b>", center_header),
+            ],
+            [
+                "", "", "", "", "", "", "", "",
+                Paragraph("<b>Jalan/Dukuh</b>", center_header),
+                Paragraph("<b>RT</b>", center_header),
+                Paragraph("<b>RW</b>", center_header),
+                "", "", "",
+            ],
+            [Paragraph(str(i), center_header) for i in range(1, 15)],
         ]
 
-        # ---------- Data isi ----------
+        # ---------- Data ----------
         data_matrix = []
-        for no, r in enumerate(rows, start=1):
-            vals = ["" if v in (None, "None") else str(v) for v in r]
-            data_matrix.append([
-                str(no), vals[0], vals[1],
-                Paragraph(vals[2], wrap_left),
-                Paragraph(vals[3], wrap_left),
-                vals[4], vals[5], vals[6],
-                Paragraph(vals[7], wrap_left),
-                vals[8], vals[9], vals[10], vals[11], vals[12]
-            ])
+        for idx, row in enumerate(rows, start=1):
+            new_row = [str(idx)]  # 🔹 tambahkan nomor urut di kolom pertama
+            for i, val in enumerate(row):
+                text = str(val or "").strip().replace("\n", " ")
+                if i in (2, 3, 7):  # NAMA, TMPT_LHR, ALAMAT
+                    new_row.append(Paragraph(text, wrap_left))
+                else:
+                    new_row.append(text)
+            data_matrix.append(new_row)
 
+        table_matrix = header_top + (data_matrix if data_matrix else [[""] + [""] * 13])
+
+        # ---------- Tabel ----------
         t_data = LongTable(
-            header_top + data_matrix,
-            colWidths=[1*cm,2.8*cm,2.8*cm,4.2*cm,2.7*cm,1.8*cm,
-                    2*cm,1.6*cm,3.8*cm,0.9*cm,0.9*cm,
-                    1*cm,1.3*cm,1.2*cm],
-            repeatRows=2,
+            table_matrix,
+            colWidths=[1 * cm, 2.8 * cm, 2.8 * cm, 4.2 * cm, 2.7 * cm, 1.8 * cm,
+                    2 * cm, 1.6 * cm, 3.8 * cm, 0.9 * cm, 0.9 * cm,
+                    1 * cm, 1.3 * cm, 1.2 * cm],
+            repeatRows=3,
         )
         t_data.setStyle(TableStyle([
-            ("GRID", (0,0), (-1,-1), 0.9, colors.black),
-            ("BACKGROUND", (0,0), (-1,1), colors.whitesmoke),
-            ("FONTNAME", (0,0), (-1,-1), self._font_base),
-            ("FONTSIZE", (0,0), (-1,-1), 9),
-            ("ALIGN", (0,0), (-1,-1), "CENTER"),
-            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.9, colors.black),
+            ("BACKGROUND", (0, 0), (-1, 2), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, -1), self._font_base),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("WORDWRAP", (0, 0), (-1, -1), True),
+            ("SPAN", (0, 0), (0, 1)),
+            ("SPAN", (1, 0), (1, 1)),
+            ("SPAN", (2, 0), (2, 1)),
+            ("SPAN", (3, 0), (3, 1)),
+            ("SPAN", (4, 0), (4, 1)),
+            ("SPAN", (5, 0), (5, 1)),
+            ("SPAN", (6, 0), (6, 1)),
+            ("SPAN", (7, 0), (7, 1)),
+            ("SPAN", (8, 0), (10, 0)),
+            ("SPAN", (11, 0), (11, 1)),
+            ("SPAN", (12, 0), (12, 1)),
+            ("SPAN", (13, 0), (13, 1)),
         ]))
         story.append(t_data)
-        story.append(Spacer(1,12))
+        story.append(Spacer(1, 12))
 
         # === Definisi style dasar ===
         ket_style = ParagraphStyle(
@@ -14834,8 +14893,17 @@ class LampAdpp(QMainWindow):
                 return
 
             # --- ambil semua TPS ---
-            cur.execute(f"SELECT DISTINCT TPS FROM {tbl} ORDER BY TPS;")
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl}
+                ORDER BY 
+                    CASE 
+                        WHEN TPS GLOB '[0-9]*' THEN CAST(TPS AS INTEGER)
+                        ELSE NULL
+                    END ASC,
+                    TPS ASC;
+            """)
             semua_tps = [r[0] for r in cur.fetchall()]
+
             if not semua_tps:
                 QMessageBox.warning(self, "Tidak Ada TPS", "Tidak ada data TPS untuk disimpan.")
                 return
@@ -14846,9 +14914,6 @@ class LampAdpp(QMainWindow):
             # ======================================================
             # 2️⃣ Ambil data badan adhoc
             # ======================================================
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.units import cm
-
             def format_tanggal_indonesia(tanggal_str):
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
@@ -14888,14 +14953,6 @@ class LampAdpp(QMainWindow):
                 # fungsi helper internal buat 1 TPS (copy dari generate_adpp_pdf)
                 def build_one_tps(doc_buf, tps_value):
                     """Bangun PDF untuk satu TPS (identik dengan generate_adpp_pdf)."""
-                    from reportlab.lib import colors
-                    from reportlab.lib.styles import ParagraphStyle
-                    from reportlab.lib.enums import TA_CENTER, TA_LEFT
-                    from reportlab.platypus import (
-                        Paragraph, Spacer, Table, TableStyle, LongTable, Image as RLImage
-                    )
-
-                    from reportlab.lib.units import cm
                     PAGE_SIZE = landscape(A4)
 
                     # ---------- Footer ----------
@@ -14917,10 +14974,10 @@ class LampAdpp(QMainWindow):
                             canvas.Canvas.save(self)
 
                         def draw_page_number(self, total):
-                            self.setFont("Helvetica", 7)
+                            self.setFont("calibri-regular", 10)
                             self.drawCentredString(
                                 PAGE_SIZE[0] / 2.0,
-                                0.5 * cm,
+                                1 * cm,
                                 f"Hal {self._pageNumber} dari {total}"
                             )
 
@@ -15058,8 +15115,18 @@ class LampAdpp(QMainWindow):
                         QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
                         return
 
-                    cur.execute(f"SELECT DISTINCT TPS FROM {tbl} ORDER BY TPS;")
+                    # 🔹 Urutkan TPS secara numerik bila memungkinkan
+                    cur.execute(f"""
+                        SELECT DISTINCT TPS FROM {tbl}
+                        ORDER BY 
+                            CASE 
+                                WHEN TPS GLOB '[0-9]*' THEN CAST(TPS AS INTEGER)
+                                ELSE NULL
+                            END ASC,
+                            TPS ASC;
+                    """)
                     semua_tps = [r[0] for r in cur.fetchall()]
+
                     if not semua_tps:
                         QMessageBox.warning(self, "Tidak Ada TPS", "Tidak ada data TPS untuk dicetak.")
                         return
@@ -15169,10 +15236,22 @@ class LampAdpp(QMainWindow):
     def change_tps(self, step):
         if not self.tps_list:
             return
+
+        # 🔹 Urutkan tps_list secara numerik sekali saja
+        try:
+            self.tps_list = sorted(self.tps_list, key=lambda x: int(x))
+        except ValueError:
+            # Jika ada TPS yang bukan angka murni, urutkan campuran (angka dulu, lalu teks)
+            self.tps_list = sorted(self.tps_list, key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else x))
+
+        # 🔹 Geser indeks dan update tampilan
         self.current_tps_index = (self.current_tps_index + step) % len(self.tps_list)
         self.current_tps = self.tps_list[self.current_tps_index]
         self.lbl_tps.setText(f"TPS: {self.current_tps}")
+
+        # 🔹 Bangun ulang dokumen PDF berdasarkan TPS aktif
         self.generate_adpp_pdf(tps_filter=self.current_tps)
+
 
     def create_placeholder_pdf(self):
         buf = BytesIO()
