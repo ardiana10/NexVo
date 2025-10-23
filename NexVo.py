@@ -4303,7 +4303,7 @@ def backup_nexvo(parent=None):
     secret_bytes = otp_secret.encode()
     secret_len = len(secret_bytes).to_bytes(2, "big")
 
-    backup_name = f"backup_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.bakx"
+    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.bakx"
     backup_path = BACKUP_DIR / backup_name
 
     with open(backup_path, "wb") as f:
