@@ -2778,9 +2778,7 @@ class FilterSidebar(QWidget):
         self.keterangan.addItems([
             "Keterangan", "1 (Meninggal)", "2 (Ganda)", "3 (Di Bawah Umur)",
             "4 (Pindah Domisili)", "5 (WNA)", "6 (TNI)", "7 (Polri)",
-            "8 (Salah TPS)", "U (Ubah)", "90 (Keluar Loksus)", "91 (Meninggal)",
-            "92 (Ganda)", "93 (Di Bawah Umur)", "94 (Pindah Domisili)",
-            "95 (WNA)", "96 (TNI)", "97 (Polri)"
+            "8 (Salah TPS)", "U (Ubah)"
         ])
         self.kelamin.addItems(["Kelamin", "L", "P"])
         self.kawin.addItems(["Kawin", "S", "B", "P"])
@@ -3467,6 +3465,875 @@ class FixedDockWidget(QDockWidget):
 
         # Tidak perlu conn.commit(); decorator sudah commit.
         self.accept()
+
+# ==========================================================
+# Dialog Detail Pemilih
+# ==========================================================
+
+class FloatingLabelLineEdit(QWidget):
+    def __init__(self, label_text, value="", bg_yellow=False, read_only=False):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.label = QLabel(label_text)
+        self.label.setStyleSheet("""
+            color: #6B7280;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 0;
+            padding: 0;
+        """)
+
+        self.line_edit = QLineEdit()
+        self.line_edit.setText(value)
+        self.line_edit.setReadOnly(read_only)
+        self.line_edit.setFixedHeight(36)
+        self.line_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {'#FFFBEB' if bg_yellow else 'white'};
+                border: 1px solid #D1D5DB;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 13px;
+                color: #111827;
+            }}
+            QLineEdit:read-only {{
+                background-color: {'#FEF9C3' if bg_yellow else '#F3F4F6'};
+                color: #374151;
+            }}
+        """)
+        # TODO: Anda mungkin juga ingin menambahkan metode setTheme pada class ini
+        # agar warnanya bisa ikut berubah.
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.line_edit)
+
+
+# --- REVISI LENGKAP CustomComboBox ---
+class CustomComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # 1. Atur properti tema
+        self.theme_mode = 'light'  # Default theme
+        self.chevron_color = QColor("#6B7280") # Default chevron color
+
+        # 2. Properti widget (dari kode asli Anda)
+        self._max_popup_width = 500
+        self._popup_direction_mode = 'down'
+        self._popup_open = False
+        self._arrow_angle = 0.0
+        self._arrow_anim = None
+        
+        # 3. Panggil metode baru untuk menerapkan tema awal
+        self._update_stylesheet()
+
+    def setTheme(self, mode: str):
+        """
+        Metode publik untuk mengubah tema.
+        'mode' harus berupa 'light' or 'dark'.
+        """
+        self.theme_mode = mode.lower()
+        self._update_stylesheet()
+
+    def _update_stylesheet(self):
+        """Metode internal untuk menerapkan warna tema."""
+        
+        if self.theme_mode == 'dark':
+            # --- Tentukan Warna Dark Mode (Sesuaikan warnanya) ---
+            bg_color = "#374151"       # Abu-abu gelap
+            border_color = "#4B5563"  # Abu-abu sedikit lebih terang
+            text_color = "#F3F4F6"      # Putih pudar
+            popup_bg = "#1F2937"       # Latar popup (lebih gelap)
+            sel_bg = "#4B5563"         # Latar seleksi
+            sel_text = "#F9FAFB"       # Teks seleksi
+            self.chevron_color = QColor("#9CA3AF") # Chevron abu-abu terang
+        else:
+            # --- Warna Light Mode (dari kode asli Anda) ---
+            bg_color = "white"
+            border_color = "#D1D5DB"
+            text_color = "#111827"
+            popup_bg = "white"
+            sel_bg = "#FEF3C7"
+            sel_text = "#111827"
+            self.chevron_color = QColor("#6B7280") # Chevron abu-abu
+    
+        # Terapkan stylesheet dinamis
+        self.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+                padding: 4px 8px;
+                padding-right: 28px; 
+                font-size: 13px;
+                color: {text_color};
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+            }}
+            QComboBox::drop-down {{
+                width: 0px;
+                border: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {popup_bg};
+                border: 1px solid {border_color};
+                selection-background-color: {sel_bg};
+                selection-color: {sel_text};
+            }}
+        """)
+        
+        # Minta widget untuk menggambar ulang (penting untuk chevron)
+        self.update()
+
+    def showPopup(self):
+        # 1. Dapatkan view
+        view = self.view()
+        if not view:
+            # Fallback jika view tidak ada
+            super().showPopup()
+            self._popup_open = True
+            self._animate_arrow(True)
+            self.update()
+            return
+
+        # 2. Lakukan perhitungan lebar SEBELUM memanggil super().showPopup()
+        try:
+            fm = view.fontMetrics()
+            max_text_width = max(
+                (fm.horizontalAdvance(self.itemText(i)) for i in range(self.count())),
+                default=0
+            )
+            # Padding untuk memberi ruang (termasuk scrollbar jika ada)
+            padding = 56 
+            popup_width = max(self.width(), min(max_text_width + padding, self._max_popup_width))
+            
+            # Terapkan pengaturan lebar ke view
+            view.setMinimumWidth(int(popup_width))
+            view.setTextElideMode(Qt.TextElideMode.ElideNone) 
+
+        except Exception as e:
+            print(f"[showPopup width calc Error] {e}")
+            # Jika gagal kalkulasi, setidaknya samakan lebarnya.
+            view.setMinimumWidth(self.width())
+
+        # 3. SEKARANG baru panggil super().showPopup()
+        # Ini akan menampilkan popup yang sudah di-resize dan 100% responsif
+        super().showPopup() 
+
+        # --- PERBAIKAN POSISI DIMULAI DI SINI ---
+        # 4. Pindahkan popup ke bawah widget
+        try:
+            # Dapatkan posisi global dari pojok kiri Bawah combobox
+            bottom_left = QPoint(0, self.height())
+            global_pos = self.mapToGlobal(bottom_left)
+            
+            # Pindahkan window dari view (yaitu popup-nya)
+            # ke posisi yang sudah kita hitung
+            view.window().move(global_pos)
+            
+        except Exception as e:
+            print(f"[showPopup move Error] {e}")
+        # --- AKHIR PERBAIKAN POSISI ---
+
+        # 5. Atur animasi dan status
+        self._popup_open = True
+        self._animate_arrow(True)
+        self.update()
+
+
+    def hidePopup(self):
+        try:
+            super().hidePopup()
+        finally:
+            self._popup_open = False
+            self._animate_arrow(False)
+            self.update()
+
+    def _animate_arrow(self, opening: bool):
+        start = self._arrow_angle
+        end = 180.0 if opening else 0.0
+        if self._arrow_anim and self._arrow_anim.state() == QAbstractAnimation.State.Running:
+            self._arrow_anim.stop()
+            
+        self._arrow_anim = QVariantAnimation(self)
+        self._arrow_anim.setStartValue(start)
+        self._arrow_anim.setEndValue(end)
+        self._arrow_anim.setDuration(160) # Durasi animasi (ms)
+        self._arrow_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._arrow_anim.valueChanged.connect(self._on_arrow_anim_value)
+        self._arrow_anim.start()
+
+    def _on_arrow_anim_value(self, val):
+        try:
+            self._arrow_angle = float(val)
+            self.update() # Minta widget untuk menggambar ulang
+        except Exception as e:
+            print(f"Animation error: {e}") # Debug error
+
+    def wheelEvent(self, event):
+        if not self.view().isVisible():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event):
+        if not self.view().isVisible():
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space, Qt.Key.Key_Down):
+                self.showPopup()
+                event.accept() 
+                return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        rect = self.rect()
+        arrow_size = 5
+        center_x = rect.width() - 14 
+        center_y = rect.height() // 2 
+        
+        # --- PERUBAHAN DI SINI ---
+        # Menggunakan warna chevron dari properti 'self.chevron_color'
+        pen = QPen(self.chevron_color, 1.6) 
+        # --- AKHIR PERUBAHAN ---
+        
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap) 
+        painter.setPen(pen)
+
+        painter.save() 
+        painter.translate(center_x, center_y)
+        painter.rotate(self._arrow_angle)
+        
+        half = arrow_size
+        painter.drawLine(int(-half), int(-half/2), 0, int(half/2))
+        painter.drawLine(0, int(half/2), int(half), int(-half/2))
+        
+        painter.restore() 
+        painter.end()
+
+
+# --- FloatingLabelComboBox (Butuh sedikit modifikasi) ---
+class FloatingLabelComboBox(QWidget):
+    def __init__(self, label_text, options, current_value=None):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.label = QLabel(label_text)
+        self.label_stylesheet_light = """
+            color: #6B7280;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 0;
+            padding: 0;
+        """
+        self.label_stylesheet_dark = """
+            color: #D1D5DB; /* Warna label lebih terang untuk dark mode */
+            font-size: 11px;
+            font-weight: 600;
+            margin: 0;
+            padding: 0;
+        """
+        self.label.setStyleSheet(self.label_stylesheet_light)
+
+        self.combo = CustomComboBox() # Menggunakan CustomComboBox Anda
+        self.combo.addItems(options)
+        if current_value in options:
+            self.combo.setCurrentText(current_value)
+        self.combo.setFixedHeight(36)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.combo)
+
+    def setTheme(self, mode: str):
+        """Meneruskan panggilan setTheme ke CustomComboBox dan label."""
+        self.combo.setTheme(mode)
+        if mode.lower() == 'dark':
+            self.label.setStyleSheet(self.label_stylesheet_dark)
+        else:
+            self.label.setStyleSheet(self.label_stylesheet_light)
+
+
+class DetailInformasiPemilihDialog(QDialog):
+    """Dialog detail pemilih dari data tabel"""
+    def __init__(self, data_dict=None, main_window_ref=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Detail Pemilih")
+        self.setMinimumSize(950, 600)
+        self._data = data_dict or {}
+        self.main_window = main_window_ref
+        self.selected_file = ""
+        self.init_ui()
+
+    def get_value(self, *keys, default=""):
+        """Mengambil nilai dari dictionary dengan berbagai variasi key"""
+        for k in keys:
+            if k in self._data:
+                val = self._data[k]
+                return "" if val is None else str(val)
+            if k.upper() in self._data:
+                val = self._data[k.upper()]
+                return "" if val is None else str(val)
+            if k.lower() in self._data:
+                val = self._data[k.lower()]
+                return "" if val is None else str(val)
+        return default
+
+    def init_ui(self):
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(24, 24, 24, 24)
+
+        # === TOP SECTION ===
+        top_grid = QGridLayout()
+        top_grid.setContentsMargins(0, 0, 0, 0)
+        top_grid.setHorizontalSpacing(16)
+        top_grid.setVerticalSpacing(0)
+
+        self.dpid_widget = FloatingLabelLineEdit("DPID", self.get_value("DPID"), bg_yellow=True, read_only=True)
+        self.kec_widget = FloatingLabelLineEdit("KECAMATAN", self.get_value("KECAMATAN"), bg_yellow=True, read_only=True)
+        self.kel_widget = FloatingLabelLineEdit("KELURAHAN / DESA", self.get_value("DESA", "KELURAHAN"), bg_yellow=True, read_only=True)
+        self.tps_widget = FloatingLabelLineEdit("TPS", self.get_value("TPS"), bg_yellow=True, read_only=True)
+
+        top_grid.addWidget(self.dpid_widget, 0, 0)
+        top_grid.addWidget(self.kec_widget, 0, 1)
+        top_grid.addWidget(self.kel_widget, 0, 2)
+        top_grid.addWidget(self.tps_widget, 0, 3)
+        for i in range(4):
+            top_grid.setColumnStretch(i, 1)
+
+        main_layout.addLayout(top_grid)
+        main_layout.addSpacing(8)
+
+        # === CONTENT ===
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(24)
+
+        # --- LEFT COLUMN ---
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(12)
+
+        self.nkk_widget = FloatingLabelLineEdit("Nomor Kartu Keluarga (NKK)", self.get_value("NKK"))
+        self.nik_widget = FloatingLabelLineEdit("Nomor Induk Kependudukan (NIK)", self.get_value("NIK"))
+        self.nama_widget = FloatingLabelLineEdit("Nama Lengkap", self.get_value("NAMA"))
+
+        # Tempat & Tanggal Lahir
+        lahir_layout = QHBoxLayout()
+        lahir_layout.setSpacing(12)
+        self.tempat_widget = FloatingLabelLineEdit("Tempat Lahir", self.get_value("TMPT_LHR", "TEMPAT LAHIR"))
+        self.tanggal_widget = FloatingLabelLineEdit("Tanggal Lahir", self.get_value("TGL_LHR", "TANGGAL LAHIR"))
+        lahir_layout.addWidget(self.tempat_widget)
+        lahir_layout.addWidget(self.tanggal_widget)
+
+        # Jenis Kelamin & Status Kawin
+        jk_layout = QHBoxLayout()
+        jk_layout.setSpacing(12)
+        self.jk_widget = FloatingLabelComboBox("Jenis Kelamin (L/P)", ["L", "P"], self.get_value("JK"))
+        self.kawin_widget = FloatingLabelComboBox("Status Kawin (B/S/P)", ["B", "S", "P"], self.get_value("STS"))
+        jk_layout.addWidget(self.jk_widget)
+        jk_layout.addWidget(self.kawin_widget)
+
+        # ALAMAT, RT, RW
+        alamat_layout = QHBoxLayout()
+        alamat_layout.setSpacing(12)
+        self.alamat_widget = FloatingLabelLineEdit("ALAMAT", self.get_value("ALAMAT"))
+        self.rt_widget = FloatingLabelLineEdit("RT", self.get_value("RT"))
+        self.rw_widget = FloatingLabelLineEdit("RW", self.get_value("RW"))
+        self.rt_widget.setMaximumWidth(100)
+        self.rw_widget.setMaximumWidth(100)
+        alamat_layout.addWidget(self.alamat_widget, 3)
+        alamat_layout.addWidget(self.rt_widget, 1)
+        alamat_layout.addWidget(self.rw_widget, 1)
+
+        left_layout.addWidget(self.nkk_widget)
+        left_layout.addWidget(self.nik_widget)
+        left_layout.addWidget(self.nama_widget)
+        left_layout.addLayout(lahir_layout)
+        left_layout.addLayout(jk_layout)
+        left_layout.addLayout(alamat_layout)
+        left_layout.addStretch()
+
+        # --- RIGHT COLUMN ---
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(12)
+
+        # === Keterangan, Disabilitas, dan Status KTP-El ===
+        self.ubah_widget = FloatingLabelComboBox(
+            "Keterangan Ubah (0-8 atau U)",
+            ["0", "1", "2", "3", "4", "5", "6", "7", "8", "U"],
+            self.get_value("KET", "0")
+        )
+
+        dis_layout = QHBoxLayout()
+        dis_layout.setSpacing(12)
+        self.dis_widget = FloatingLabelComboBox(
+            "Disabilitas (0-6)",
+            ["0", "1", "2", "3", "4", "5", "6"],
+            self.get_value("DIS", "0")
+        )
+        self.ktp_widget = FloatingLabelComboBox(
+            "Status KTP-El (B/S)",
+            ["B", "S"],
+            self.get_value("KTPel", "B")
+        )
+        dis_layout.addWidget(self.dis_widget)
+        dis_layout.addWidget(self.ktp_widget)
+
+        # Sumber Data (editable)
+        self.sumber_widget = FloatingLabelComboBox("Sumber Data", [], self.get_value("SUMBER"))
+        self.sumber_widget.combo.setEditable(True)
+
+        # Dokumen Pendukung
+        dok_label = QLabel("DOKUMEN PENDUKUNG")
+        dok_label.setStyleSheet("""
+            color: #6B7280; 
+            font-size: 11px; 
+            font-weight: 600; 
+            margin-top: 8px;
+        """)
+        upload_layout = QHBoxLayout()
+        upload_layout.setSpacing(12)
+        self.btn_upload = QPushButton("Upload")
+        self.btn_upload.setFixedSize(100, 36)
+        self.btn_upload.setStyleSheet("""
+            QPushButton {
+                background-color: #EAB308;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #CA8A04; }
+        """)
+        self.btn_upload.clicked.connect(self.upload_file)
+        self.lbl_file = QLabel("-")
+        self.lbl_file.setStyleSheet("color: #6B7280; font-size: 13px; font-style: italic;")
+        upload_layout.addWidget(self.btn_upload)
+        upload_layout.addWidget(self.lbl_file)
+        upload_layout.addStretch()
+
+        right_layout.addWidget(self.ubah_widget)
+        right_layout.addLayout(dis_layout)
+        right_layout.addWidget(self.sumber_widget)
+        right_layout.addWidget(dok_label)
+        right_layout.addLayout(upload_layout)
+        right_layout.addStretch()
+
+        content_layout.addLayout(left_layout)
+        content_layout.addLayout(right_layout)
+        main_layout.addLayout(content_layout)
+
+        # === FOOTER BUTTONS ===
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        self.btn_sunting = QPushButton("Sunting")
+        self.btn_sunting.setFixedSize(120, 40)
+        self.btn_sunting.setStyleSheet("""
+            QPushButton {
+                background-color: #EAB308;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #CA8A04; }
+        """)
+        self.btn_sunting.clicked.connect(self.toggle_edit_mode)
+
+        self.btn_tutup = QPushButton("Tutup")
+        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #DC2626;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #B91C1C; }
+        """)
+        self.btn_tutup.clicked.connect(self.close)
+
+        button_layout.addWidget(self.btn_sunting)
+        button_layout.addWidget(self.btn_tutup)
+        main_layout.addLayout(button_layout)
+        self.setLayout(main_layout)
+        self.setStyleSheet("QDialog { background-color: #F9FAFB; }")
+
+        # Isi dropdown dan field langsung editable
+        self._populate_dropdowns()
+
+
+    def _get_display_value(self, code, mapping):
+        """Konversi kode ke display value untuk ComboBox (Versi Perbaikan)"""
+
+        # 1. Standarisasi input
+        # Jika code None, jadikan string kosong
+        code_str = str(code).strip() if code is not None else ""
+
+        # 2. Cari kode di dalam nilai-nilai mapping
+        for display, value in mapping.items():
+            if value == code_str:
+                # Ditemukan! Kembalikan display text-nya
+                # Ini akan menangani:
+                # - "1" -> "1 (Meninggal)"
+                # - "0" -> "0 (Normal)" (untuk disabilitas)
+                # - ""  -> "Keterangan" (atau "Disabilitas")
+                return display
+
+        # 3. Jika tidak ditemukan (misal kode "99" atau "Z" yg tidak ada di map)
+        # Kembalikan placeholder (item pertama)
+        return list(mapping.keys())[0]
+
+    def _get_code_from_display(self, display, mapping):
+        """Konversi display value ke kode"""
+        return mapping.get(display, "")
+
+    def _populate_dropdowns(self):
+        """Mengisi dropdown dari database atau sumber data lain"""
+        if not self.main_window:
+            print("[DetailDialog] Referensi MainWindow tidak ditemukan. Dropdown tidak diisi.")
+            self.sumber_widget.combo.addItems(["Sumber Data"])
+            return
+
+        # 1. Mengisi SUMBER
+        try:
+            current_sumber = self.get_value("SUMBER", "")
+            sumber_list = self.main_window.get_distinct_sumber()
+            
+            self.sumber_widget.combo.clear()
+            
+            # --- PERUBAHAN (OPSIONAL TAPI DISARANKAN) ---
+            
+            # Asumsikan item pertama ("Sumber Data") adalah placeholder
+            placeholder_text = "Pilih atau ketik Sumber Data..."
+            if sumber_list:
+                placeholder_text = sumber_list.pop(0) # Ambil dan hapus placeholder dari list
+                
+            self.sumber_widget.combo.addItems(sumber_list) # Tambahkan sisanya
+            self.sumber_widget.combo.setPlaceholderText(placeholder_text) # Gunakan sebagai placeholder
+            
+            # --- BATAS PERUBAHAN ---
+            
+            # Kode untuk set nilai saat ini tetap sama
+            if current_sumber in sumber_list:
+                self.sumber_widget.combo.setCurrentText(current_sumber)
+            elif current_sumber: 
+                # Jika nilainya custom (hasil input), tetap tampilkan
+                self.sumber_widget.combo.setCurrentText(current_sumber)
+            else:
+                # Jika kosong, biarkan placeholder yang bekerja
+                self.sumber_widget.combo.setCurrentIndex(-1) 
+
+        except Exception as e:
+            print(f"[DetailDialog._populate_dropdowns SUMBER Error] {e}")
+            self.sumber_widget.combo.clear()
+            self.sumber_widget.combo.setPlaceholderText("Sumber Data")
+
+    def _validate_data(self, data):
+        """Validasi data sebelum simpan"""
+        errors = []
+        
+        # Validasi NIK (16 digit)
+        if data["NIK"] and len(data["NIK"]) != 16:
+            errors.append("NIK harus 16 digit")
+        
+        # Validasi NKK (16 digit)
+        if data["NKK"] and len(data["NKK"]) != 16:
+            errors.append("NKK harus 16 digit")
+        
+        # Validasi nama tidak kosong
+        if not data["NAMA"].strip():
+            errors.append("Nama tidak boleh kosong")
+        
+        # Validasi jenis kelamin
+        if data["JK"] not in ["L", "P"]:
+            errors.append("Jenis Kelamin harus L atau P")
+        
+        return errors
+
+    def toggle_edit_mode(self):
+        """Simpan perubahan data ke database (langsung tanpa toggle mode)"""
+        print("[DEBUG] Tombol Sunting diklik - menyimpan data")
+
+        try:
+            # === Ambil data dari form ===
+            ket_value = self.ubah_widget.combo.currentText().strip()
+            dis_value = self.dis_widget.combo.currentText().strip()
+            ktp_value = self.ktp_widget.combo.currentText().strip()
+
+            print(f"[DEBUG] KET value: {ket_value}")
+            print(f"[DEBUG] DIS value: {dis_value}")
+            print(f"[DEBUG] KTP value: {ktp_value}")
+
+            # === Bersihkan / beri default untuk nilai kosong ===
+            if ket_value == "" or ket_value == "Keterangan Ubah (0-8 atau U)":
+                ket_value = "0"
+
+            if dis_value == "" or dis_value == "Disabilitas (0-6)":
+                dis_value = "0"
+
+            if ktp_value == "" or ktp_value == "Status KTP-El (B/S)":
+                ktp_value = ""
+
+            # --- Ambil timestamp sekarang ---
+            current_timestamp = datetime.now().strftime('%d/%m/%Y')
+
+            # === Susun data untuk disimpan ===
+            updated_data = {
+                "NKK": self.nkk_widget.line_edit.text().strip(),
+                "NIK": self.nik_widget.line_edit.text().strip(),
+                "NAMA": self.nama_widget.line_edit.text().strip(),
+                "TMPT_LHR": self.tempat_widget.line_edit.text().strip(),
+                "TGL_LHR": self.tanggal_widget.line_edit.text().strip(),
+                "JK": self.jk_widget.combo.currentText().strip(),
+                "STS": self.kawin_widget.combo.currentText().strip(),
+                "ALAMAT": self.alamat_widget.line_edit.text().strip(),
+                "RT": self.rt_widget.line_edit.text().strip(),
+                "RW": self.rw_widget.line_edit.text().strip(),
+                "KET": ket_value,
+                "DIS": dis_value,
+                "KTPel": ktp_value,
+                "SUMBER": self.sumber_widget.combo.currentText().strip(),
+                "TPS": self.tps_widget.line_edit.text().strip(),
+                # "K1": self.k1_widget.line_edit.text().strip() or "0",
+                # "K2": self.k2_widget.line_edit.text().strip() or "0",
+                # "K3": self.k3_widget.line_edit.text().strip() or "0",
+                "LastUpdate": current_timestamp
+            }
+
+            # === Validasi data ===
+            validation_errors = self._validate_data(updated_data)
+            print(f"[DEBUG] Validation errors: {validation_errors}")
+
+            if validation_errors:
+                QMessageBox.warning(
+                    self,
+                    "Validasi Gagal",
+                    "Data tidak valid:\n" + "\n".join(validation_errors)
+                )
+                return
+
+            print("[DEBUG] Validasi berhasil, akan simpan ke database...")
+
+            # === Simpan ke database ===
+            if self._save_to_database(updated_data):
+                # Update data internal di memori
+                self._data.update(updated_data)
+
+                QMessageBox.information(
+                    self,
+                    "Berhasil",
+                    "Data berhasil disimpan ke database!"
+                )
+
+                # Refresh tabel di MainWindow jika ada
+                print("[DEBUG] Update data di memori (tanpa refresh database)")
+                self._update_main_window_data(updated_data)
+
+        except Exception as e:
+            print(f"[ERROR] Error di toggle_edit_mode: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Terjadi kesalahan:\n{str(e)}"
+            )
+
+    def _save_to_database(self, updated_data):
+        """Simpan data ke database menggunakan db_manager"""
+        print("[DEBUG] Masuk ke _save_to_database")
+        print(f"[DEBUG] Updated data: {updated_data}")
+        
+        try:
+            # Gunakan koneksi dari db_manager
+            conn = get_connection()
+            print("[DEBUG] Koneksi database berhasil")
+            
+            if conn is None:
+                raise Exception("Koneksi database tidak tersedia")
+
+            cursor = conn.cursor()
+
+            # Ambil nama tabel aktif
+            if hasattr(self.main_window, '_active_table'):
+                table_name = self.main_window._active_table()
+            else:
+                table_name = "pemilih"  # Default fallback
+
+            print(f"[DEBUG] Table name: {table_name}")
+
+            # Ambil DPID sebagai identifier
+            dpid = self.get_value("DPID")
+            if not dpid:
+                raise Exception("DPID tidak ditemukan")
+
+            print(f"[DEBUG] DPID: {dpid}")
+
+            # Buat query UPDATE
+            set_clauses = []
+            values = []
+            
+            for key, value in updated_data.items():
+                set_clauses.append(f"{key} = ?")
+                values.append(value)
+            
+            values.append(dpid)  # WHERE clause
+            
+            query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE DPID = ?"
+            
+            print(f"[DEBUG] Executing query: {query}")
+            print(f"[DEBUG] Values: {values}")
+            
+            cursor.execute(query, values)
+            # TAMBAHKAN INI - Cek rowcount sebelum dan sesudah commit
+            rows_affected = cursor.rowcount
+            print(f"[DEBUG] Rows affected: {rows_affected}")
+
+            # PENTING: Ternyata perlu commit manual!
+            conn.commit()
+            print(f"[DEBUG] Database di-commit")
+
+            if rows_affected == 0:
+                print(f"[WARNING] Tidak ada baris yang diupdate! DPID mungkin tidak ditemukan")
+                QMessageBox.warning(self, "Peringatan", f"Data dengan DPID {dpid} tidak ditemukan di database")
+                return False
+            
+            return True
+
+        except Exception as e:
+            print(f"[DetailDialog] Error saat menyimpan: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Tangani error database locked
+            error_msg = str(e).lower()
+            if "locked" in error_msg or "busy" in error_msg:
+                QMessageBox.warning(
+                    self,
+                    "Database Sibuk",
+                    "Database sedang digunakan oleh proses lain.\nCoba lagi dalam beberapa saat."
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Database Error",
+                    f"Gagal menyimpan ke database:\n{str(e)}"
+                )
+            return False
+
+    def upload_file(self):
+        """Upload dokumen pendukung"""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Pilih Dokumen Pendukung", "", "All Files (*.*)"
+        )
+        if file_name:
+            self.selected_file = file_name
+            self.lbl_file.setText(os.path.basename(file_name))
+            print(f"[DetailDialog] File selected: {file_name}")
+    
+    def _update_main_window_data(self, updated_data):
+        """Update data di MainWindow tanpa reload database (update langsung di memori)"""
+        try:
+            if not self.main_window:
+                print("[WARNING] main_window reference tidak ada")
+                return
+            
+            if not hasattr(self.main_window, 'all_data'):
+                print("[WARNING] main_window tidak punya all_data")
+                return
+            
+            dpid = self.get_value("DPID")
+            if not dpid:
+                print("[WARNING] DPID tidak ditemukan")
+                return
+            
+            # Cari data di all_data berdasarkan DPID dan update
+            updated = False
+            for i, row_data in enumerate(self.main_window.all_data):
+                if row_data.get("DPID") == dpid:
+                    # Update data di memori
+                    self.main_window.all_data[i].update(updated_data)
+                    print(f"[DEBUG] Data index {i} berhasil diupdate di memori")
+                    updated = True
+                    break
+            
+            if not updated:
+                print(f"[WARNING] Data dengan DPID {dpid} tidak ditemukan di all_data")
+                return
+            
+            # Update tampilan tabel yang sedang aktif tanpa reload
+            if hasattr(self.main_window, 'table') and hasattr(self.main_window, 'show_page'):
+                # Simpan posisi scroll dan halaman saat ini
+                current_page = getattr(self.main_window, 'current_page', 1)
+                
+                # Cari baris di tabel yang sedang ditampilkan
+                for row in range(self.main_window.table.rowCount()):
+                    # Cek kolom DPID (biasanya kolom ke-3 atau sesuaikan dengan tabel Anda)
+                    dpid_item = None
+                    for col in range(self.main_window.table.columnCount()):
+                        header = self.main_window.table.horizontalHeaderItem(col)
+                        if header and header.text() == "DPID":
+                            dpid_item = self.main_window.table.item(row, col)
+                            break
+                    
+                    if dpid_item and dpid_item.text() == dpid:
+                        # Update sel-sel yang berubah di baris ini
+                        for col in range(self.main_window.table.columnCount()):
+                            header = self.main_window.table.horizontalHeaderItem(col)
+                            if header:
+                                col_name = header.text()
+                                if col_name in updated_data:
+                                    # Update nilai di tabel
+                                    item = self.main_window.table.item(row, col)
+                                    if not item:
+                                        item = QTableWidgetItem()
+                                        self.main_window.table.setItem(row, col, item)
+                                    
+                                    new_value = str(updated_data[col_name])
+                                    item.setText(new_value)
+                                    
+                                    # Beri highlight sementara untuk menunjukkan perubahan
+                                    item.setBackground(QColor("#FFEB3B"))  # Kuning
+                                    
+                                    print(f"[DEBUG] Update cell [{row},{col}] {col_name} = {new_value}")
+                        
+                        # Hilangkan highlight setelah 2 detik
+                        def remove_highlight():
+                            try:
+                                for col in range(self.main_window.table.columnCount()):
+                                    item = self.main_window.table.item(row, col)
+                                    if item:
+                                        item.setBackground(QColor("#FFFFFF"))  # Putih
+                            except:
+                                pass
+                        
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(2000, remove_highlight)
+                        
+                        print(f"[DEBUG] Baris {row} berhasil diupdate di tabel")
+                        break
+                
+                print("[DEBUG] Update selesai tanpa reload database")
+            
+        except Exception as e:
+            print(f"[ERROR] Gagal update data di memori: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 # ==========================================================
 # UI: Login Window (fullscreen, putih lembut, hover oranye)
@@ -4905,6 +5772,7 @@ class MainWindow(QMainWindow):
         self.menuBar().installEventFilter(self)
         for tb in self.findChildren(QToolBar):
             tb.installEventFilter(self)
+        self.table.itemDoubleClicked.connect(self.on_row_double_clicked)
         pal = self.table.palette()
         pal.setColor(QPalette.ColorRole.Highlight, QColor("transparent"))     # hilangkan warna biru saat seleksi
         pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))   # teks tetap hitam
@@ -5248,6 +6116,31 @@ class MainWindow(QMainWindow):
         self.filter_sidebar.rb_reguler.hide()
         self.filter_sidebar.rb_khusus.hide()
         self.filter_sidebar.rb_reguler_khusus.hide()
+    
+    # double click row
+    def on_row_double_clicked(self, item):
+        """Handler double-click: tampilkan dialog detail pemilih."""
+        try:
+            row = item.row()
+            cols = [self.table.horizontalHeaderItem(i).text() 
+                    for i in range(self.table.columnCount())]
+
+            data_dict = {}
+            for c in range(self.table.columnCount()):
+                it = self.table.item(row, c)
+                col_name = cols[c].strip().upper()
+                col_value = it.text().strip() if it else ""
+                data_dict[col_name] = col_value
+
+            dialog = DetailInformasiPemilihDialog(
+                data_dict=data_dict, 
+                main_window_ref=self, 
+                parent=self
+            )
+            dialog.exec()
+        except Exception as e:
+            print(f"[on_row_double_clicked] {e}")
+
     
     def apply_filters(self):
         """Apply filters from the filter sidebar"""
@@ -9412,6 +10305,44 @@ class MainWindow(QMainWindow):
                     pass
 
         return sumber_list
+
+    def get_distinct_tps(self):
+        """Mengambil daftar DISTINCT TPS dari tabel aktif (SQLCipher)."""
+        from db_manager import get_connection
+        tps_list = ["TPS"]  # Placeholder/label pertama
+
+        try:
+            conn = get_connection()
+            if conn is None:
+                print("[get_distinct_tps] Koneksi belum siap.")
+                return tps_list
+
+            cur = conn.cursor()
+            tbl = self._active_table()
+            
+            # Query diubah untuk TPS. Diasumsikan TPS adalah numerik.
+            cur.execute(f"""
+                SELECT DISTINCT TPS
+                FROM {tbl}
+                WHERE TPS IS NOT NULL AND TRIM(CAST(TPS AS TEXT)) != ''
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
+            rows = cur.fetchall()
+            
+            # Tambahkan ke list sebagai string
+            tps_list += [str(r[0]) for r in rows if r[0] is not None]
+
+        except Exception as e:
+            print(f"[MainWindow.get_distinct_tps Error] {e}")
+
+        finally:
+            if 'conn' in locals():
+                try:
+                    conn.commit()
+                except:
+                    pass
+
+        return tps_list
     
 
     def create_filter_sidebar(self):
