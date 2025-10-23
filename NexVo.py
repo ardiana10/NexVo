@@ -11822,7 +11822,7 @@ class BeritaAcara(QMainWindow):
         self.btn_hapus.clicked.connect(self.konfirmasi_hapus_masukan)
 
         self.btn_tutup = QPushButton("Tutup", self)
-        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setFixedSize(100, 35)
         self.btn_tutup.setStyleSheet("""
             QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
             QPushButton:hover{background:#666;}
@@ -13759,7 +13759,7 @@ class LampAdpp(QMainWindow):
         bottom.setContentsMargins(0, 10, 0, 0)
 
         self.btn_tutup = QPushButton("Tutup", self)
-        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setFixedSize(100, 35)
         self.btn_tutup.setStyleSheet("""
             QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
             QPushButton:hover{background:#666;}
@@ -15306,7 +15306,7 @@ class LampArpp(QMainWindow):
         bottom.setContentsMargins(0, 10, 0, 0)
 
         self.btn_tutup = QPushButton("Tutup", self)
-        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setFixedSize(100, 35)
         self.btn_tutup.setStyleSheet("""
             QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
             QPushButton:hover{background:#666;}
@@ -16004,9 +16004,8 @@ class LampRekapPps(QMainWindow):
         # ====================== TOMBOL TUTUP ======================
         bottom = QHBoxLayout()
         bottom.setContentsMargins(0, 10, 0, 0)
-        bottom.addStretch()  # ini penting biar tombol ke kanan
         self.btn_tutup = QPushButton("Tutup", self)
-        self.btn_tutup.setFixedSize(120, 40)
+        self.btn_tutup.setFixedSize(100, 35)
         self.btn_tutup.setStyleSheet("""
             QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
             QPushButton:hover{background:#666;}
