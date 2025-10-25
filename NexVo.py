@@ -48,8 +48,8 @@ from PyQt6.QtCore import (
 )
 
 from PyQt6.QtGui import (
-    QIcon, QFont, QColor, QPixmap, QPainter, QAction,
-    QPalette, QBrush, QPen, QRegularExpressionValidator,
+    QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence,
+    QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication,
     QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout
 )
 
@@ -16763,6 +16763,10 @@ class LapCoklit(QMainWindow):
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
 
+        # === Ambil daftar TPS ===
+        self.tps_list = self.parent_window.get_distinct_tps()
+        self.current_tps_index = 0
+
         self.setWindowTitle(f"Laporan Hasil Coklit Desa {self.desa.title()}")
         self.setStyleSheet("background-color:#ffffff;")
 
@@ -16852,7 +16856,7 @@ class LapCoklit(QMainWindow):
             }
             QPushButton:hover { background:#d94f00; }
         """)
-        # self.btn_datapantarlih.clicked.connect(self.isidata_pantarlih)
+        self.btn_datapantarlih.clicked.connect(self.isidata_pantarlih)
 
         # === Tombol Tutup
         self.btn_tutup = QPushButton("Tutup", self)
@@ -16879,6 +16883,7 @@ class LapCoklit(QMainWindow):
         # === Tampilkan
         self.showMaximized()
         QTimer.singleShot(0, self.laporan_coklit)
+        self._safe_show_pdf(None)
 
     # ===========================================================
     # GENERATE PDF
@@ -16893,27 +16898,71 @@ class LapCoklit(QMainWindow):
                 QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # === Ambil daftar TPS ===
-            cur.execute(f"SELECT DISTINCT TPS FROM {tbl} WHERE TPS IS NOT NULL ORDER BY CAST(TPS AS INTEGER)")
+            # ============================================================
+            # 🔹 1️⃣ Pastikan tabel data_pantarlih tersedia dan terisi
+            # ============================================================
+            cur.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='data_pantarlih'
+            """)
+            if not cur.fetchone():
+                self._show_empty_pdf()
+                return
+
+            cur.execute("SELECT COUNT(*) FROM data_pantarlih")
+            count = cur.fetchone()[0] or 0
+            if count == 0:
+                self._show_empty_pdf()
+                return
+
+            # ============================================================
+            # 🔹 2️⃣ Ambil daftar TPS dari tabel aktif
+            # ============================================================
+            cur.execute(f"""
+                SELECT DISTINCT TPS FROM {tbl}
+                WHERE TPS IS NOT NULL AND TRIM(TPS) <> ''
+                ORDER BY CAST(TPS AS INTEGER)
+            """)
             tps_list = [row[0] for row in cur.fetchall()]
             if not tps_list:
                 QMessageBox.warning(self, "Tidak Ada TPS", "Tidak ada data TPS ditemukan di tabel aktif.")
                 return
 
-            merger = PdfMerger()  # untuk menggabungkan semua buffer PDF
+            merger = PdfMerger()
 
-            # === Loop per TPS ===
+            # ============================================================
+            # 🔹 3️⃣ Loop per TPS
+            # ============================================================
             for tps in tps_list:
                 nomor_tps = f"{int(tps):03d}" if str(tps).isdigit() else str(tps)
-                    # === Ambil hasil rekap dari MainWindow ===
+                #print(f"[LapCoklit] 🔄 Membangun PDF TPS {nomor_tps}...")
+
+                # === Ambil hasil rekap dari MainWindow (jika ada) ===
                 data_coklit = getattr(self.parent_window, "_lap_coklit_data_raw", [])
-                # cari baris sesuai TPS saat ini
                 record = next((r for r in data_coklit if str(r.get("TPS")).strip() == str(tps).strip()), None)
                 if not record:
-                    # jika TPS tidak ditemukan di hasil rekap, semua data jadi 0
                     record = {f"data{i}": 0 for i in range(1, 76)}
 
-                # fungsi aman untuk konversi angka ke string format "1.000"
+                # ============================================================
+                # 🔹 Ambil data pantarlih dari tabel data_pantarlih
+                # ============================================================
+                try:
+                    # Normalisasi nilai TPS agar '1', '01', '001' dianggap sama
+                    tps_norm = str(int(tps)) if str(tps).isdigit() else str(tps)
+                    cur.execute("""
+                        SELECT nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan,
+                            stiker1, stiker2, stiker3
+                        FROM data_pantarlih
+                        WHERE TRIM(tps)=? OR TRIM(tps)=?
+                    """, (tps_norm, f"{int(tps):03d}" if str(tps).isdigit() else str(tps)))
+                    pantarlih = cur.fetchone() or ("-", "-", "-", "-", "-", "-", "-")
+                except Exception as e:
+                    print(f"[LapCoklit] ⚠️ Gagal baca data pantarlih untuk TPS {tps}: {e}")
+                    pantarlih = ("-", "-", "-", "-", "-", "-", "-")
+
+                nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, stiker1, stiker2, stiker3 = pantarlih
+
+                # === Fungsi format angka aman ===
                 def fmt_val(key):
                     v = record.get(key)
                     if v is None:
@@ -16924,23 +16973,22 @@ class LapCoklit(QMainWindow):
                     except Exception:
                         return str(v)
 
+                # ============================================================
+                # 🔹 Bangun PDF per TPS (struktur tabel, header, dsb)
+                # ============================================================
                 buf = BytesIO()
-
-                # --- Bangun dokumen per TPS ---
                 doc = SimpleDocTemplate(
                     buf,
                     pagesize=A4,
-                    leftMargin=40,
-                    rightMargin=40,
-                    topMargin=20,
-                    bottomMargin=20,
+                    leftMargin=40, rightMargin=40,
+                    topMargin=20, bottomMargin=20
                 )
-
                 story = []
 
-                # ================= HEADER =================
-                title_style = ParagraphStyle("TitleSmall", fontName=self._font_base, fontSize=10,
-                                            leading=13, alignment=TA_CENTER)
+                title_style = ParagraphStyle(
+                    "TitleSmall", fontName=self._font_base, fontSize=10,
+                    leading=13, alignment=TA_CENTER
+                )
                 tbl_form = Table(
                     [["", "", "", Paragraph("Model A-Laporan Hasil Coklit", title_style)]],
                     colWidths=[4 * cm, 6.7 * cm, 2.5 * cm, 5 * cm],
@@ -16954,14 +17002,13 @@ class LapCoklit(QMainWindow):
                 story.append(tbl_form)
                 story.append(Spacer(1, 4))
 
-                # === Judul dan logo ===
+                # === Logo & Judul ===
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 logo_path = os.path.join(base_dir, "KPU.png")
                 teks_judul = Paragraph(
                     "LAPORAN HASIL COKLIT<br/>PEMILIHAN UMUM<br/>TAHUN 2029",
                     ParagraphStyle("TitleCenter", fontName=self._font_base, fontSize=12, alignment=TA_CENTER, leading=14)
                 )
-
                 if os.path.exists(logo_path):
                     head_tbl = Table(
                         [[RLImage(logo_path, 1.4 * cm, 1.5 * cm), teks_judul, ""]],
@@ -16978,21 +17025,41 @@ class LapCoklit(QMainWindow):
                 story.append(Spacer(1, 16))
 
                 # === Identitas Wilayah ===
-                ident_style = ParagraphStyle("Ident", fontName=self._font_base, fontSize=11, leading=12, alignment=TA_LEFT)
-                dbldt_style = ParagraphStyle("IdentR", fontName=self._font_base, fontSize=11, leading=12, alignment=TA_RIGHT)
+                ident_style = ParagraphStyle(
+                    "Ident", 
+                    fontName=self._font_base, 
+                    fontSize=11, 
+                    leading=10.8,  # lebih lega tapi tetap padat
+                    alignment=TA_LEFT
+                )
+                dbldt_style = ParagraphStyle(
+                    "IdentR", 
+                    fontName=self._font_base, 
+                    fontSize=11, 
+                    leading=10.8, 
+                    alignment=TA_RIGHT
+                )
 
                 ident_tbl = Table([
                     [Paragraph("PROVINSI", ident_style), Paragraph(": JAWA BARAT", ident_style),
                     "", Paragraph("NO TPS", ident_style), Paragraph(":", dbldt_style), Paragraph(nomor_tps, ident_style)],
                     [Paragraph("KABUPATEN", ident_style), Paragraph(": TASIKMALAYA", ident_style),
-                    "", Paragraph("NAMA PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph("nama_pantarlih", ident_style)],
+                    "", Paragraph("NAMA PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph(nama_pantarlih, ident_style)],
                     [Paragraph("KECAMATAN", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style),
-                    "", Paragraph("NIK PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph("nik_pantarlih", ident_style)],
+                    "", Paragraph("NIK PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph(nik_pantarlih, ident_style)],
                     [Paragraph("DESA", ident_style), Paragraph(f": {self.desa.upper()}", ident_style),
-                    "", Paragraph("NO HP", ident_style), Paragraph(":", dbldt_style), Paragraph("hp_pantarlih", ident_style)],
+                    "", Paragraph("NO HP", ident_style), Paragraph(":", dbldt_style), Paragraph(hp_pantarlih, ident_style)],
                 ], colWidths=[2.9 * cm, 4 * cm, 2.5 * cm, 3.9 * cm, 0.5 * cm, 4.7 * cm], hAlign="CENTER")
+
+                ident_tbl.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+                ]))
                 story.append(ident_tbl)
-                story.append(Spacer(1, 6))
+                story.append(Spacer(1, 5))  # beri ruang bawah sedikit tapi tetap rapat
+
 
                 # === Tabel Data ===
                 header_style = ParagraphStyle("Head", fontName=self._font_base, fontSize=11, alignment=TA_CENTER)
@@ -17074,12 +17141,11 @@ class LapCoklit(QMainWindow):
                     ["", "", "", "", "", "", "", ""],  # separator
 
                     [Paragraph("VII", cell_style), Paragraph("Jumlah Stiker Diterima (Model Stiker Coklit)", coklit_style),
-                    "", "", "", "", "", ""],
+                    "", "", "", "", "", str(stiker1)],
                     [Paragraph("VIII", cell_style), Paragraph("Jumlah Stiker Digunakan", coklit_style),
-                    "", "", "", "", "", ""],
+                    "", "", "", "", "", str(stiker2)],
                     [Paragraph("IX", cell_style), Paragraph("Jumlah Stiker Tersisa", coklit_style),
-                    "", "", "", "", "", ""],
-
+                    "", "", "", "", "", str(stiker3)],
                     ["", "", "", "", "", "", "", ""],  # separator
 
                     [Paragraph("X", cell_style), Paragraph("Jumlah KK Hasil Coklit", coklit_style),
@@ -17172,18 +17238,39 @@ class LapCoklit(QMainWindow):
                     "ttd",
                     fontName=self._font_base,
                     fontSize=11,
-                    leading=12,               # lebih rapat antarbaris
+                    leading=14,               # lebih rapat antarbaris
                     alignment=TA_CENTER
                 )
 
+                # Pastikan locale Indonesia aktif
+                try:
+                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")
+                except Exception:
+                    # fallback jika Windows (pakai versi lokal)
+                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia")
+
+                # Ubah format tanggal
+                tgl_str = "-"
+                try:
+                    if tanggal_laporan and "/" in tanggal_laporan:
+                        tgl_obj = datetime.strptime(tanggal_laporan, "%d/%m/%Y")
+                        tgl_str = tgl_obj.strftime("%d %B %Y")  # contoh: 12 Oktober 2025
+                    else:
+                        tgl_str = tanggal_laporan or "-"
+                except Exception:
+                    tgl_str = "-"
+
+                # Buat teks gabungan: Desa + tanggal format panjang
+                lokasi_tanggal = f"{self.desa.capitalize()}, {tgl_str}"
+
                 ttd_tbl = Table([
-                    ["", "", Paragraph(f"{self.desa.capitalize()}", ttd_style)],
+                    ["", "", Paragraph(lokasi_tanggal, ttd_style)],
                     ["", "", Paragraph(f"PANTARLIH", ttd_style)],
-                ], colWidths=[2.9 * cm, 9 * cm, 5 * cm], hAlign="CENTER")
+                ], colWidths=[2.9 * cm, 9 * cm, 10 * cm], hAlign="CENTER")
 
                 # 🔹 Tambahkan style untuk sempitkan tinggi sel
                 ttd_tbl.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("TOPPADDING", (0, 0), (-1, -1), 1),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
                 ]))
@@ -17195,16 +17282,15 @@ class LapCoklit(QMainWindow):
 
                 # Tabel tanda tangan di kanan bawah
                 data_ttd = [
-                    ["", "", Paragraph("(NAMA PANTARLIH)", ttd_style)]
+                    ["", "", Paragraph(nama_pantarlih, ttd_style)]
                 ]
 
                 tabel_ttd = Table(
                     data_ttd,
-                    colWidths=[2.9 * cm, 9 * cm, 5 * cm],
-                    hAlign="CENTER",
+                    colWidths=[2.9 * cm, 9 * cm, 10 * cm], hAlign="CENTER"
                 )
                 tabel_ttd.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                     ("TOPPADDING", (0, 0), (-1, -1), 1),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
                 ]))
@@ -17213,79 +17299,307 @@ class LapCoklit(QMainWindow):
 
                 # === Build PDF ===
                 doc.build(story)
-                merger.append(BytesIO(buf.getvalue()))  # gabungkan hasil PDF ke merger
+                merger.append(BytesIO(buf.getvalue()))
 
-            # === Setelah semua TPS selesai, gabungkan ke satu PDF ===
+            # ============================================================
+            # 🔹 4️⃣ Gabungkan semua PDF & tampilkan
+            # ============================================================
             final_buffer = BytesIO()
             merger.write(final_buffer)
             merger.close()
-
             pdf_bytes = final_buffer.getvalue()
             final_buffer.close()
-
-            # === Tampilkan hasil di viewer ===
-            self._show_pdf_bytes(pdf_bytes)
-
-            QMessageBox.information(
-                self,
-                "Selesai",
-                f"Berhasil membuat dokumen Laporan Coklit untuk {len(tps_list)} TPS."
-            )
+            #print(f"[LapCoklit] ✅ PDF berhasil dibuat untuk {len(tps_list)} TPS.")
+            self._safe_show_pdf(pdf_bytes)
 
         except Exception as e:
+            print(f"[LapCoklit] ❌ Gagal membuat Laporan Coklit: {e}")
             QMessageBox.critical(self, "Error", f"Gagal membuat Laporan Coklit:\n{e}")
+
+
+    @contextmanager
+    def freeze_ui(self):
+        """Bekukan event & tampilan GUI sementara (universal, aman dipanggil dari LapCoklit atau Data_Pantarlih)."""
+        try:
+            self.setUpdatesEnabled(False)
+            # Cegah error jika LapCoklit tidak punya 'table'
+            if hasattr(self, "table") and self.table is not None:
+                self.table.blockSignals(True)
+            yield
+        finally:
+            if hasattr(self, "table") and self.table is not None:
+                self.table.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.repaint()
+
+    # ===========================================================
+    # 🔹 Fungsi bantu: hitung jumlah TPS distinct di tabel aktif
+    # ===========================================================
+    def count_all_tps(self):
+        """
+        Hitung jumlah DISTINCT TPS di tabel aktif (tanpa filter, tanpa syarat perubahan).
+        Aman, super cepat, full SQLCipher native.
+        """
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Pastikan tabel aktif valid
+            tbl = None
+            if hasattr(self.parent_window, "_active_table"):
+                try:
+                    tbl = self.parent_window._active_table()
+                except Exception as e:
+                    print(f"[LapCoklit] ⚠️ Gagal ambil nama tabel aktif: {e}")
+
+            # ✅ Fallback: baca langsung dari nama tahapan di LapCoklit
+            if not tbl:
+                tahap = getattr(self, "tahap", "DPHP").upper()
+                tbl = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap)
+                print(f"[LapCoklit] ⚙️ Gunakan fallback tabel: {tbl}")
+
+            if not tbl:
+                print("[LapCoklit] ⚠️ Tabel aktif tidak ditemukan.")
+                return 0
+
+            # PRAGMA turbo agar ultra cepat (read-only)
+            cur.executescript("""
+                PRAGMA synchronous = OFF;
+                PRAGMA journal_mode = MEMORY;
+                PRAGMA temp_store = MEMORY;
+            """)
+
+            # Ambil distinct TPS
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT TPS)
+                FROM {tbl}
+                WHERE TRIM(TPS) <> '' AND TPS IS NOT NULL
+            """)
+            total = cur.fetchone()[0] or 0
+
+            conn.commit()
+            #print(f"[LapCoklit] ✅ Total TPS terdeteksi: {total} dari tabel {tbl}")
+            return total
+
+        except Exception as e:
+            print(f"[LapCoklit] Error menghitung jumlah TPS: {e}")
+            return 0
+
+    def isidata_pantarlih(self):
+        """Buka jendela isian Data Pantarlih untuk setiap TPS dengan transisi halus (bebas flicker)."""
+        try:
+            # 🧊 Bekukan tampilan sementara agar transisi jendela halus
+            if hasattr(self, "freeze_ui"):
+                ctx = self.freeze_ui()
+            else:
+                from contextlib import nullcontext
+                ctx = nullcontext()
+
+            with ctx:
+                # 🔹 Ambil ulang daftar TPS dari database aktif bila belum ada
+                if not getattr(self, "tps_list", []):
+                    from db_manager import get_connection
+                    conn = get_connection()
+                    cur = conn.cursor()
+                    tbl = getattr(self, "_active_table", lambda: None)()
+                    if tbl:
+                        cur.execute(f"""
+                            SELECT DISTINCT TPS 
+                            FROM {tbl} 
+                            WHERE TRIM(TPS) <> '' 
+                            ORDER BY CAST(TPS AS INTEGER)
+                        """)
+                        self.tps_list = [str(row[0]).strip() for row in cur.fetchall()]
+                    conn.commit()
+
+                # 🔹 Sembunyikan jendela LapCoklit sementara
+                self.hide()
+
+                # 🔹 Buat dan tampilkan jendela Data Pantarlih
+                self.data_pantarlih_window = Data_Pantarlih(self)
+                self.data_pantarlih_window.showMaximized()
+
+                #print("[LapCoklit] ✅ Jendela Data Pantarlih berhasil dibuka.")
+
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Gagal membuka jendela Data Pantarlih:\n{e}"
+            )
+            #print(f"[LapCoklit Error] Gagal membuka Data Pantarlih: {e}")
+
 
     # ===========================================================
     # SHOW PDF
     # ===========================================================
     def _show_pdf_bytes(self, pdf_bytes: bytes):
-        """Tampilkan PDF di QPdfView dengan scroll vertikal (continuous)."""
+        """Tampilkan PDF di QPdfView dengan scroll vertikal (continuous) secara aman & bebas flicker."""
         try:
-            from io import BytesIO
-            from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt
-            from PyQt6.QtPdf import QPdfDocument
-            from PyQt6.QtPdfWidgets import QPdfView
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import A4, landscape
+            # 🧊 Bekukan UI sementara agar tidak flicker saat render ulang
+            if hasattr(self, "freeze_ui"):
+                ctx = self.freeze_ui()
+            else:
+                from contextlib import nullcontext
+                ctx = nullcontext()
 
-            # 🔹 1️⃣ Tangani PDF kosong / rusak
-            if not pdf_bytes or len(pdf_bytes) < 300:
-                buf = BytesIO()
-                c = canvas.Canvas(buf, pagesize=landscape(A4))
-                c.setFont("Helvetica-Bold", 16)
-                c.drawCentredString(
-                    landscape(A4)[0] / 2,
-                    landscape(A4)[1] / 2,
-                    "Tidak Ada Data untuk Ditampilkan"
-                )
-                c.save()
-                pdf_bytes = buf.getvalue()
+            with ctx:
+                # 🔹 1️⃣ Tangani PDF kosong / rusak
+                if not pdf_bytes or len(pdf_bytes) < 300:
+                    from io import BytesIO
+                    from reportlab.pdfgen import canvas
+                    from reportlab.lib.pagesizes import landscape, A4
 
-            # 🔹 2️⃣ Muat dokumen PDF ke buffer
-            self._pdf_buf = QBuffer()
-            self._pdf_buf.setData(QByteArray(pdf_bytes))
-            self._pdf_buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                    buf = BytesIO()
+                    c = canvas.Canvas(buf, pagesize=landscape(A4))
+                    c.setFont("Helvetica-Bold", 16)
+                    c.drawCentredString(
+                        landscape(A4)[0] / 2,
+                        landscape(A4)[1] / 2,
+                        "Tidak Ada Data untuk Ditampilkan"
+                    )
+                    c.save()
+                    pdf_bytes = buf.getvalue()
 
-            self._pdf_doc = QPdfDocument(self)
-            self._pdf_doc.load(self._pdf_buf)
+                # 🔹 2️⃣ Muat dokumen PDF ke buffer
+                self._pdf_buf = QBuffer()
+                self._pdf_buf.setData(QByteArray(pdf_bytes))
+                self._pdf_buf.open(QIODevice.OpenModeFlag.ReadOnly)
 
-            # 🔹 3️⃣ Siapkan viewer tunggal (self.viewer)
-            self.viewer.setDocument(self._pdf_doc)
+                self._pdf_doc = QPdfDocument(self)
+                self._pdf_doc.load(self._pdf_buf)
 
-            # ✅ Continuous scroll (fit-to-width)
-            try:
-                # PyQt6 ≥ 6.7
-                self.viewer.setPageMode(QPdfView.PageMode.SinglePageContinuous)
-            except Exception:
-                # Fallback PyQt6 6.5-6.6
-                self.viewer.setPageMode(QPdfView.PageMode.MultiPage)
+                # 🔹 3️⃣ Siapkan viewer tunggal (self.viewer)
+                self.viewer.setDocument(self._pdf_doc)
 
-            self.viewer.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self.viewer.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self.viewer.show()
+                # ✅ Continuous scroll (fit-to-width)
+                try:
+                    self.viewer.setPageMode(QPdfView.PageMode.SinglePageContinuous)
+                except Exception:
+                    self.viewer.setPageMode(QPdfView.PageMode.MultiPage)
+
+                self.viewer.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self.viewer.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self.viewer.show()
+
+                print("[LapCoklit] ✅ PDF berhasil dimuat dan ditampilkan.")
 
         except Exception as e:
             print(f"[PDF Load Error] {e}")
+
+
+    def _show_empty_pdf(self):
+        """Tampilkan placeholder aman bila belum ada dokumen."""
+        self._safe_show_pdf(None)
+
+    # ===========================================================
+    # 🧰 Helper internal aman untuk load PDF
+    # ===========================================================
+    def _safe_show_pdf(self, pdf_bytes: bytes | None):
+        """
+        Menampilkan PDF ke viewer dengan aman.
+        Jika PDF rusak / kosong / gagal dimuat, tampilkan placeholder aman
+        agar tidak muncul error: qt.pdf.links: failed to load page 0
+        """
+        try:
+            # 🧊 Bekukan tampilan sementara supaya tidak flicker
+            if hasattr(self, "freeze_ui"):
+                ctx = self.freeze_ui()
+            else:
+                # fallback dummy context (jika LapCoklit tidak punya freeze_ui)
+                from contextlib import nullcontext
+                ctx = nullcontext()
+
+            with ctx:
+                # === 1️⃣ Coba muat PDF normal ===
+                if pdf_bytes and isinstance(pdf_bytes, (bytes, bytearray)) and len(pdf_bytes) > 500:
+                    buf = QBuffer()
+                    buf.setData(QByteArray(pdf_bytes))
+                    buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                    doc = QPdfDocument(self)
+                    doc.load(buf)
+                    if doc.pageCount() > 0:
+                        self._pdf_buf = buf
+                        self._pdf_doc = doc
+                        self.viewer.setDocument(self._pdf_doc)
+                        return True
+
+                # === 2️⃣ Fallback jika PDF kosong / rusak ===
+                buf2 = BytesIO()
+                c = canvas.Canvas(buf2, pagesize=A4)
+                c.setFont("Helvetica-Bold", 14)
+                c.drawCentredString(A4[0]/2, A4[1]*0.8, "Belum ada dokumen yang dibuat.")
+                c.setFont("Helvetica", 12)
+                c.drawCentredString(A4[0]/2, A4[1]*0.76, "Harap isi Data Pantarlih terlebih dahulu!")
+                c.save()
+                pdf_placeholder = buf2.getvalue()
+
+                buf = QBuffer()
+                buf.setData(QByteArray(pdf_placeholder))
+                buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                doc = QPdfDocument(self)
+                doc.load(buf)
+                self._pdf_buf = buf
+                self._pdf_doc = doc
+                self.viewer.setDocument(self._pdf_doc)
+
+                # Mode scroll aman
+                try:
+                    self.viewer.setPageMode(QPdfView.PageMode.SinglePageContinuous)
+                except Exception:
+                    self.viewer.setPageMode(QPdfView.PageMode.MultiPage)
+                self.viewer.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self.viewer.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self.viewer.show()
+
+                return False
+
+        except Exception as e:
+            print(f"[SAFE_PDF ERROR] {e}")
+            return False
+
+
+    # ===========================================================
+    # 🔁 Auto refresh setelah kembali dari Data_Pantarlih
+    # ===========================================================
+    def _refresh_after_return(self):
+        """Reload PDF secara aman setelah kembali dari Data_Pantarlih."""
+        try:
+            # 🧊 Bekukan UI agar viewer tidak flicker saat re-render PDF
+            if hasattr(self, "freeze_ui"):
+                ctx = self.freeze_ui()
+            else:
+                from contextlib import nullcontext
+                ctx = nullcontext()
+
+            with ctx:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='data_pantarlih'
+                """)
+                if not cur.fetchone():
+                    # Belum ada tabel, tampilkan placeholder
+                    self._safe_show_pdf(None)
+                    return
+
+                cur.execute("SELECT COUNT(*) FROM data_pantarlih")
+                count = cur.fetchone()[0] or 0
+
+                if count == 0:
+                    # Tabel ada tapi kosong
+                    self._safe_show_pdf(None)
+                else:
+                    # Kalau sudah terisi, rebuild laporan coklit
+                    #print("[LapCoklit] 🔄 Memuat ulang laporan Coklit...")
+                    self.laporan_coklit()
+
+        except Exception as e:
+            print(f"[LapCoklit Refresh Error] {e}")
+            self._safe_show_pdf(None)
+
 
     # ===========================================================
     # SIMPAN PDF
@@ -17412,6 +17726,613 @@ class LapCoklit(QMainWindow):
             self.parent_window.showMaximized()
             self.parent_window.raise_()
             self.parent_window.activateWindow()
+        self.close()
+
+
+class Data_Pantarlih(QMainWindow):
+    """Jendela pengisian data pantarlih per TPS — full SQLCipher native, cepat, dan stabil."""
+    def __init__(self, lapcoklit_window):
+        super().__init__()
+        self.lapcoklit = lapcoklit_window
+        self.setWindowTitle("Data Pantarlih")
+        self.setStyleSheet("background-color: white;")
+
+        # === Ambil identitas dari LapCoklit ===
+        self.desa = self.lapcoklit.desa
+        self.kecamatan = self.lapcoklit.kecamatan
+        self.tahapan = self.lapcoklit.tahap
+        self.tps_list = getattr(self.lapcoklit, "tps_list", [])
+
+        # === Pastikan ikon aplikasi selalu muncul di taskbar ===
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(base_dir, "KPU.png")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+        except Exception:
+            pass
+
+        # =====================================================
+        # 🔹 1️⃣ Koneksi SQLCipher performa maksimal
+        # =====================================================
+        self.conn = get_connection()
+        self.cur = self.conn.cursor()
+        self.cur.executescript("""
+            PRAGMA cipher_memory_security = OFF;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = 500000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA page_size = 4096;
+            PRAGMA synchronous = OFF;
+            PRAGMA journal_mode = MEMORY;
+            PRAGMA locking_mode = EXCLUSIVE;
+        """)
+
+        # =====================================================
+        # 🔹 2️⃣ Pastikan tabel data_pantarlih ada
+        # =====================================================
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS data_pantarlih (
+                tps TEXT PRIMARY KEY,
+                nama_pantarlih TEXT,
+                nik_pantarlih TEXT,
+                hp_pantarlih TEXT,
+                tanggal_laporan TEXT,
+                stiker1 INTEGER,
+                stiker2 INTEGER,
+                stiker3 INTEGER
+            );
+        """)
+        self.cur.execute("PRAGMA optimize;")
+        self.conn.commit()
+
+        # =====================================================
+        # 🔹 3️⃣ Layout utama
+        # =====================================================
+        central = QWidget()
+        self.setCentralWidget(central)
+        self.resize(1400, 800)
+        self.setMinimumSize(1000, 600)
+
+        self.main_layout = QVBoxLayout(central)
+        self.main_layout.setContentsMargins(0, 0, 0, 16)
+        self.main_layout.setSpacing(10)
+
+        # ---------------- HEADER ----------------
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(40, 22, 40, 10)
+        header_layout.setSpacing(16)
+
+        # ---------------- TABEL ----------------
+        self.table = QTableWidget(self)
+        self.table.setColumnCount(9)
+
+        # === Header dua baris pakai \n ===
+        headers = [
+            "No",
+            "Nama TPS",
+            "Nama Pantarlih",
+            "NIK Pantarlih",
+            "Nomor HP\nPantarlih",
+            "Tanggal Laporan",
+            "Jumlah Stiker\nDiterima",
+            "Jumlah Stiker\nDigunakan",
+            "Jumlah Stiker\nTersisa"
+        ]
+        self.table.setHorizontalHeaderLabels(headers)
+
+        # === Properti dasar tabel ===
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
+        self.table.installEventFilter(self)
+
+        # === Style tabel ===
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color:#ff6600;
+                color:white;
+                font-weight:bold;
+                padding:6px;
+                border:none;
+            }
+            QTableWidget {
+                gridline-color:#cccccc;
+                font-size:11pt;
+                selection-background-color:#ffe0cc;
+                selection-color:#000;
+            }
+        """)
+
+        # === Rata tengah header ===
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.horizontalHeader().setFixedHeight(40)  # tinggi header pas untuk dua baris
+
+        # === Lebar kolom ===
+        col_widths = [70, 100, 330, 180, 170, 150, 150, 150, 150]
+        for i, w in enumerate(col_widths):
+            self.table.setColumnWidth(i, w)
+        self.table.horizontalHeader().setStretchLastSection(False)
+
+        # === Center tabel di tengah halaman ===
+        table_container = QWidget()
+        table_layout = QHBoxLayout(table_container)
+        table_layout.setContentsMargins(0, 20, 0, 20)
+        table_layout.setSpacing(0)
+        table_layout.addStretch(1)
+        table_layout.addWidget(self.table)
+        table_layout.addStretch(1)
+
+        # === Tetapkan lebar total tabel agar tetap proporsional ===
+        total_width = sum(col_widths) + 40
+        self.table.setFixedWidth(total_width)
+        self.table.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+        # === Tambahkan ke layout utama ===
+        self.main_layout.addWidget(table_container)
+
+        # =====================================================
+        # 🔹 5️⃣ TOMBOL BAWAH
+        # =====================================================
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 8, 0, 0)
+
+        self.btn_hapus = QPushButton("🗑 Hapus")
+        self.btn_simpan = QPushButton("💾 Simpan")
+        self.btn_tutup = QPushButton("⏹ Tutup")
+
+        for b in (self.btn_hapus, self.btn_simpan, self.btn_tutup):
+            b.setFixedHeight(38)
+            b.setFixedWidth(130)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.btn_simpan.setStyleSheet("""
+            QPushButton {background:#ff6600;color:white;border-radius:9px;font-weight:600;}
+            QPushButton:hover {background:#e35500;}
+        """)
+        self.btn_tutup.setStyleSheet("""
+            QPushButton {background:#444;color:white;border-radius:9px;font-weight:600;}
+            QPushButton:hover {background:#333;}
+        """)
+        self.btn_hapus.setStyleSheet("""
+            QPushButton {background:#b31b1b;color:white;border-radius:9px;font-weight:600;}
+            QPushButton:hover {background:#991515;}
+        """)
+
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(self.btn_hapus)
+        btn_layout.addSpacing(8)
+        btn_layout.addWidget(self.btn_simpan)
+        btn_layout.addSpacing(8)
+        btn_layout.addWidget(self.btn_tutup)
+        btn_layout.addStretch(1)
+        self.main_layout.addLayout(btn_layout)
+
+        # =====================================================
+        # 🔹 6️⃣ Event handler & Load data
+        # =====================================================
+        self.btn_tutup.clicked.connect(self.kembali)
+        self.btn_simpan.clicked.connect(self.simpan_data)
+        self.btn_hapus.clicked.connect(self.hapus_baris_dipilih)
+        self.table.cellChanged.connect(self.hitung_otomatis)
+
+        self.load_tps()
+
+        # =====================================================
+        # 🔹 7️⃣ Tampilkan fullscreen
+        # =====================================================
+        self.showMaximized()
+        self.activateWindow()
+        self.raise_()
+
+    # ===========================================================
+    def _msgbox(self, title, text, icon="info"):
+        """Popup bergaya NexVo."""
+        from PyQt6.QtWidgets import QMessageBox
+        m = QMessageBox(self)
+        m.setWindowTitle(title)
+        m.setText(text)
+        if icon == "warn":
+            m.setIcon(QMessageBox.Icon.Warning)
+        elif icon == "crit":
+            m.setIcon(QMessageBox.Icon.Critical)
+        else:
+            m.setIcon(QMessageBox.Icon.Information)
+        m.setStyleSheet("""
+            QMessageBox {{
+                background:white;
+            }}
+            QLabel {{
+                color:#222; font-size:11pt;
+            }}
+            QPushButton {{
+                background:#ff6600; color:white; border-radius:8px; padding:6px 12px; font-weight:600;
+            }}
+            QPushButton:hover {{ background:#e35500; }}
+        """)
+        return m
+
+    def _confirm(self, title, text):
+        from PyQt6.QtWidgets import QMessageBox
+        m = self._msgbox(title, text, "warn")
+        m.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        m.button(QMessageBox.StandardButton.Yes).setText("Ya")
+        m.button(QMessageBox.StandardButton.No).setText("Tidak")
+        return m.exec() == QMessageBox.StandardButton.Yes
+
+    # ===========================================================
+    def load_tps(self):
+        """Muat daftar TPS dari fungsi count_all_tps() milik LapCoklit + data_pantarlih tersimpan."""
+        try:
+            with self.freeze_ui():
+                # === 1️⃣ Ambil total TPS dari LapCoklit ===
+                total_tps = 0
+                tps_list = []
+
+                if hasattr(self.lapcoklit, "count_all_tps"):
+                    total_tps = self.lapcoklit.count_all_tps()
+
+                if total_tps > 0:
+                    # Buat list TPS 001, 002, dst. sesuai total_tps
+                    tps_list = [f"{i:03d}" for i in range(1, total_tps + 1)]
+                else:
+                    print("[LOAD_TPS] ⚠️ Tidak ditemukan TPS aktif di tabel.")
+                    tps_list = []
+
+                # === 2️⃣ Ambil data pantarlih tersimpan ===
+                self.cur.execute("""
+                    SELECT tps, nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan,
+                        stiker1, stiker2, stiker3
+                    FROM data_pantarlih
+                    ORDER BY CAST(tps AS INTEGER)
+                """)
+                pantarlih_data = {str(row[0]).zfill(3): row[1:] for row in self.cur.fetchall()}
+
+                # === 3️⃣ Isi tabel ===
+                self.table.clearContents()
+                self.table.setRowCount(len(tps_list))
+                self.table.blockSignals(True)
+
+                for i, tps in enumerate(tps_list, start=1):
+                    # Kolom 0: Nomor urut
+                    nomor = QTableWidgetItem(str(i))
+                    nomor.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    nomor.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.table.setItem(i - 1, 0, nomor)
+
+                    # Kolom 1: Nama TPS
+                    nama_tps = f"TPS {tps}"
+                    tps_item = QTableWidgetItem(nama_tps)
+                    tps_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    self.table.setItem(i - 1, 1, tps_item)
+
+                    # Ambil data pantarlih (jika sudah tersimpan)
+                    vals = pantarlih_data.get(tps, ("", "", "", "", "", "", ""))
+
+                    def make_item(txt, align_center=False, readonly=False):
+                        item = QTableWidgetItem(str(txt) if txt is not None else "")
+                        if align_center:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        if readonly:
+                            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        return item
+
+                    self.table.setItem(i - 1, 2, make_item(vals[0]))  # Nama Pantarlih
+                    self.table.setItem(i - 1, 3, make_item(vals[1]))  # NIK
+                    self.table.setItem(i - 1, 4, make_item(vals[2], align_center=True))  # HP
+                    self.table.setItem(i - 1, 5, make_item(vals[3]))  # Tanggal
+                    self.table.setItem(i - 1, 6, make_item(vals[4] or "0", align_center=True))  # Stiker1
+                    self.table.setItem(i - 1, 7, make_item(vals[5] or "0", align_center=True))  # Stiker2
+
+                    # Kolom 8: Hitung otomatis stiker tersisa
+                    s3 = vals[6]
+                    if s3 in ("", None):
+                        try:
+                            s3 = max(int(str(vals[4] or 0)) - int(str(vals[5] or 0)), 0)
+                        except Exception:
+                            s3 = 0
+                    self.table.setItem(i - 1, 8, make_item(s3, align_center=True, readonly=True))
+
+                self.table.blockSignals(False)
+                #print(f"[LOAD_TPS] ✅ Muat {len(tps_list)} TPS dari LapCoklit.")
+
+        except Exception as e:
+            print(f"[LOAD_TPS ERROR] {e}")
+
+
+    def _paste_from_clipboard(self):
+        text = QGuiApplication.clipboard().text()
+        if not text:
+            return
+        rows = [r for r in text.splitlines()]
+        grid = [r.split("\t") for r in rows]
+
+        start_row = self.table.currentRow()
+        start_col = self.table.currentColumn()
+        if start_row < 0 or start_col < 0:
+            return
+
+        # Batas: hanya kolom 2..7 yang editable (nama, nik, hp, tanggal, s1, s2)
+        for r_idx, r_vals in enumerate(grid):
+            for c_idx, cell in enumerate(r_vals):
+                rr = start_row + r_idx
+                cc = start_col + c_idx
+                if rr >= self.table.rowCount():
+                    break
+                if cc < 2 or cc > 7:
+                    continue
+                item = QTableWidgetItem(cell.strip())
+                if cc in (4, 6, 7):  # hp, s1, s2 center
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(rr, cc, item)
+                # trigger hitung otomatis sisa
+                self.hitung_otomatis(rr, 6)
+                self.hitung_otomatis(rr, 7)
+
+    @contextmanager
+    def freeze_ui(self):
+        """Bekukan event & tampilan GUI sementara (seperti EnableEvents=False + ScreenUpdating=False)."""
+        try:
+            self.setUpdatesEnabled(False)
+            self.table.blockSignals(True)
+            yield
+        finally:
+            self.table.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.repaint()
+
+    # ===========================================================
+    def hitung_otomatis(self, row, col):
+        """Hitung stiker tersisa setiap edit kolom 6 atau 7."""
+        try:
+            if col in (6, 7):
+                val1 = int(self.table.item(row, 6).text()) if self.table.item(row, 6) and self.table.item(row, 6).text().strip().isdigit() else 0
+                val2 = int(self.table.item(row, 7).text()) if self.table.item(row, 7) and self.table.item(row, 7).text().strip().isdigit() else 0
+                sisa = max(val1 - val2, 0)
+                from PyQt6.QtWidgets import QTableWidgetItem
+                from PyQt6.QtCore import Qt
+                item = QTableWidgetItem(str(sisa))
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # Read-only
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row, 8, item)
+        except Exception as e:
+            print(f"[Hitung Otomatis Error] Row {row}, Col {col}: {e}")
+
+    # ===========================================================
+    # 🧩 Event Filter untuk Ctrl+C / Ctrl+V (tanpa ganggu navigasi)
+    # ===========================================================
+    def eventFilter(self, obj, event):
+        """Menangani Ctrl+C dan Ctrl+V di QTableWidget dari/ke Excel."""
+        if obj is self.table and event.type() == QEvent.Type.KeyPress:
+            from PyQt6.QtGui import QKeySequence
+
+            # === PASTE dari Excel ===
+            if event.matches(QKeySequence.StandardKey.Paste):
+                text = QGuiApplication.clipboard().text()
+                if not text.strip():
+                    self._msgbox("Paste", "Data clipboard kosong.", "warn").exec()
+                    return True
+
+                rows = [r for r in text.splitlines() if r.strip()]
+                start_row = self.table.currentRow()
+                start_col = self.table.currentColumn()
+                if start_row < 0 or start_col < 0:
+                    start_row, start_col = 0, 2
+
+                self.table.blockSignals(True)
+                try:
+                    for r_idx, row_text in enumerate(rows):
+                        cols = row_text.split('\t')
+                        for c_idx, value in enumerate(cols):
+                            rr = start_row + r_idx
+                            cc = start_col + c_idx
+                            if rr >= self.table.rowCount() or cc < 2 or cc > 7:
+                                continue
+                            item = QTableWidgetItem(value.strip())
+                            if cc in (4, 6, 7):
+                                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                            self.table.setItem(rr, cc, item)
+                            if cc in (6, 7):
+                                self.hitung_otomatis(rr, cc)
+                finally:
+                    self.table.blockSignals(False)
+                return True
+
+            # === COPY ke Excel ===
+            elif event.matches(QKeySequence.StandardKey.Copy):
+                ranges = self.table.selectedRanges()
+                if not ranges:
+                    self._msgbox("Copy", "Pilih sel untuk di-copy.", "warn").exec()
+                    return True
+
+                r0 = ranges[0]
+                lines = []
+                for r in range(r0.topRow(), r0.bottomRow() + 1):
+                    vals = []
+                    for c in range(r0.leftColumn(), r0.rightColumn() + 1):
+                        it = self.table.item(r, c)
+                        vals.append(it.text() if it else "")
+                    lines.append("\t".join(vals))
+                QGuiApplication.clipboard().setText("\n".join(lines))
+                return True
+
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event):
+        """Menangani navigasi dan edit dengan tombol tertentu."""
+
+        # === Mulai edit dengan Enter atau F2 (opsional) ===
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_F2):
+            current_row = self.table.currentRow()
+            current_col = self.table.currentColumn()
+            if current_row >= 0 and 2 <= current_col <= 7:  # Hanya kolom 2-7 editable
+                self.table.editItem(self.table.item(current_row, current_col))
+            return
+
+        # === Navigasi dengan panah ===
+        if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+            super().keyPressEvent(event)  # Biarkan Qt menangani navigasi antar sel
+            return
+
+        # === Copy-Paste ditangani oleh eventFilter, jadi abaikan di sini ===
+        if not event.matches(QKeySequence.StandardKey.Copy) and not event.matches(QKeySequence.StandardKey.Paste):
+            super().keyPressEvent(event)  # Tangani event lain (Tab, dll.)
+
+    # ===========================================================
+    def hapus_baris_dipilih(self):
+        """Hapus semua data dari data_pantarlih dan muat ulang TPS dari tabel aktif."""
+
+        # Konfirmasi hapus semua data
+        if not self._confirm("Konfirmasi", "Hapus semua data Pantarlih dari database?"):
+            return
+
+        # Hapus semua data di DB
+        try:
+            self.cur.execute("DELETE FROM data_pantarlih")
+            self.conn.commit()
+        except Exception as e:
+            self._msgbox("Error", f"Gagal menghapus data dari database:\n{e}", "crit").exec()
+            return
+
+        # Muat ulang daftar TPS dari tabel aktif
+        tps_list = [str(tps).strip() for tps in self.lapcoklit.tps_list]
+
+        # Kosongkan tabel GUI dan isi ulang dengan TPS
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(tps_list))
+        for i, tps in enumerate(tps_list, start=1):
+            # Kolom 0: Nomor urut
+            nomor = QTableWidgetItem(str(i))
+            nomor.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            nomor.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i-1, 0, nomor)
+
+            # Kolom 1: Nama TPS
+            nama_tps = f"TPS {int(tps):03d}" if str(tps).isdigit() else f"TPS {tps}"
+            tps_item = QTableWidgetItem(nama_tps)
+            tps_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(i-1, 1, tps_item)
+
+            # Kolom 2-7: Kosong
+            for col in range(2, 8):
+                item = QTableWidgetItem("")
+                if col in (4, 6, 7):  # HP, Stiker1, Stiker2: align center
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(i-1, col, item)
+
+            # Kolom 8: Stiker Tersisa = 0 (read-only)
+            s3_item = QTableWidgetItem("0")
+            s3_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            s3_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i-1, 8, s3_item)
+
+        self.table.blockSignals(False)
+
+        self._msgbox("Sukses", "Semua data Pantarlih telah dihapus dan tabel dimuat ulang.", "info").exec()
+
+    # ===========================================================
+    def simpan_data(self):
+        """Validasi, hapus semua data di data_pantarlih, dan simpan data baru ke database lalu refresh PDF."""
+        row_count = self.table.rowCount()
+        all_data = []
+        for row in range(row_count):
+            tps_label = (self.table.item(row, 1).text() or "").replace("TPS ", "").strip()
+            nama = (self.table.item(row, 2).text() if self.table.item(row, 2) else "").strip()
+            nik = (self.table.item(row, 3).text() if self.table.item(row, 3) else "").strip()
+            hp = (self.table.item(row, 4).text() if self.table.item(row, 4) else "").strip()
+            tanggal = (self.table.item(row, 5).text() if self.table.item(row, 5) else "").strip()
+            s1 = (self.table.item(row, 6).text() if self.table.item(row, 6) else "0").strip()
+            s2 = (self.table.item(row, 7).text() if self.table.item(row, 7) else "0").strip()
+            s3 = (self.table.item(row, 8).text() if self.table.item(row, 8) else "0").strip()
+
+            # === Validasi dasar ===
+            if not all([tps_label, nama, nik, hp, tanggal, s1, s2]):
+                self._msgbox("Validasi", f"TPS {tps_label}: semua kolom wajib diisi (kecuali 'Tersisa' otomatis).", "warn").exec()
+                return
+            if not re.fullmatch(r"\d{16}", nik):
+                self._msgbox("Validasi", f"TPS {tps_label}: NIK harus 16 digit angka.", "warn").exec()
+                return
+            if not re.fullmatch(r"\d+", hp):
+                self._msgbox("Validasi", f"TPS {tps_label}: Nomor HP hanya boleh angka.", "warn").exec()
+                return
+            if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", tanggal):
+                self._msgbox("Validasi", f"TPS {tps_label}: Tanggal harus format dd/mm/yyyy.", "warn").exec()
+                return
+
+            # === Validasi angka stiker ===
+            try:
+                s1i = int(s1)
+                s2i = int(s2)
+                s3i = max(s1i - s2i, 0)
+            except Exception:
+                self._msgbox("Validasi", f"TPS {tps_label}: Stiker harus berupa angka.", "warn").exec()
+                return
+
+            all_data.append((tps_label, nama, nik, hp, tanggal, s1i, s2i, s3i))
+
+        # === Hapus semua data lama ===
+        try:
+            self.cur.execute("DELETE FROM data_pantarlih")
+            self.conn.commit()
+        except Exception as e:
+            self._msgbox("Error", f"Gagal menghapus data lama dari database:\n{e}", "crit").exec()
+            return
+
+        # === Cek integritas ===
+        try:
+            self.cur.execute("PRAGMA quick_check;")
+        except Exception as e:
+            self._msgbox("Error", f"Integritas database gagal: {e}", "crit").exec()
+            return
+
+        # === Simpan batch data baru ===
+        try:
+            self.cur.executemany("""
+                INSERT INTO data_pantarlih
+                (tps, nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, stiker1, stiker2, stiker3)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, all_data)
+            self.conn.commit()
+        except Exception as e:
+            self._msgbox("Error", f"Gagal menyimpan data ke database:\n{e}", "crit").exec()
+            return
+
+        # === Tampilkan pesan sukses ===
+        self._msgbox("Sukses", f"Data {row_count} TPS berhasil disimpan.", "info").exec()
+
+        # === 🔁 Perbarui PDF di LapCoklit ===
+        try:
+            if hasattr(self.lapcoklit, "_refresh_after_return"):
+                self.lapcoklit._refresh_after_return()
+        except Exception as e:
+            print(f"[Data_Pantarlih] Gagal refresh PDF otomatis: {e}")
+
+    # ===========================================================
+    def kembali(self):
+        """Kembali ke jendela LapCoklit dan otomatis refresh PDF dengan UI beku sementara."""
+        if not self.lapcoklit:
+            self.close()
+            return
+
+        # 🧊 Bekukan tampilan sementara (supaya transisi halus & tanpa flicker)
+        with self.freeze_ui():
+            try:
+                # 🔹 Tampilkan kembali jendela utama LapCoklit
+                self.lapcoklit.showNormal()
+                self.lapcoklit.showMaximized()
+                self.lapcoklit.raise_()
+                self.lapcoklit.activateWindow()
+
+                # 🔁 Segarkan laporan PDF setelah data disimpan
+                if hasattr(self.lapcoklit, "_refresh_after_return"):
+                    #print("[Data_Pantarlih] 🔄 Menyegarkan laporan LapCoklit setelah kembali...")
+                    self.lapcoklit._refresh_after_return()
+
+            except Exception as e:
+                print(f"[Data_Pantarlih] ⚠️ Gagal refresh PDF setelah kembali: {e}")
+
+        # 🚪 Tutup jendela Data Pantarlih (setelah UI dilepas)
         self.close()
 
 
