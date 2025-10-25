@@ -85,35 +85,35 @@ def init_schema(conn) -> None:
     # --- Tabel tahapan utama ---
     common_schema = """
         (
-            checked INTEGER DEFAULT 0,
-            KECAMATAN TEXT,
-            DESA TEXT,
-            DPID TEXT,
-            NKK TEXT,
-            NIK TEXT,
-            NAMA TEXT,
-            JK TEXT,
-            TMPT_LHR TEXT,
-            TGL_LHR TEXT,
-            STS TEXT,
-            ALAMAT TEXT,
-            RT TEXT,
-            RW TEXT,
-            DIS TEXT,
-            KTPel TEXT,
-            SUMBER TEXT,
-            KET TEXT,
-            TPS TEXT,
-            LastUpdate TEXT,
-            CEK_DATA TEXT
+            checked     INTEGER DEFAULT 0,
+            KECAMATAN   TEXT,
+            DESA        TEXT,
+            DPID        TEXT,
+            NKK         TEXT,
+            NIK         TEXT,
+            NAMA        TEXT,
+            JK          TEXT,
+            TMPT_LHR    TEXT,
+            TGL_LHR     TEXT,
+            STS         TEXT,
+            ALAMAT      TEXT,
+            RT          TEXT,
+            RW          TEXT,
+            DIS         TEXT,
+            KTPel       TEXT,
+            SUMBER      TEXT,
+            KET         TEXT,
+            TPS         TEXT,
+            LastUpdate  DATETIME,
+            CEK_DATA    TEXT,
+            JK_ASAL     TEXT,
+            TPS_ASAL    TEXT
         )
     """
     for tbl in ("dphp", "dpshp", "dpshpa"):
         cur.execute(f"CREATE TABLE IF NOT EXISTS {tbl} {common_schema};")
 
-    # =========================================================
-    # 🧾 Tambahan: Tabel Rekapitulasi
-    # =========================================================
+    # --- Tabel tambahan (rekap, saring, dsb) ---
     cur.execute("""
         CREATE TABLE IF NOT EXISTS rekap (
             "NAMA TPS" TEXT,
@@ -123,7 +123,6 @@ def init_schema(conn) -> None:
             "JUMLAH" INTEGER
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS baru (
             "NAMA TPS" TEXT,
@@ -133,7 +132,6 @@ def init_schema(conn) -> None:
             "JUMLAH" INTEGER
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS ubah (
             "NAMA TPS" TEXT,
@@ -143,7 +141,6 @@ def init_schema(conn) -> None:
             "JUMLAH" INTEGER
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS saring (
             "NAMA TPS" TEXT,
@@ -159,7 +156,6 @@ def init_schema(conn) -> None:
             "JUMLAH" INTEGER
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS ktpel (
             "NAMA TPS" TEXT,
@@ -169,7 +165,6 @@ def init_schema(conn) -> None:
             "JUMLAH" INTEGER
         );
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS difabel (
             "NAMA TPS" TEXT,
@@ -185,6 +180,7 @@ def init_schema(conn) -> None:
     """)
 
     conn.commit()
+    #print("[INIT_SCHEMA] Struktur tabel NexVo (23 kolom) telah dipastikan lengkap.")
 
     # =========================================================
     # 🧩 Isi kecamatan otomatis jika kosong
@@ -215,33 +211,58 @@ def init_schema(conn) -> None:
 # 🔒 DAPATKAN KONEKSI GLOBAL DENGAN SQLCIPHER / SQLITE
 # =========================================================
 def get_connection():
-    """Mengembalikan koneksi global yang aman dan terenkripsi."""
+    """
+    Mengembalikan koneksi global yang aman, terenkripsi (SQLCipher), 
+    dan dioptimalkan untuk performa tinggi NexVo.
+    - Autocommit aktif → tidak ada transaksi otomatis
+    - PRAGMA lengkap untuk keamanan & kecepatan
+    - Aman dipanggil berulang kali (global singleton)
+    """
     global _connection
     with _connection_lock:
         if _connection is not None:
             return _connection
 
         try:
-            # Gunakan SQLCipher jika tersedia
+            # ======================================================
+            # 🔐 Gunakan SQLCipher jika tersedia
+            # ======================================================
             try:
                 from sqlcipher3 import dbapi2 as sqlcipher
-                _connection = sqlcipher.connect(DB_PATH)
+                _connection = sqlcipher.connect(DB_PATH, isolation_level=None)  # autocommit
                 hexkey = load_or_create_key().hex()
                 _connection.execute(f"PRAGMA key = \"x'{hexkey}'\";")
-                print("[INFO] Menggunakan database terenkripsi SQLCipher3.")
+
+                # ==================================================
+                # 🔒 PRAGMA keamanan tambahan (khusus SQLCipher)
+                # ==================================================
+                _connection.execute("PRAGMA cipher_page_size = 4096;")               # ukuran blok enkripsi (4 KB)
+                _connection.execute("PRAGMA kdf_iter = 64000;")                      # kekuatan derivasi key
+                _connection.execute("PRAGMA cipher_hmac_algorithm = HMAC_SHA512;")   # integritas HMAC kuat
+                _connection.execute("PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;")
+                #print("[INFO] SQLCipher mode aktif dengan keamanan maksimal.")
+
             except ImportError:
-                _connection = sqlite3.connect(DB_PATH)
-                print("[PERINGATAN] SQLCipher3 tidak tersedia, menggunakan SQLite biasa (non-enkripsi).")
+                # ==================================================
+                # 🪶 Fallback ke SQLite biasa (tanpa enkripsi)
+                # ==================================================
+                import sqlite3
+                _connection = sqlite3.connect(DB_PATH, isolation_level=None)
+                #print("[PERINGATAN] SQLCipher3 tidak tersedia, menggunakan SQLite biasa (non-enkripsi).")
 
-            # 🚀 Optimasi performa
-            _connection.execute("PRAGMA journal_mode = WAL")
-            _connection.execute("PRAGMA synchronous = NORMAL")
-            _connection.execute("PRAGMA temp_store = MEMORY")
-            _connection.execute("PRAGMA cache_size = 10000")
-            _connection.execute("PRAGMA foreign_keys = ON")
-            _connection.execute("PRAGMA busy_timeout = 8000")
+            # ======================================================
+            # ⚙️ PRAGMA performa tinggi (aman di autocommit)
+            # ======================================================
+            cur = _connection.cursor()
+            cur.execute("PRAGMA journal_mode = WAL;")        # tulis-baca cepat & tahan crash
+            cur.execute("PRAGMA synchronous = NORMAL;")      # balance speed vs safety
+            cur.execute("PRAGMA temp_store = MEMORY;")       # operasi sementara di RAM
+            cur.execute("PRAGMA cache_size = 10000;")        # cache besar untuk query masif
+            cur.execute("PRAGMA foreign_keys = ON;")         # aktifkan relasi antar tabel
+            cur.execute("PRAGMA busy_timeout = 8000;")       # tunggu 8 detik jika terkunci
+            cur.close()
 
-            # ⚠️ Jangan lagi panggil init_schema di sini
+            #print("[DB] Koneksi database SQLCipher siap (autocommit aktif, performa optimal).")
             return _connection
 
         except Exception as e:

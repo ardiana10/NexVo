@@ -158,11 +158,7 @@ def connect_encrypted_db(db_path: Path, key_bytes: bytes):
 
 
 def init_schema(conn) -> None:
-    """
-    Membuat semua tabel utama (users, kecamatan, dphp, dpshp, dpshpa, dan tabel rekap)
-    jika belum ada. Aman dijalankan berulang kali.
-    """
-    import os, sys, subprocess
+    """Membuat semua tabel utama dan tabel rekap jika belum ada (aman dijalankan berulang kali)."""
     cur = conn.cursor()
 
     # --- Tabel users ---
@@ -186,30 +182,32 @@ def init_schema(conn) -> None:
         );
     """)
 
-    # --- Tabel tahapan (DPHP, DPSHP, DPSHPA) ---
+    # --- Tabel tahapan utama ---
     common_schema = """
         (
-            checked INTEGER DEFAULT 0,
-            KECAMATAN TEXT,
-            DESA TEXT,
-            DPID TEXT,
-            NKK TEXT,
-            NIK TEXT,
-            NAMA TEXT,
-            JK TEXT,
-            TMPT_LHR TEXT,
-            TGL_LHR TEXT,
-            STS TEXT,
-            ALAMAT TEXT,
-            RT TEXT,
-            RW TEXT,
-            DIS TEXT,
-            KTPel TEXT,
-            SUMBER TEXT,
-            KET TEXT,
-            TPS TEXT,
-            LastUpdate TEXT,
-            CEK_DATA TEXT
+            checked     INTEGER DEFAULT 0,
+            KECAMATAN   TEXT,
+            DESA        TEXT,
+            DPID        TEXT,
+            NKK         TEXT,
+            NIK         TEXT,
+            NAMA        TEXT,
+            JK          TEXT,
+            TMPT_LHR    TEXT,
+            TGL_LHR     TEXT,
+            STS         TEXT,
+            ALAMAT      TEXT,
+            RT          TEXT,
+            RW          TEXT,
+            DIS         TEXT,
+            KTPel       TEXT,
+            SUMBER      TEXT,
+            KET         TEXT,
+            TPS         TEXT,
+            LastUpdate  DATETIME,
+            CEK_DATA    TEXT,
+            JK_ASAL     TEXT,
+            TPS_ASAL    TEXT
         )
     """
     for tbl in ("dphp", "dpshp", "dpshpa"):
@@ -289,6 +287,7 @@ def init_schema(conn) -> None:
     """)
 
     conn.commit()
+    #print("[INIT_SCHEMA] Struktur tabel NexVo (23 kolom) telah disamakan dengan db_manager.py.")
 
     # --- Isi kecamatan otomatis jika kosong ---
     try:
@@ -4854,7 +4853,9 @@ class LoginWindow(QMainWindow):
                     KET TEXT,
                     TPS TEXT,
                     LastUpdate TEXT,
-                    CEK_DATA TEXT
+                    CEK_DATA TEXT,
+                    JK_ASAL TEXT,
+                    TPS_ASAL TEXT
                 )
             """)
             self.conn.commit()
@@ -5119,13 +5120,24 @@ def _derive_key_from_otp(otp_code: str, otp_secret: str) -> bytes:
     return key
 
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.bakx) menyertakan database, key, dan OTP secret (self-contained)."""
+    """Backup lengkap NexVo (.bakx) menyertakan database, key, dan OTP secret (SQLCipher safe)."""
     ensure_dirs()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     from db_manager import get_connection
     conn = get_connection()
     cur = conn.cursor()
+
+    # ✅ Pastikan semua perubahan tersimpan dan file siap di-flush
+    try:
+        conn.commit()  # commit transaksi aktif
+        cur.execute("PRAGMA wal_checkpoint(FULL)")  # flush WAL → db bersih
+        cur.execute("PRAGMA optimize")               # bersihkan cache
+        print("[BACKUP] Semua transaksi SQLCipher telah di-commit & WAL di-flush.")
+    except Exception as e:
+        print("[BACKUP WARNING] Gagal melakukan checkpoint/commit:", e)
+
+    # === Ambil OTP secret ===
     cur.execute("SELECT otp_secret FROM users LIMIT 1")
     row = cur.fetchone()
     if not row or not row[0]:
@@ -5133,7 +5145,7 @@ def backup_nexvo(parent=None):
         return
     otp_secret = row[0]
 
-    # Verifikasi user aktif melalui OTP 6 digit dari aplikasi
+    # === Verifikasi OTP user ===
     import pyotp
     code, ok = ModernInputDialog(
         "Verifikasi OTP",
@@ -5148,7 +5160,7 @@ def backup_nexvo(parent=None):
         show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
         return
 
-    # Kompres seluruh file penting ke memori
+    # === Kompres seluruh file penting ke memori ===
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         if DB_PATH.exists():
@@ -5171,7 +5183,7 @@ def backup_nexvo(parent=None):
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    # Header: panjang secret + secret + salt + iv + tag + ciphertext
+    # === Simpan file backup ===
     secret_bytes = otp_secret.encode()
     secret_len = len(secret_bytes).to_bytes(2, "big")
 
@@ -5767,7 +5779,7 @@ class MainWindow(QMainWindow):
         self.table = CustomTable()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK_DATA"
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK_DATA", "JK_ASAL", "TPS_ASAL"
         ]
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
@@ -5814,7 +5826,9 @@ class MainWindow(QMainWindow):
             "KET": 100,
             "TPS": 80,
             "LastUpdate": 100,
-            "CEK_DATA": 200
+            "CEK_DATA": 200,
+            "JK_ASAL": 100,
+            "TPS_ASAL": 100
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
@@ -8073,207 +8087,6 @@ class MainWindow(QMainWindow):
         eff.setColor(QColor(*rgba))
         widget.setGraphicsEffect(eff)
 
-    @with_safe_db
-    def cek_data(self, auto: bool = False, *, conn=None):
-        """
-        🔍 Pemeriksaan data super kilat (SQLCipher-safe)
-        Memeriksa seluruh self.all_data dan menulis hasil ke kolom CEK_DATA.
-        - Pemeriksaan 'Beda TPS' hanya menghitung baris dengan KET bukan 1–8.
-        """
-        from collections import defaultdict
-        from datetime import datetime
-
-        tahap = getattr(self, "_tahapan", "").strip().upper()
-        tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
-
-        if not auto:
-            if not show_modern_question(
-                self,
-                "Konfirmasi",
-                "Apakah anda yakin ingin menjalankan proses <b>Cek Data</b>?<br><br>"
-                "Proses ini akan memeriksa seluruh data dan mungkin memerlukan waktu beberapa detik."
-            ):
-                show_modern_info(self, "Dibatalkan", "Proses cek data dibatalkan oleh pengguna.")
-                return
-
-        # === Muat data bila belum ada ===
-        if not getattr(self, "all_data", None):
-            try:
-                self.load_data_from_db()
-            except Exception as e:
-                show_modern_error(self, "Error", f"Gagal memuat data awal:\n{e}")
-                return
-            if not self.all_data:
-                show_modern_info(self, "Info", "Tidak ada data untuk diperiksa.")
-                return
-
-        # === Struktur cepat ===
-        target_date = datetime(2029, 6, 26)
-        hasil = ["Sesuai"] * len(self.all_data)
-        nik_count, nik_ket_map = defaultdict(int), defaultdict(set)
-        nik_seen = defaultdict(list)
-
-        get = lambda d, k: str(d.get(k, "")).strip()
-
-        # === Pass 1 – kumpulkan pola dasar ===
-        for i, d in enumerate(self.all_data):
-            nik = get(d, "NIK")
-            nkk = get(d, "NKK")
-            tps = get(d, "TPS")
-            ket = get(d, "KET").upper()
-            if nik:
-                nik_count[nik] += 1
-                nik_ket_map[nik].add(ket)
-            if nik and ket not in ("1","2","3","4","5","6","7","8"):
-                nik_seen[nik].append(i)
-
-        # === Pass 2 – validasi dasar cepat ===
-        for i, d in enumerate(self.all_data):
-            nik = get(d, "NIK")
-            nkk = get(d, "NKK")
-            tgl = get(d, "TGL_LHR")
-            ket = get(d, "KET").upper()
-            sts = get(d, "STS").upper()
-
-            # NKK
-            if len(nkk) != 16:
-                hasil[i] = "NKK Invalid"; continue
-            try:
-                dd, mm = int(nkk[6:8]), int(nkk[8:10])
-                if not (1 <= dd <= 31 and 1 <= mm <= 12):
-                    hasil[i] = "Potensi NKK Invalid"; continue
-            except Exception:
-                hasil[i] = "Potensi NKK Invalid"; continue
-
-            # NIK
-            if len(nik) != 16:
-                hasil[i] = "NIK Invalid"; continue
-            try:
-                dd, mm = int(nik[6:8]), int(nik[8:10])
-                if not (1 <= dd <= 71 and 1 <= mm <= 12):
-                    hasil[i] = "Potensi NIK Invalid"; continue
-            except Exception:
-                hasil[i] = "Potensi NIK Invalid"; continue
-
-            # Umur
-            if "|" in tgl:
-                try:
-                    dd, mm, yy = map(int, tgl.split("|"))
-                    umur = (target_date - datetime(yy, mm, dd)).days / 365.25
-                    if umur < 0 or umur < 13:
-                        hasil[i] = "Potensi Dibawah Umur"; continue
-                    elif umur < 17 and sts == "B":
-                        hasil[i] = "Dibawah Umur"; continue
-                except Exception:
-                    pass
-
-        # === Pass 3 – Deteksi BEDA TPS (skip baris KET 1–8) ===
-        from collections import defaultdict
-        getv = lambda idx, key: str(self.all_data[idx].get(key, "")).strip()
-        nkk_groups = defaultdict(list)
-        for i, d in enumerate(self.all_data):
-            ket = get(d, "KET")
-            if ket in ("1","2","3","4","5","6","7","8"):
-                continue  # ⛔ skip baris KET 1–8
-            nkk = get(d, "NKK")
-            if nkk:
-                nkk_groups[nkk].append(i)
-
-        for nkk, idxs in nkk_groups.items():
-            if len(idxs) <= 1:
-                continue
-            tps_set = {getv(i, "TPS") for i in idxs}
-            if len(tps_set) <= 1:
-                continue
-            # Semua baris yang tersisa (non-1-8) punya NKK sama & TPS beda → Beda TPS
-            for i in idxs:
-                hasil[i] = "Beda TPS"
-
-        # === Pass 4 – Ganda Aktif ===
-        for nik, idxs in nik_seen.items():
-            if len(idxs) > 1:
-                for j in idxs:
-                    hasil[j] = "Ganda Aktif"
-
-        # === Pass 5 – Pemilih Baru / Pemula ===
-        for i, d in enumerate(self.all_data):
-            ket = get(d, "KET").upper()
-            nik = get(d, "NIK")
-            if ket == "B":
-                hasil[i] = "Pemilih Baru" if nik_count[nik] > 1 else "Pemilih Pemula"
-
-        # === Pass 6 – Tidak Padan ===
-        for i, d in enumerate(self.all_data):
-            ket = get(d, "KET").upper()
-            nik = get(d, "NIK")
-            if ket == "8" and "B" not in nik_ket_map[nik]:
-                hasil[i] = "Tidak Padan"
-
-        # === Commit hasil ke memori & database ===
-        for i, val in enumerate(hasil):
-            self.all_data[i]["CEK_DATA"] = val
-
-        try:
-            cur = conn.cursor()
-            cur.executescript("""
-                PRAGMA synchronous = OFF;
-                PRAGMA journal_mode = WAL;
-                PRAGMA temp_store = MEMORY;
-            """)
-            cur.executemany(
-                f"UPDATE {tbl_name} SET CEK_DATA = ? WHERE rowid = ?",
-                [(d.get("CEK_DATA", ""), d.get("rowid"))
-                for d in self.all_data if d.get("rowid")]
-            )
-            conn.commit()
-        except Exception as e:
-            show_modern_error(self, "Gagal Commit", f"Gagal menyimpan hasil ke database:\n{e}")
-            return
-        
-        try:
-            # ============================================================
-            # 📴 Matikan semua popup sementara (modern + QMessageBox)
-            # ============================================================
-            def no_popup(*a, **kw):
-                return QMessageBox.StandardButton.No  # default "tidak" untuk pertanyaan
-
-            import types
-            old_info = globals().get("show_modern_info")
-            old_warn = globals().get("show_modern_warning")
-            old_ques = globals().get("show_modern_question")
-            old_qwarn = QMessageBox.warning
-            old_qques = QMessageBox.question
-
-            globals()["show_modern_info"] = no_popup
-            globals()["show_modern_warning"] = no_popup
-            globals()["show_modern_question"] = no_popup
-            QMessageBox.warning = no_popup
-            QMessageBox.question = no_popup
-
-            # Jalankan sort_data tanpa gangguan popup
-            #self.sort_data()
-
-        finally:
-            # ============================================================
-            # 🔁 Pulihkan fungsi asli setelah selesai
-            # ============================================================
-            if old_info: globals()["show_modern_info"] = old_info
-            if old_warn: globals()["show_modern_warning"] = old_warn
-            if old_ques: globals()["show_modern_question"] = old_ques
-            QMessageBox.warning = old_qwarn
-            QMessageBox.question = old_qques
-
-
-        # === Refresh tampilan ===
-        self.show_page(self.current_page)
-        try:
-            self._warnai_baris_berdasarkan_ket()
-            self._terapkan_warna_ke_tabel_aktif()
-        except Exception as e:
-            print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
-
-        show_modern_info(self, "Selesai",
-            f"Pemeriksaan {len(self.all_data):,} data selesai dilakukan!")
         
     def cek_potensi_nkk_invalid(self):
         """🔍 Pemeriksaan Potensi NKK Invalid di seluruh data (full DB)."""
@@ -8898,6 +8711,9 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", f"Tahapan tidak dikenal: {tahap}")
                     return
 
+                # ================================================================
+                # 🔸 Mapping header CSV → kolom tabel
+                # ================================================================
                 header = [h.strip().upper() for h in reader[0]]
                 mapping = {
                     "KECAMATAN": "KECAMATAN",
@@ -8906,7 +8722,7 @@ class MainWindow(QMainWindow):
                     "NKK": "NKK",
                     "NIK": "NIK",
                     "NAMA": "NAMA",
-                    "KELAMIN": "JK",
+                    "KELAMIN": "JK",  # nanti juga akan diisi ke JK_ASAL
                     "TEMPAT LAHIR": "TMPT_LHR",
                     "TANGGAL LAHIR": "TGL_LHR",
                     "STS KAWIN": "STS",
@@ -8917,8 +8733,8 @@ class MainWindow(QMainWindow):
                     "EKTP": "KTPel",
                     "SUMBER": "SUMBER",
                     "KETERANGAN": "KET",
-                    "TPS": "TPS",
-                    "UPDATED_AT": "LastUpdate"
+                    "TPS": "TPS",  # nanti juga akan diisi ke TPS_ASAL
+                    "UPDATED_AT": "LastUpdate",
                 }
 
                 header_idx = {col: i for i, col in enumerate(header)}
@@ -8935,9 +8751,9 @@ class MainWindow(QMainWindow):
                 cur.execute("PRAGMA temp_store = 2")
                 cur.execute("PRAGMA journal_mode = WAL")
 
-                # ==========================================================
-                # 🔸 Siapkan / bersihkan tabel data_awal
-                # ==========================================================
+                # ================================================================
+                # 🔸 Siapkan tabel data_awal
+                # ================================================================
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS data_awal (
                         TPS TEXT PRIMARY KEY,
@@ -8948,9 +8764,9 @@ class MainWindow(QMainWindow):
                 """)
                 cur.execute("DELETE FROM data_awal")
 
-                # ==========================================================
+                # ================================================================
                 # 🔸 Pastikan tabel utama ada
-                # ==========================================================
+                # ================================================================
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS {tbl_name} (
                         KECAMATAN TEXT,
@@ -8972,13 +8788,15 @@ class MainWindow(QMainWindow):
                         KET TEXT,
                         TPS TEXT,
                         LastUpdate TEXT,
-                        CEK_DATA TEXT
+                        CEK_DATA TEXT,
+                        JK_ASAL TEXT,
+                        TPS_ASAL TEXT
                     )
                 """)
 
-                # ==========================================================
-                # 🔸 Siapkan batch insert cepat
-                # ==========================================================
+                # ================================================================
+                # 🔸 Batch insert cepat
+                # ================================================================
                 from datetime import datetime
                 batch_values = []
                 for row in reader[1:]:
@@ -8988,7 +8806,7 @@ class MainWindow(QMainWindow):
                     if status_val not in ("AKTIF", "UBAH", "BARU"):
                         continue
 
-                    values = []
+                    data = {}
                     for csv_col, app_col in mapping.items():
                         if csv_col in header_idx:
                             val = row[header_idx[csv_col]].strip()
@@ -9001,27 +8819,42 @@ class MainWindow(QMainWindow):
                                         break
                                     except Exception:
                                         pass
-                            values.append(val)
+                            data[app_col] = val
+
+                    # 🔹 Kolom tambahan
+                    data["checked"] = 0  # ✅ default untuk checkbox
+                    data["JK_ASAL"] = data.get("JK", "")
+                    data["TPS_ASAL"] = data.get("TPS", "")
+
+                    # Urutan kolom harus sesuai struktur tabel (termasuk checked)
+                    ordered_cols = [
+                        "checked", "KECAMATAN", "DESA", "DPID", "NKK", "NIK", "NAMA", "JK",
+                        "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel",
+                        "SUMBER", "KET", "TPS", "LastUpdate", "CEK_DATA", "JK_ASAL", "TPS_ASAL"
+                    ]
+
+                    values = [data.get(c, "") for c in ordered_cols]
                     batch_values.append(tuple(values))
 
                 if not batch_values:
                     show_modern_warning(self, "Kosong", "Tidak ada data aktif untuk diimport.")
                     return
 
-                # ==========================================================
-                # ⚡ Eksekusi ultra cepat (tanpa BEGIN manual)
-                # ==========================================================
+                # ================================================================
+                # ⚡ Eksekusi ultra cepat
+                # ================================================================
                 cur.execute(f"DELETE FROM {tbl_name}")
-                placeholders = ",".join(["?"] * len(mapping))
+                placeholders = ",".join(["?"] * 23)  # ✅ 23 kolom sesuai tabel
                 cur.executemany(
-                    f"INSERT INTO {tbl_name} ({','.join(mapping.values())}) VALUES ({placeholders})",
+                    f"INSERT INTO {tbl_name} VALUES ({placeholders})",
                     batch_values
                 )
                 cur.execute(f"UPDATE {tbl_name} SET KET='0'")
+                conn.commit()
 
-                # ==========================================================
-                # ✅ Bangun ulang data_awal (1 query SQL tunggal)
-                # ==========================================================
+                # ================================================================
+                # ✅ Bangun ulang data_awal
+                # ================================================================
                 cur.execute(f"""
                     INSERT INTO data_awal (TPS, L, P, LP)
                     SELECT 
@@ -9034,11 +8867,10 @@ class MainWindow(QMainWindow):
                     ORDER BY CAST(TPS AS INTEGER)
                 """)
                 conn.commit()
-                #print("[INFO] data_awal berhasil dibuat ulang (super cepat, tanpa konflik transaksi).")
 
-                # ==========================================================
-                # 🔸 Refresh tampilan UI
-                # ==========================================================
+                # ================================================================
+                # 🔸 Refresh UI
+                # ================================================================
                 try:
                     with self.freeze_ui():
                         self.load_data_from_db()
@@ -9172,14 +9004,16 @@ class MainWindow(QMainWindow):
 
     @with_safe_db
     def _ensure_schema_and_migrate(self, conn=None):
-        """Pastikan tabel aktif eksis dan skemanya sesuai."""
+        """Pastikan tabel aktif eksis dan skemanya sesuai (auto-migrasi kolom baru jika perlu)."""
         conn = get_connection()
         cur = conn.cursor()
 
         tbl_name = self._active_table()  # ✅ gunakan tabel aktif
 
+        # Pastikan tabel ada dengan struktur dasar (tidak menimpa jika sudah ada)
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {tbl_name} (
+                checked     INTEGER DEFAULT 0,
                 KECAMATAN  TEXT,
                 DESA       TEXT,
                 DPID       TEXT,
@@ -9199,17 +9033,24 @@ class MainWindow(QMainWindow):
                 KET        TEXT,
                 TPS        TEXT,
                 LastUpdate DATETIME,
-                CEK_DATA   TEXT
+                CEK_DATA   TEXT,
+                JK_ASAL    TEXT,
+                TPS_ASAL   TEXT
             )
         """)
 
+        # 🔹 Periksa kolom yang sudah ada
         cur.execute(f"PRAGMA table_info({tbl_name})")
         cols = {row[1] for row in cur.fetchall()}
 
+        # 🔹 Tambahkan kolom yang mungkin belum ada
         if "CEK_DATA" not in cols:
             cur.execute(f"ALTER TABLE {tbl_name} ADD COLUMN CEK_DATA TEXT")
-        if "CEK DATA" in cols:
-            cur.execute(f"UPDATE {tbl_name} SET CEK_DATA = COALESCE(CEK_DATA, `CEK DATA`)")
+        if "JK_ASAL" not in cols:
+            cur.execute(f"ALTER TABLE {tbl_name} ADD COLUMN JK_ASAL TEXT")
+        if "TPS_ASAL" not in cols:
+            cur.execute(f"ALTER TABLE {tbl_name} ADD COLUMN TPS_ASAL TEXT")
+
         conn.commit()
 
 
