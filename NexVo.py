@@ -82,7 +82,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 from io import BytesIO
 from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfMerger
 
@@ -10588,11 +10588,171 @@ class MainWindow(QMainWindow):
             show_modern_error(self, "Error", f"Gagal memuat data Rekap PPS:\n{e}")
 
     def lap_coklit(self, tps_filter=None):
-        """Rekap jumlah pemilih hasil coklit"""
+        """Rekap jumlah pemilih hasil coklit per TPS — ultra cepat & 100% kompatibel SQLCipher."""
+        from db_manager import get_connection
+
+        try:
             # ================================================================
-            # 🔹 5️⃣ Buka tampilan viewer hasil
+            # 🔹 1️⃣ Buka koneksi SQLCipher (otomatis sudah memuat PRAGMA key)
             # ================================================================
-        self.show_window_with_transition(LapCoklit)
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # ================================================================
+            # 🔹 2️⃣ Aktifkan mode performa maksimum (aman untuk SQLCipher)
+            # ================================================================
+            cur.executescript("""
+                PRAGMA cipher_memory_security = OFF;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA cache_size = 500000;
+                PRAGMA mmap_size = 268435456;
+                PRAGMA page_size = 4096;
+                PRAGMA synchronous = OFF;
+                PRAGMA journal_mode = MEMORY;
+                PRAGMA locking_mode = EXCLUSIVE;
+            """)
+
+            # ================================================================
+            # 🔹 3️⃣ Validasi tabel aktif
+            # ================================================================
+            tbl = self._active_table()
+            if not tbl:
+                show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            # ================================================================
+            # 🔹 4️⃣ Query agregasi ultra kilat (semua data1..data75)
+            # ================================================================
+            sql = f"""
+            SELECT 
+                TRIM(TPS) AS TPS,
+
+                -- === 1–3: JK_ASAL ===
+                SUM(CASE WHEN TRIM(JK_ASAL)='L' THEN 1 ELSE 0 END) AS data1,
+                SUM(CASE WHEN TRIM(JK_ASAL)='P' THEN 1 ELSE 0 END) AS data2,
+                SUM(CASE WHEN TRIM(JK_ASAL) IN ('L','P') THEN 1 ELSE 0 END) AS data3,
+
+                -- === 4–6: KET B/b ===
+                SUM(CASE WHEN TRIM(KET) IN ('B','b') AND TRIM(JK)='L' THEN 1 ELSE 0 END) AS data4,
+                SUM(CASE WHEN TRIM(KET) IN ('B','b') AND TRIM(JK)='P' THEN 1 ELSE 0 END) AS data5,
+                SUM(CASE WHEN TRIM(KET) IN ('B','b') AND TRIM(JK) IN ('L','P') THEN 1 ELSE 0 END) AS data6,
+
+                -- === 7–9: TOTAL KET 1–8 ===
+                SUM(CASE WHEN TRIM(KET) IN ('1','2','3','4','5','6','7','8') AND TRIM(JK)='L' THEN 1 ELSE 0 END) AS data7,
+                SUM(CASE WHEN TRIM(KET) IN ('1','2','3','4','5','6','7','8') AND TRIM(JK)='P' THEN 1 ELSE 0 END) AS data8,
+                SUM(CASE WHEN TRIM(KET) IN ('1','2','3','4','5','6','7','8') AND TRIM(JK) IN ('L','P') THEN 1 ELSE 0 END) AS data9,
+
+                -- === 10–33: RINCIAN KET 1–8 ===
+                {",".join([
+                    f"SUM(CASE WHEN TRIM(KET)='{i}' AND TRIM(JK)='L' THEN 1 ELSE 0 END) AS data{10+(i-1)*3},"
+                    f"SUM(CASE WHEN TRIM(KET)='{i}' AND TRIM(JK)='P' THEN 1 ELSE 0 END) AS data{11+(i-1)*3},"
+                    f"SUM(CASE WHEN TRIM(KET)='{i}' AND TRIM(JK) IN ('L','P') THEN 1 ELSE 0 END) AS data{12+(i-1)*3}"
+                    for i in range(1,9)
+                ])},
+
+
+                -- === 34–36: AKTIF (bukan KET 1–8)
+                SUM(CASE WHEN TRIM(JK)='L' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data34,
+                SUM(CASE WHEN TRIM(JK)='P' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data35,
+                SUM(CASE WHEN TRIM(JK) IN ('L','P') AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data36,
+
+                -- === 40–42: KET U/u ===
+                SUM(CASE WHEN TRIM(KET) IN ('U','u') AND TRIM(JK)='L' THEN 1 ELSE 0 END) AS data40,
+                SUM(CASE WHEN TRIM(KET) IN ('U','u') AND TRIM(JK)='P' THEN 1 ELSE 0 END) AS data41,
+                SUM(CASE WHEN TRIM(KET) IN ('U','u') AND TRIM(JK) IN ('L','P') THEN 1 ELSE 0 END) AS data42,
+
+                -- === 43–45: TOTAL DISABILITAS 1–6 (abaikan KET 1–8) ===
+                SUM(CASE WHEN TRIM(DIS) IN ('1','2','3','4','5','6')
+                     AND TRIM(JK)='L'
+                     AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8')
+                     THEN 1 ELSE 0 END) AS data43,
+                SUM(CASE WHEN TRIM(DIS) IN ('1','2','3','4','5','6')
+                     AND TRIM(JK)='P'
+                     AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8')
+                     THEN 1 ELSE 0 END) AS data44,
+                SUM(CASE WHEN TRIM(DIS) IN ('1','2','3','4','5','6')
+                     AND TRIM(JK) IN ('L','P')
+                     AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8')
+                     THEN 1 ELSE 0 END) AS data45,
+
+                -- === 46–63: RINCIAN DISABILITAS 1–6 ===
+                {",".join([
+                    f"SUM(CASE WHEN TRIM(DIS)='{i}' AND TRIM(JK)='L' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data{46+(i-1)*3},"
+                    f"SUM(CASE WHEN TRIM(DIS)='{i}' AND TRIM(JK)='P' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data{47+(i-1)*3},"
+                    f"SUM(CASE WHEN TRIM(DIS)='{i}' AND TRIM(JK) IN ('L','P') AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data{48+(i-1)*3}"
+                    for i in range(1,7)
+                ])},
+
+                -- === 66: DISTINCT NKK ===
+                COUNT(DISTINCT TRIM(NKK)) AS data66,
+
+                -- === 67–75: KTPel (B/b & S/s, tanpa KET 1–8)
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b','S','s') AND TRIM(JK)='L' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data67,
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b','S','s') AND TRIM(JK)='P' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data68,
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b','S','s') AND TRIM(JK) IN ('L','P') AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data69,
+
+                SUM(CASE WHEN TRIM(KTPel) IN ('S','s') AND TRIM(JK)='L' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data70,
+                SUM(CASE WHEN TRIM(KTPel) IN ('S','s') AND TRIM(JK)='P' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data71,
+                SUM(CASE WHEN TRIM(KTPel) IN ('S','s') AND TRIM(JK) IN ('L','P') AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data72,
+
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b') AND TRIM(JK)='L' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data73,
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b') AND TRIM(JK)='P' AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data74,
+                SUM(CASE WHEN TRIM(KTPel) IN ('B','b') AND TRIM(JK) IN ('L','P') AND TRIM(KET) NOT IN ('1','2','3','4','5','6','7','8') THEN 1 ELSE 0 END) AS data75
+
+            FROM {tbl}
+            WHERE TRIM(TPS) <> ''
+            GROUP BY TRIM(TPS)
+            ORDER BY 
+                CASE 
+                    WHEN TRIM(TPS) GLOB '[0-9]*' THEN CAST(TPS AS INTEGER)
+                    ELSE 999999
+                END;
+            """
+
+            # ================================================================
+            # 🔹 5️⃣ Eksekusi aman & format hasil
+            # ================================================================
+            cur.execute(sql)
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+
+            def fmt_safe(x):
+                if x is None: return "-"
+                try:
+                    v = int(float(x))
+                    return "-" if v == 0 else f"{v:,}".replace(",", ".")
+                except Exception:
+                    return "-"
+
+            result = []
+            raw_result = []
+            for row in rows:
+                rec_raw = dict(zip(cols, row))
+                raw_result.append(rec_raw)
+
+                rec_fmt = {}
+                for k, v in rec_raw.items():
+                    if k == "TPS":
+                        s = str(v or "").strip()
+                        rec_fmt[k] = f"{int(s):03d}" if s.isdigit() else (s or "-")
+                    else:
+                        rec_fmt[k] = fmt_safe(v)
+                result.append(rec_fmt)
+
+            # ================================================================
+            # 🔹 6️⃣ Simpan hasil dan tampilkan
+            # ================================================================
+            self._lap_coklit_data = result
+            self._lap_coklit_data_raw = raw_result
+
+            if not result:
+                show_modern_error(self, "Kosong", "Tidak ada data hasil Coklit.")
+                return
+
+            self.show_window_with_transition(LapCoklit)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memuat data Laporan Coklit:\n{e}")
 
 
     def get_distinct_tps(self):
@@ -16668,19 +16828,55 @@ class LapCoklit(QMainWindow):
         toolbar.addAction(btn_print)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        # ====================== TOMBOL TUTUP ======================
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 10, 0, 0)
+        # ====================== TOMBOL BAWAH ======================
+        # === Container vertikal supaya bisa menaruh baris di tengah bawah
+        bottom_container = QVBoxLayout()
+        bottom_container.setContentsMargins(0, 0, 0, 25)  # jarak bawah dari tepi
+        bottom_container.setAlignment(Qt.AlignmentFlag.AlignBottom)
+
+        # === Baris horizontal untuk dua tombol berdampingan
+        button_row = QHBoxLayout()
+        button_row.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # rata tengah horizontal
+        button_row.setSpacing(20)  # jarak antar tombol
+
+        # === Tombol Data Pantarlih
+        self.btn_datapantarlih = QPushButton("📄 Data Pantarlih", self)
+        self.btn_datapantarlih.setFixedHeight(38)
+        self.btn_datapantarlih.setStyleSheet("""
+            QPushButton {
+                background:#ff6600;
+                color:white;
+                border-radius:8px;
+                font-weight:bold;
+                padding:10px 20px;
+            }
+            QPushButton:hover { background:#d94f00; }
+        """)
+        # self.btn_datapantarlih.clicked.connect(self.isidata_pantarlih)
+
+        # === Tombol Tutup
         self.btn_tutup = QPushButton("Tutup", self)
-        self.btn_tutup.setFixedSize(100, 35)
+        self.btn_tutup.setFixedSize(120, 38)
         self.btn_tutup.setStyleSheet("""
-            QPushButton{background:#888;color:white;border-radius:8px;font-weight:bold;}
-            QPushButton:hover{background:#666;}
+            QPushButton {
+                background:#888;
+                color:white;
+                border-radius:8px;
+                font-weight:bold;
+            }
+            QPushButton:hover { background:#666; }
         """)
         self.btn_tutup.clicked.connect(self.kembali_ke_main)
-        bottom.addWidget(self.btn_tutup)
-        layout.addLayout(bottom)
 
+        # === Tambahkan ke baris tengah
+        button_row.addWidget(self.btn_datapantarlih)
+        button_row.addWidget(self.btn_tutup)
+
+        # === Masukkan ke container utama bagian bawah
+        bottom_container.addLayout(button_row)
+        layout.addLayout(bottom_container)
+
+        # === Tampilkan
         self.showMaximized()
         QTimer.singleShot(0, self.laporan_coklit)
 
@@ -16688,206 +16884,371 @@ class LapCoklit(QMainWindow):
     # GENERATE PDF
     # ===========================================================
     def laporan_coklit(self):
-        """Bangun PDF Laporan Hasil Coklit."""
+        """Bangun PDF Laporan Hasil Coklit untuk SELURUH TPS (distinct) di tabel aktif dan tampilkan langsung."""
         try:
-            # === Siapkan buffer PDF ===
-            buffer = BytesIO()
-            doc = SimpleDocTemplate(
-                buffer,
-                pagesize=A4,
-                leftMargin=40,
-                rightMargin=40,
-                topMargin=20,
-                bottomMargin=20,
-            )
+            conn = get_connection()
+            cur = conn.cursor()
+            tbl = getattr(self.parent_window, "_active_table", lambda: None)()
+            if not tbl:
+                QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
 
-            story = []
+            # === Ambil daftar TPS ===
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl} WHERE TPS IS NOT NULL ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [row[0] for row in cur.fetchall()]
+            if not tps_list:
+                QMessageBox.warning(self, "Tidak Ada TPS", "Tidak ada data TPS ditemukan di tabel aktif.")
+                return
 
-            # === Header Form ===
-            title_style = ParagraphStyle(
-                "TitleSmall", fontName=self._font_base, fontSize=10,
-                leading=13, alignment=TA_CENTER
-            )
-            tbl_form = Table(
-                [["", "", "", Paragraph("Model A-Laporan Hasil Coklit", title_style)]],
-                colWidths=[4 * cm, 6.7 * cm, 2.5 * cm, 5 * cm],
-                hAlign="CENTER"
-            )
-            tbl_form.setStyle(TableStyle([
-                ("BOX", (-1, 0), (-1, -1), 0.9, colors.black),
-                ("FONTNAME", (0, 0), (-1, -1), self._font_bold),
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]))
-            story.append(tbl_form)
-            story.append(Spacer(1, 4))
+            merger = PdfMerger()  # untuk menggabungkan semua buffer PDF
 
-            # === Header Judul & Logo ===
-            import os
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            logo_path = os.path.join(base_dir, "KPU.png")
+            # === Loop per TPS ===
+            for tps in tps_list:
+                nomor_tps = f"{int(tps):03d}" if str(tps).isdigit() else str(tps)
+                    # === Ambil hasil rekap dari MainWindow ===
+                data_coklit = getattr(self.parent_window, "_lap_coklit_data_raw", [])
+                # cari baris sesuai TPS saat ini
+                record = next((r for r in data_coklit if str(r.get("TPS")).strip() == str(tps).strip()), None)
+                if not record:
+                    # jika TPS tidak ditemukan di hasil rekap, semua data jadi 0
+                    record = {f"data{i}": 0 for i in range(1, 76)}
 
-            teks_judul = Paragraph(
-                "LAPORAN HASIL COKLIT<br/>PEMILIHAN UMUM<br/>TAHUN 2029",
-                ParagraphStyle(
-                    "TitleCenter",
-                    fontName=self._font_base,
-                    fontSize=11,
-                    alignment=TA_CENTER,
-                    leading=14
+                # fungsi aman untuk konversi angka ke string format "1.000"
+                def fmt_val(key):
+                    v = record.get(key)
+                    if v is None:
+                        return "-"
+                    try:
+                        n = int(v)
+                        return "-" if n == 0 else f"{n:,}".replace(",", ".")
+                    except Exception:
+                        return str(v)
+
+                buf = BytesIO()
+
+                # --- Bangun dokumen per TPS ---
+                doc = SimpleDocTemplate(
+                    buf,
+                    pagesize=A4,
+                    leftMargin=40,
+                    rightMargin=40,
+                    topMargin=20,
+                    bottomMargin=20,
                 )
-            )
 
-            if os.path.exists(logo_path):
-                head_tbl = Table(
-                    [[RLImage(logo_path, 1.4 * cm, 1.5 * cm), teks_judul, ""]],
-                    colWidths=[1.7 * cm, 15 * cm, 1.7 * cm],
+                story = []
+
+                # ================= HEADER =================
+                title_style = ParagraphStyle("TitleSmall", fontName=self._font_base, fontSize=10,
+                                            leading=13, alignment=TA_CENTER)
+                tbl_form = Table(
+                    [["", "", "", Paragraph("Model A-Laporan Hasil Coklit", title_style)]],
+                    colWidths=[4 * cm, 6.7 * cm, 2.5 * cm, 5 * cm],
                     hAlign="CENTER"
                 )
-                head_tbl.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (1, 0), (1, 0), "CENTER"),
-                    ("LEFTPADDING", (0, 0), (0, 0), 24),
-                    ("TOPPADDING", (0, 0), (0, 0), 7),
-                    ("BOTTOMPADDING", (0, 0), (0, 0), 1),
-                    ("TOPPADDING", (1, 0), (1, 0), 0),
+                tbl_form.setStyle(TableStyle([
+                    ("BOX", (-1, 0), (-1, -1), 0.9, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), self._font_bold),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ]))
-                story.append(head_tbl)
-            else:
-                story.append(teks_judul)
-            story.append(Spacer(1, 8))
+                story.append(tbl_form)
+                story.append(Spacer(1, 4))
 
-            # === Identitas Wilayah ===
-            ident_style = ParagraphStyle(
-                "Ident",
-                fontName=self._font_base,
-                fontSize=10,
-                leading=9,               # lebih rapat antarbaris
-                alignment=TA_LEFT
-            )
+                # === Judul dan logo ===
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                logo_path = os.path.join(base_dir, "KPU.png")
+                teks_judul = Paragraph(
+                    "LAPORAN HASIL COKLIT<br/>PEMILIHAN UMUM<br/>TAHUN 2029",
+                    ParagraphStyle("TitleCenter", fontName=self._font_base, fontSize=12, alignment=TA_CENTER, leading=14)
+                )
 
-            ident_tbl = Table([
-                [Paragraph("PROVINSI", ident_style), Paragraph(": JAWA BARAT", ident_style),
-                "", Paragraph("NO TPS", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style)],
-                [Paragraph("KABUPATEN", ident_style), Paragraph(": TASIKMALAYA", ident_style),
-                "", Paragraph("NAMA PANTARLIH", ident_style), Paragraph(f": {self.desa.upper()}", ident_style)],
-                [Paragraph("KECAMATAN", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style),
-                "", Paragraph("NIK PANTARLIH", ident_style), Paragraph(": nik_pantarlih", ident_style)],
-                [Paragraph("DESA", ident_style), Paragraph(f": {self.desa.upper()}", ident_style),
-                "", Paragraph("NO HP", ident_style), Paragraph(": hp_pantarlih", ident_style)],
-            ], colWidths=[2.9 * cm, 4 * cm, 3.3 * cm, 3.9 * cm, 4.7 * cm], hAlign="CENTER")
+                if os.path.exists(logo_path):
+                    head_tbl = Table(
+                        [[RLImage(logo_path, 1.4 * cm, 1.5 * cm), teks_judul, ""]],
+                        colWidths=[1.7 * cm, 15 * cm, 1.7 * cm],
+                        hAlign="CENTER"
+                    )
+                    head_tbl.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                    ]))
+                    story.append(head_tbl)
+                else:
+                    story.append(teks_judul)
+                story.append(Spacer(1, 16))
 
-            # 🔹 Tambahkan style untuk sempitkan tinggi sel
-            ident_tbl.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("TOPPADDING", (0, 0), (-1, -1), 1),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-            ]))
+                # === Identitas Wilayah ===
+                ident_style = ParagraphStyle("Ident", fontName=self._font_base, fontSize=11, leading=12, alignment=TA_LEFT)
+                dbldt_style = ParagraphStyle("IdentR", fontName=self._font_base, fontSize=11, leading=12, alignment=TA_RIGHT)
 
-            story.append(ident_tbl)
-            story.append(Spacer(1, 2))
+                ident_tbl = Table([
+                    [Paragraph("PROVINSI", ident_style), Paragraph(": JAWA BARAT", ident_style),
+                    "", Paragraph("NO TPS", ident_style), Paragraph(":", dbldt_style), Paragraph(nomor_tps, ident_style)],
+                    [Paragraph("KABUPATEN", ident_style), Paragraph(": TASIKMALAYA", ident_style),
+                    "", Paragraph("NAMA PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph("nama_pantarlih", ident_style)],
+                    [Paragraph("KECAMATAN", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style),
+                    "", Paragraph("NIK PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph("nik_pantarlih", ident_style)],
+                    [Paragraph("DESA", ident_style), Paragraph(f": {self.desa.upper()}", ident_style),
+                    "", Paragraph("NO HP", ident_style), Paragraph(":", dbldt_style), Paragraph("hp_pantarlih", ident_style)],
+                ], colWidths=[2.9 * cm, 4 * cm, 2.5 * cm, 3.9 * cm, 0.5 * cm, 4.7 * cm], hAlign="CENTER")
+                story.append(ident_tbl)
+                story.append(Spacer(1, 6))
 
-            # === Tabel Data ===
-            header_style = ParagraphStyle("Head", fontName=self._font_base, fontSize=10, alignment=TA_CENTER)
-            no_style = ParagraphStyle("Head", fontName=self._font_base, fontSize=10, alignment=TA_LEFT)
-            cell_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=10, alignment=TA_CENTER, leading=10)
-            coklit_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=10, alignment=TA_LEFT, leading=10)
+                # === Tabel Data ===
+                header_style = ParagraphStyle("Head", fontName=self._font_base, fontSize=11, alignment=TA_CENTER)
+                cell_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_CENTER, leading=10)
+                coklit_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_LEFT, leading=10)
 
-            data = [
-                [
-                    Paragraph("No", header_style),
-                    Paragraph("Kegiatan Coklit", header_style),
-                    "", "", "", Paragraph("L", header_style),Paragraph("P", header_style), Paragraph("L+P", header_style),
-                ],
-                [Paragraph(str(i), cell_style) for i in range(1, 9)],
-                [Paragraph("I", cell_style), Paragraph("Jumlah Data Pemilih diterima (A-Daftar Pemilih)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("II", cell_style), Paragraph("Jumlah Pemilih Baru (A-Daftar Potensial Pemilih)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("III", cell_style), Paragraph("Pemilih yang Tidak Memenuhi Syarat", coklit_style),
-                 "L", "P", "L+P", "", "", ""],
-                ["", Paragraph("1. Pemilih Meninggal (kode 1)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("2. Pemilih Ganda (kode 2)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("3. Pemilih Dibawah Umur (kode 3)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("4. Pemilih Pindah Domisili (kode 4)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("5. Pemilih WNA (kode 5)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("6. Pemilih yang berstatus TNI (kode 6)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("7. Pemilih yang berstatus POLRI (kode 7)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("8. TPS tidak sesuai (kode 8)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("IV", cell_style), Paragraph("Jumlah Pemilih yang Memenuhi Syarat ((I+II)-III)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", "", "", "", "", "", "", ""],
-                [Paragraph("V", cell_style), Paragraph("Jumlah Data Pemilih diperbaiki (kode U)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("VI", cell_style), Paragraph("Jumlah Data Pemilih Disabilitas", coklit_style),
-                 "L", "P", "L+P", "", "", ""],
-                ["", Paragraph("1. Disabilitas Fisik (kode 1)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("2. Disabilitas Intelektual (kode 2)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("3. Disabilitas Mental (kode 3)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("4. Disabilitas Sensorik Wicara (kode 4)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("5. Disabilitas Sensorik Rungu (kode 5)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", Paragraph("6. Disabilitas Sensorik Netra (kode 6)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("VII", cell_style), Paragraph("Jumlah Stiker Diterima (Model Stiker Coklit)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("VIII", cell_style), Paragraph("Jumlah Stiker Digunakan)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("IX", cell_style), Paragraph("Jumlah Stiker Tersisa)", coklit_style),
-                 "", "", "", "", "", ""],
-                ["", "", "", "", "", "", "", ""],
-                [Paragraph("X", cell_style), Paragraph("Jumlah KK Hasil Coklit)", coklit_style),
-                 "", "", "", "", "", ""],
-                [Paragraph("XI", cell_style), Paragraph("Jumlah Lembar Bukti Pemilih Terdaftar (Model A-Tanda Bukti Terdaftar) dibagikan)", coklit_style),
-                 "", "", "", "", "", ""]
-            ]
+                # ⚙️ Data tabel (baris ditata agar indeks tepat untuk SPAN/warna)
+                data = [
+                    # Baris header utama
+                    [
+                        Paragraph("No", header_style),
+                        Paragraph("Kegiatan Coklit", header_style),
+                        "", "", "",
+                        Paragraph("L", header_style),
+                        Paragraph("P", header_style),
+                        Paragraph("L+P", header_style),
+                    ],
+                    [
+                        Paragraph("1", cell_style),
+                        Paragraph("2", cell_style),
+                        "", "", "",
+                        Paragraph("3", cell_style),
+                        Paragraph("4", cell_style),
+                        Paragraph("5", cell_style),
+                    ],
 
-            tbl = Table(data, colWidths=[1*cm, 7*cm, 1.5*cm, 1.5*cm, 1.5*cm, 2*cm, 2*cm, 2*cm], hAlign="CENTER")
+                    [Paragraph("I", cell_style), Paragraph("Jumlah Data Pemilih diterima (A-Daftar Pemilih)", coklit_style),
+                    "", "", "", fmt_val("data1"), fmt_val("data2"), fmt_val("data3")],
 
-            tbl.setStyle(TableStyle([
-                ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
-                ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#f2f2f2")),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),    # perataan horizontal
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),      # perataan vertikal
-                ("FONTNAME", (0, -1), (-1, -1), self._font_base),
-                ("TOPPADDING", (0, -1), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, -1), (-1, -1), 4),
-            ]))
+                    [Paragraph("II", cell_style), Paragraph("Jumlah Pemilih Baru (A-Daftar Potensial Pemilih)", coklit_style),
+                    "", "", "", fmt_val("data4"), fmt_val("data5"), fmt_val("data6")],
 
-            story.append(tbl)
-            story.append(Spacer(1, 24))
+                    [Paragraph("III", cell_style), Paragraph("Pemilih yang Tidak Memenuhi Syarat", coklit_style),
+                    Paragraph("L", cell_style), Paragraph("P", cell_style), Paragraph("L+P", cell_style),
+                    fmt_val("data7"), fmt_val("data8"), fmt_val("data9")],
 
-            # === Build PDF ke buffer ===
-            doc.build(story)
-            pdf_bytes = buffer.getvalue()
-            buffer.close()
+                    ["", Paragraph("1. Pemilih Meninggal (kode 1)", coklit_style),
+                    fmt_val("data10"), fmt_val("data11"), fmt_val("data12"), "", "", ""],
+                    ["", Paragraph("2. Pemilih Ganda (kode 2)", coklit_style),
+                    fmt_val("data13"), fmt_val("data14"), fmt_val("data15"), "", "", ""],
+                    ["", Paragraph("3. Pemilih Dibawah Umur (kode 3)", coklit_style),
+                    fmt_val("data16"), fmt_val("data17"), fmt_val("data18"), "", "", ""],
+                    ["", Paragraph("4. Pemilih Pindah Domisili (kode 4)", coklit_style),
+                    fmt_val("data19"), fmt_val("data20"), fmt_val("data21"), "", "", ""],
+                    ["", Paragraph("5. Pemilih WNA (kode 5)", coklit_style),
+                    fmt_val("data22"), fmt_val("data23"), fmt_val("data24"), "", "", ""],
+                    ["", Paragraph("6. Pemilih berstatus TNI (kode 6)", coklit_style),
+                    fmt_val("data25"), fmt_val("data26"), fmt_val("data27"), "", "", ""],
+                    ["", Paragraph("7. Pemilih berstatus POLRI (kode 7)", coklit_style),
+                    fmt_val("data28"), fmt_val("data29"), fmt_val("data30"), "", "", ""],
+                    ["", Paragraph("8. TPS tidak sesuai (kode 8)", coklit_style),
+                    fmt_val("data31"), fmt_val("data32"), fmt_val("data33"), "", "", ""],
 
-            # === Tampilkan PDF di viewer ===
+                    [Paragraph("IV", cell_style), Paragraph("Jumlah Pemilih Hasil Coklit ((I+II)-III)", coklit_style),
+                    "", "", "", fmt_val("data34"), fmt_val("data35"), fmt_val("data36")],
+
+                    ["", "", "", "", "", "", "", ""],  # separator
+
+                    [Paragraph("V", cell_style), Paragraph("Jumlah Data Pemilih diperbaiki (kode U)", coklit_style),
+                    "", "", "", fmt_val("data40"), fmt_val("data41"), fmt_val("data42")],
+
+                    [Paragraph("VI", cell_style), Paragraph("Jumlah Data Pemilih Disabilitas", coklit_style),
+                    Paragraph("L", cell_style), Paragraph("P", cell_style), Paragraph("L+P", cell_style),
+                    fmt_val("data43"), fmt_val("data44"), fmt_val("data45")],
+
+                    ["", Paragraph("1. Disabilitas Fisik (kode 1)", coklit_style),
+                    fmt_val("data46"), fmt_val("data47"), fmt_val("data48"), "", "", ""],
+                    ["", Paragraph("2. Disabilitas Intelektual (kode 2)", coklit_style),
+                    fmt_val("data49"), fmt_val("data50"), fmt_val("data51"), "", "", ""],
+                    ["", Paragraph("3. Disabilitas Mental (kode 3)", coklit_style),
+                    fmt_val("data52"), fmt_val("data53"), fmt_val("data54"), "", "", ""],
+                    ["", Paragraph("4. Disabilitas Sensorik Wicara (kode 4)", coklit_style),
+                    fmt_val("data55"), fmt_val("data56"), fmt_val("data57"), "", "", ""],
+                    ["", Paragraph("5. Disabilitas Sensorik Rungu (kode 5)", coklit_style),
+                    fmt_val("data58"), fmt_val("data59"), fmt_val("data60"), "", "", ""],
+                    ["", Paragraph("6. Disabilitas Sensorik Netra (kode 6)", coklit_style),
+                    fmt_val("data61"), fmt_val("data62"), fmt_val("data63"), "", "", ""],
+
+                    ["", "", "", "", "", "", "", ""],  # separator
+
+                    [Paragraph("VII", cell_style), Paragraph("Jumlah Stiker Diterima (Model Stiker Coklit)", coklit_style),
+                    "", "", "", "", "", ""],
+                    [Paragraph("VIII", cell_style), Paragraph("Jumlah Stiker Digunakan", coklit_style),
+                    "", "", "", "", "", ""],
+                    [Paragraph("IX", cell_style), Paragraph("Jumlah Stiker Tersisa", coklit_style),
+                    "", "", "", "", "", ""],
+
+                    ["", "", "", "", "", "", "", ""],  # separator
+
+                    [Paragraph("X", cell_style), Paragraph("Jumlah KK Hasil Coklit", coklit_style),
+                    "", "", "", "", "", fmt_val("data66")],
+
+                    [Paragraph("XI", cell_style), Paragraph("Jumlah Lembar Bukti Pemilih Terdaftar dibagikan", coklit_style),
+                    "", "", "", "", "", ""],
+
+                    ["", "", "", "", "", "", "", ""],  # separator
+
+                    [Paragraph("XII", cell_style), Paragraph("Pemilih KTP Elektronik dan Calon Pemilih", coklit_style),
+                    Paragraph("L", cell_style), Paragraph("P", cell_style), Paragraph("L+P", cell_style),
+                    fmt_val("data67"), fmt_val("data68"), fmt_val("data69")],
+
+                    ["", Paragraph("1. Jumlah Pemilih KTP-el (Model A-Daftar Pemilih dan A-Daftar Potensial Pemilih)", coklit_style),
+                    fmt_val("data70"), fmt_val("data71"), fmt_val("data72"), "", "", ""],
+
+                    ["", Paragraph("2. Jumlah Pemilih belum ber-KTP-el", coklit_style),
+                    fmt_val("data73"), fmt_val("data74"), fmt_val("data75"), "", "", ""],
+                ]
+
+                tbl = Table(
+                    data,
+                    colWidths=[1.2*cm, 7.8*cm, 1.5*cm, 1.5*cm, 1.5*cm, 1.8*cm, 1.8*cm, 1.8*cm],
+                    hAlign="CENTER"
+                )
+
+                dark_gray = colors.HexColor("#d9d9d9")
+
+                tbl.setStyle(TableStyle([
+                    # Grid & font
+                    ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), self._font_base),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+
+                    # Header background (r0 dan r1)
+                    ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#f2f2f2")),
+
+                    # === SPAN sesuai instruksi ===
+                    # r0: "Kegiatan Coklit" menutupi kol 2–5
+                    ("SPAN", (1, 0), (4, 0)),
+
+                    # r1: angka "1, 2, 3, 4, 5" di kol 2–5 (center)
+                    ("SPAN", (1, 1), (4, 1)),
+                    ("ALIGN", (1, 1), (4, 1), "CENTER"),
+
+                    # r2, r3, r13, r15, r24, r25, r26, r28, r29 → kol 2–5 merge (left)
+                    ("SPAN", (1, 2), (4, 2)),
+                    ("SPAN", (1, 3), (4, 3)),
+                    ("SPAN", (1, 13), (4, 13)),
+                    ("SPAN", (1, 15), (4, 15)),
+                    ("SPAN", (1, 24), (4, 24)),
+                    ("SPAN", (1, 25), (4, 25)),
+                    ("SPAN", (1, 26), (4, 26)),
+                    ("SPAN", (1, 28), (4, 28)),
+                    ("SPAN", (1, 29), (4, 29)),
+                    ("ALIGN", (1, 2), (4, 29), "LEFT"),
+
+                    # === Baris separator (merge seluruh sel + abu-abu gelap) → r14, r23, r27, r30
+                    ("SPAN", (0, 14), (-1, 14)), ("BACKGROUND", (0, 14), (-1, 14), dark_gray),
+                    ("SPAN", (0, 23), (-1, 23)), ("BACKGROUND", (0, 23), (-1, 23), dark_gray),
+                    ("SPAN", (0, 27), (-1, 27)), ("BACKGROUND", (0, 27), (-1, 27), dark_gray),
+                    ("SPAN", (0, 30), (-1, 30)), ("BACKGROUND", (0, 30), (-1, 30), dark_gray),
+
+                    # === Pewarnaan kolom tertentu ===
+                    # Disabilitas (r17..r22) → kol 6–8 abu-abu gelap
+                    ("BACKGROUND", (0, 0), (7, 1), dark_gray),
+                    ("BACKGROUND", (5, 17), (7, 22), dark_gray),
+                    ("BACKGROUND", (5, 5), (7, 12), dark_gray),
+
+                    # VII–IX (r24..r26) dan X–XI (r28..r29) → kol 6–7 abu-abu gelap
+                    ("BACKGROUND", (5, 24), (6, 26), dark_gray),
+                    ("BACKGROUND", (5, 28), (6, 29), dark_gray),
+
+                    # Bagian XII subrows (r32..r33) → kol 6–8 abu-abu gelap
+                    ("BACKGROUND", (5, 32), (7, 33), dark_gray),
+                    ("ALIGN", (2, 5), (4, 12), "CENTER"),
+                    ("ALIGN", (2, 17), (4, 22), "CENTER"),
+                ]))
+
+                story.append(tbl)
+                story.append(Spacer(1, 24))
+
+                # === Tanda Tangan ===
+                ttd_style = ParagraphStyle(
+                    "ttd",
+                    fontName=self._font_base,
+                    fontSize=11,
+                    leading=12,               # lebih rapat antarbaris
+                    alignment=TA_CENTER
+                )
+
+                ttd_tbl = Table([
+                    ["", "", Paragraph(f"{self.desa.capitalize()}", ttd_style)],
+                    ["", "", Paragraph(f"PANTARLIH", ttd_style)],
+                ], colWidths=[2.9 * cm, 9 * cm, 5 * cm], hAlign="CENTER")
+
+                # 🔹 Tambahkan style untuk sempitkan tinggi sel
+                ttd_tbl.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ]))
+
+                story.append(ttd_tbl)
+
+                # Spacer = jarak vertikal antara tabel utama dan tanda tangan
+                story.append(Spacer(1, 2.5 * cm))
+
+                # Tabel tanda tangan di kanan bawah
+                data_ttd = [
+                    ["", "", Paragraph("(NAMA PANTARLIH)", ttd_style)]
+                ]
+
+                tabel_ttd = Table(
+                    data_ttd,
+                    colWidths=[2.9 * cm, 9 * cm, 5 * cm],
+                    hAlign="CENTER",
+                )
+                tabel_ttd.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ]))
+
+                story.append(tabel_ttd)
+
+                # === Build PDF ===
+                doc.build(story)
+                merger.append(BytesIO(buf.getvalue()))  # gabungkan hasil PDF ke merger
+
+            # === Setelah semua TPS selesai, gabungkan ke satu PDF ===
+            final_buffer = BytesIO()
+            merger.write(final_buffer)
+            merger.close()
+
+            pdf_bytes = final_buffer.getvalue()
+            final_buffer.close()
+
+            # === Tampilkan hasil di viewer ===
             self._show_pdf_bytes(pdf_bytes)
 
+            QMessageBox.information(
+                self,
+                "Selesai",
+                f"Berhasil membuat dokumen Laporan Coklit untuk {len(tps_list)} TPS."
+            )
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Gagal membuat PDF Rekap PPS:\n{e}")
+            QMessageBox.critical(self, "Error", f"Gagal membuat Laporan Coklit:\n{e}")
 
     # ===========================================================
     # SHOW PDF
     # ===========================================================
     def _show_pdf_bytes(self, pdf_bytes: bytes):
-        """Tampilkan PDF langsung di QPdfView dengan scroll semua halaman."""
+        """Tampilkan PDF di QPdfView dengan scroll vertikal (continuous)."""
         try:
-            # 🔹 Cegah PDF kosong
+            from io import BytesIO
+            from PyQt6.QtCore import QByteArray, QBuffer, QIODevice, Qt
+            from PyQt6.QtPdf import QPdfDocument
+            from PyQt6.QtPdfWidgets import QPdfView
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4, landscape
+
+            # 🔹 1️⃣ Tangani PDF kosong / rusak
             if not pdf_bytes or len(pdf_bytes) < 300:
                 buf = BytesIO()
                 c = canvas.Canvas(buf, pagesize=landscape(A4))
@@ -16900,7 +17261,7 @@ class LapCoklit(QMainWindow):
                 c.save()
                 pdf_bytes = buf.getvalue()
 
-            # 🔹 Siapkan dokumen PDF
+            # 🔹 2️⃣ Muat dokumen PDF ke buffer
             self._pdf_buf = QBuffer()
             self._pdf_buf.setData(QByteArray(pdf_bytes))
             self._pdf_buf.open(QIODevice.OpenModeFlag.ReadOnly)
@@ -16908,24 +17269,17 @@ class LapCoklit(QMainWindow):
             self._pdf_doc = QPdfDocument(self)
             self._pdf_doc.load(self._pdf_buf)
 
-            # 🔹 Tampilkan di QPdfView
-            from PyQt6.QtPdfWidgets import QPdfView
+            # 🔹 3️⃣ Siapkan viewer tunggal (self.viewer)
             self.viewer.setDocument(self._pdf_doc)
 
-            # ✅ Mode scroll seluruh halaman (fit-to-width)
+            # ✅ Continuous scroll (fit-to-width)
             try:
-                # Qt ≥ 6.7 mendukung continuous scroll native
+                # PyQt6 ≥ 6.7
                 self.viewer.setPageMode(QPdfView.PageMode.SinglePageContinuous)
             except Exception:
-                # Qt 6.5 / 6.6 fallback: pakai MultiPage + delay re-render
+                # Fallback PyQt6 6.5-6.6
                 self.viewer.setPageMode(QPdfView.PageMode.MultiPage)
-                QTimer.singleShot(200, lambda: (
-                    #self.viewer.setZoomMode(QPdfView.ZoomMode.FitToWidth),
-                    self.viewer.update()
-                ))
 
-            #self.viewer.setZoomMode(QPdfView.ZoomMode.FitToWidth)
-            self.viewer.setZoomFactor(1.0)
             self.viewer.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.viewer.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.viewer.show()
