@@ -5330,6 +5330,9 @@ class MainWindow(QMainWindow):
 
         self._active_table = _active_table
 
+        # (Opsional untuk konsistensi di helper hide): daftar kolom sensitif
+        self._hidden_columns = ["CEK_DATA", "JK_ASAL", "TPS_ASAL"]
+
         # ====== Pastikan file KPU.png ada ======
         base_dir = os.path.dirname(os.path.abspath(__file__))
         icon_path = os.path.join(base_dir, "KPU.png")
@@ -5516,7 +5519,7 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu.addAction(action_import_tms)
             import_ecoklit_menu.addAction(action_import_ubah)
 
-       # === Toolbar ===
+        # === Toolbar ===
         toolbar = QToolBar("Toolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
@@ -5627,13 +5630,6 @@ class MainWindow(QMainWindow):
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer_right)
 
-        # === Tombol kanan ===
-        #btn_urutkan = QPushButton("Urutkan")
-        #self.style_button(btn_urutkan, bg="#d71d1d", fg="white", bold=True)
-        #btn_urutkan.clicked.connect(self.sort_data) #belum ada fungsi
-        #toolbar.addWidget(btn_urutkan)
-        #add_spacer()
-
         # === Tombol Cek Data (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_cekdata = QToolButton()
         btn_cekdata.setText("Cek Data")
@@ -5719,7 +5715,7 @@ class MainWindow(QMainWindow):
 
         btn_filter = QPushButton("Filter")
         self.style_button(btn_filter, bg="#d71d1d", fg="white", bold=True)
-        btn_filter.setIcon(QIcon.fromTheme("view-filter")) # type: ignore
+        btn_filter.setIcon(QIcon.fromTheme("view-filter"))  # type: ignore
         btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_filter.clicked.connect(self.toggle_filter_sidebar)
         toolbar.addWidget(btn_filter)
@@ -5755,12 +5751,6 @@ class MainWindow(QMainWindow):
         self.status.addWidget(self.lbl_total)
         self.status.addPermanentWidget(self.lbl_version)
 
-        # ✅ Tambahkan ini biar auto resize kolom jalan setelah login
-        QTimer.singleShot(0, self.auto_fit_columns)
-
-        # ✅ Jalankan fungsi urutkan data secara senyap setelah login
-        QTimer.singleShot(200, lambda: self.sort_data(auto=True))
-
         # ✅ Initialize filter sidebar
         self.filter_sidebar = None
         self.filter_dock = None
@@ -5776,6 +5766,7 @@ class MainWindow(QMainWindow):
         self.rows_per_page = 100
         self.total_pages = 1
 
+        # ============== TABEL ==============
         self.table = CustomTable()
         columns = [
             " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
@@ -5834,15 +5825,14 @@ class MainWindow(QMainWindow):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        # 🔒 Sembunyikan kolom CEK_DATA tanpa menghapus datanya
-        col_index_cekdata = columns.index("CEK_DATA")
-        self.table.setColumnHidden(col_index_cekdata, True)
+        # 🔒 Sembunyikan kolom CEK_DATA/JK_ASAL/TPS_ASAL (tetap ada datanya)
+        # (Tetap dipanggil di sini agar tidak mengurangi perilaku asli)
+        if hasattr(self, "hide_sensitive_columns"):
+            self.hide_sensitive_columns()
 
-        # 🔹 Hilangkan highlight seleksi permanen
-        #self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # 🔹 Seleksi & delegate hover
         self.make_table_text_selectable()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        #self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.hover_delegate = HoverDelegate(self.table)
         self.table.setItemDelegate(self.hover_delegate)
@@ -5865,14 +5855,17 @@ class MainWindow(QMainWindow):
             QTableView::item:focus {
                 outline: none;              /* hilangkan outline fokus hitam */
             }
+            /* Opsional hover halus */
+            /* QTableWidget::item:hover { background-color: #dcdcdc; } */
         """)
-        
+
         self.connect_header_events()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(0, 30)
         self.table.horizontalHeader().setStretchLastSection(True)
         QTimer.singleShot(0, self.init_header_checkbox)
 
+        # ==== Pagination container ====
         self.pagination_container = QWidget()
         self.pagination_layout = QHBoxLayout(self.pagination_container)
         self.pagination_layout.setContentsMargins(0, 2, 0, 2)
@@ -5898,18 +5891,21 @@ class MainWindow(QMainWindow):
         self.table.setEnabled(True)
         self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        # Load awal
+        # ====== Load awal & tata letak akhir ======
         self.load_data_from_db()
         self.update_pagination()
         self.apply_column_visibility()
 
-        # ✅ Tampilkan setelah siap sepenuhnya
+        # ✅ Panggilan ditunda SETELAH semua siap (hindari atribut belum ada)
+        QTimer.singleShot(0, self.auto_fit_columns)                 # auto fit + hide ulang kolom sensitif
+        QTimer.singleShot(200, lambda: self.sort_data(auto=True))   # urut senyap
         QTimer.singleShot(0, self.showMaximized)
 
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Text, QColor("#000000"))
         pal.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))
         self.setPalette(pal)
+
 
     def _safe_clear_selection(self):
         """Hilangkan seleksi dengan aman tanpa memicu warning editor Qt."""
@@ -7283,36 +7279,60 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    # 🧱 Sembunyikan kolom-kolom tertentu secara permanen
+    def hide_sensitive_columns(self):
+        hidden_cols = ["CEK_DATA", "JK_ASAL", "TPS_ASAL"]
+
+        # Ambil daftar header secara aman
+        try:
+            headers = self.table.horizontalHeaderLabels()
+        except AttributeError:
+            headers = []
+            for i in range(self.table.columnCount()):
+                item = self.table.horizontalHeaderItem(i)
+                if item:
+                    headers.append(item.text())
+
+        # Sembunyikan kolom yang cocok
+        for name in hidden_cols:
+            try:
+                idx = headers.index(name)
+                self.table.setColumnHidden(idx, True)
+            except ValueError:
+                continue
+
     def auto_fit_columns(self):
+        """Atur lebar kolom otomatis dan sembunyikan kolom sensitif."""
         header = self.table.horizontalHeader()
+        
+        # ⛏️ 1️⃣ Sesuaikan lebar kolom ke isi
         self.table.resizeColumnsToContents()
 
+        # ⛏️ 2️⃣ Batasi kolom tertentu agar tidak terlalu lebar
         max_widths = {
-            "CEK_DATA": 200,   # cukup untuk yyyy-mm-dd
+            "CEK_DATA": 200,   # cukup untuk teks panjang seperti yyyy-mm-dd atau status
         }
 
         for i in range(self.table.columnCount()):
-            col_name = self.table.horizontalHeaderItem(i).text()
+            item = self.table.horizontalHeaderItem(i)
+            if not item:
+                continue
+            col_name = item.text().strip().upper()
             if col_name in max_widths:
                 current = self.table.columnWidth(i)
-                if current > max_widths[col_name]:
-                    self.table.setColumnWidth(i, max_widths[col_name])
+                max_allowed = max_widths[col_name]
+                if current > max_allowed:
+                    self.table.setColumnWidth(i, max_allowed)
 
-        # Jangan stretch kolom terakhir, tapi stretch kolom tertentu saja
+        # ⛏️ 3️⃣ Pengaturan stretch
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(self.table.columnCount()-1, QHeaderView.ResizeMode.Interactive)
+        last_col = self.table.columnCount() - 1
+        if last_col >= 0:
+            header.setSectionResizeMode(last_col, QHeaderView.ResizeMode.Interactive)
 
-        # 🧱 Tambahkan ini agar CEK_DATA tetap tersembunyi setiap saat
-        try:
-            idx = self.table.horizontalHeaderLabels().index("CEK_DATA")
-        except AttributeError:
-            # jika tidak ada method horizontalHeaderLabels() → fallback manual
-            idx = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())].index("CEK_DATA")
-        except ValueError:
-            idx = None
-
-        if idx is not None:
-            self.table.setColumnHidden(idx, True)
+        # ⛏️ 4️⃣ Sembunyikan kolom sensitif
+        if hasattr(self, "hide_sensitive_columns"):
+            self.hide_sensitive_columns()
 
 
     # === Checkbox di Header Kolom Pertama (Select All) ===
@@ -8246,7 +8266,6 @@ class MainWindow(QMainWindow):
 
                 umur = (target_date - tgl_lhr).days / 365.25
                 if umur < 13 or (umur < 17 and sts == "B"):
-                    d["CEK_DATA"] = "Potensi Dibawah Umur"
                     hasil_data.append(d)
 
             with self.freeze_ui():
@@ -8316,7 +8335,6 @@ class MainWindow(QMainWindow):
                 tps_set = {d.get("TPS", "").strip() for d in daftar}
                 if len(tps_set) > 1:
                     for d in daftar:
-                        d["CEK_DATA"] = "Beda TPS"
                         hasil_data.append(d)
 
             # === Urutkan hasil (meski kosong tetap aman) ===
@@ -8403,7 +8421,6 @@ class MainWindow(QMainWindow):
                 if not nik:
                     continue
                 if ket == "8" and "B" not in nik_ket_map[nik]:
-                    d["CEK_DATA"] = "Tidak Padan"
                     hasil_data.append(d)
 
             # === Urutkan hasil (tetap aman meski kosong) ===
@@ -8487,7 +8504,6 @@ class MainWindow(QMainWindow):
             for nik, daftar in nik_groups.items():
                 if len(daftar) > 1:
                     for d in daftar:
-                        d["CEK_DATA"] = "Ganda Aktif"
                         hasil_data.append(d)
 
             # === Urutkan hasil (tetap aman meski kosong) ===
@@ -8571,7 +8587,6 @@ class MainWindow(QMainWindow):
                 if d.get("KET", "").strip().upper() == "B":
                     nik = d.get("NIK", "").strip()
                     if nik and nik_count[nik] == 1:
-                        d["CEK_DATA"] = "Pemilih Pemula"
                         hasil_data.append(d)
 
             # === Urutkan hasil ===
@@ -8621,11 +8636,11 @@ class MainWindow(QMainWindow):
         }
         warna_default = warna_cache["hitam"]
 
-        idx_cekdata = self._col_index("CEK_DATA")
+        #idx_cekdata = self._col_index("CEK_DATA")
         idx_ket = self._col_index("KET")
 
         for d in self.all_data:
-            cek_data_val = str(d.get("CEK_DATA", "")).strip()
+            #cek_data_val = str(d.get("CEK_DATA", "")).strip()
             ket_val = str(d.get("KET", "")).strip()
 
             # === PRIORITAS WARNA ===
