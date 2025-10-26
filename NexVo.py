@@ -13,12 +13,13 @@ Catatan:
 - Jalankan: python nexvo.py
 """
 
-import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib, base64, zipfile, shutil
+import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib, base64, zipfile, shutil, json
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from contextlib import contextmanager
+from functools import partial
 from collections import defaultdict
 from typing import Optional, List, Dict, Any
 from io import BytesIO
@@ -43,21 +44,21 @@ except Exception as e:
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray,
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths,
     QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
 )
 
 from PyQt6.QtGui import (
-    QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence,
+    QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence, QMouseEvent,
     QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication,
-    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout
+    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut
 )
 
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QDialog, QDockWidget, QMenu, QMessageBox, QCompleter,
     QStackedWidget, QStatusBar, QToolBar, QToolButton, QHeaderView, QTableWidget,
-    QTableWidgetItem, QStyledItemDelegate, QAbstractItemView, QStyle,
+    QTableWidgetItem, QStyledItemDelegate, QAbstractItemView, QStyle, QStyleOptionViewItem,
     QFileDialog, QScrollArea, QFormLayout, QInputDialog, QSlider, QGridLayout, QProgressBar,
     QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox,
     QCheckBox, QRadioButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialogButtonBox,
@@ -5094,18 +5095,36 @@ class HoverDelegate(QStyledItemDelegate):
         return super().eventFilter(obj, event)
 
     def paint(self, painter, option, index):
-        font = option.font
+        # Buat salinan option agar tidak mengganggu state asli
+        opt = QStyleOptionViewItem(option)
+
+        # 🌟 Warna background seleksi dari palet (biar ikut highlight kuning lembut)
+        if opt.state & QStyle.StateFlag.State_Selected:
+            painter.save()
+            painter.fillRect(opt.rect, opt.palette.highlight())
+            painter.restore()
+
+        # 🌟 Efek hover (hanya jika tidak diseleksi)
+        if index.row() == self.hovered_row and not (opt.state & QStyle.StateFlag.State_Selected):
+            painter.save()
+            hover_color = QColor(255, 247, 194, 80)  # kuning lembut transparan
+            painter.fillRect(opt.rect, hover_color)
+            painter.restore()
+
+        # 🌟 Modifikasi font untuk hover agar tetap elegan
+        font = opt.font
         if index.row() == self.hovered_row and index.column() != 0:
             font.setBold(True)
             font.setPointSize(font.pointSize() - 2)
         painter.setFont(font)
-        super().paint(painter, option, index)
+
+        # 🔹 Gambar teks dan isi sel seperti biasa
+        super().paint(painter, opt, index)
 
 class CustomTable(QTableWidget):
     def focusOutEvent(self, event):
-        # ⚡️ Abaikan hilangnya fokus supaya warna seleksi/hover tidak berubah
-        event.ignore()
-
+        # ⚡️ Biarkan Qt tahu fokus hilang, tapi jangan ubah tampilan seleksi
+        QTableWidget.focusOutEvent(self, event)
 
 #### =================== Fungsi BackUp dan Restore ===================
 BACKUP_DIR = Path("C:/NexVo/BackUp")
@@ -5478,14 +5497,41 @@ class MainWindow(QMainWindow):
         generate_menu.addAction(action_bulk_sidalih)
 
         view_menu = menubar.addMenu("View")
-        view_menu.addAction(QAction(" Actual Size", self, shortcut="Ctrl+0"))
-        view_menu.addAction(QAction(" Zoom In", self, shortcut="Ctrl+Shift+="))
-        view_menu.addAction(QAction(" Zoom Out", self, shortcut="Ctrl+-"))
-        view_menu.addAction(QAction(" Toggle Full Screen", self, shortcut="F11"))
+        # Actual Size (reset zoom)
+        self.act_zoom_reset = QAction(" Actual Size", self)
+        self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
+        view_menu.addAction(self.act_zoom_reset)
+
+        # Zoom In
+        self.act_zoom_in = QAction(" Zoom In", self)
+        self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
+        view_menu.addAction(self.act_zoom_in)
+
+        # Zoom Out
+        self.act_zoom_out = QAction(" Zoom Out", self)
+        self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
+        view_menu.addAction(self.act_zoom_out)
+
+        self._zoom_shortcuts = []
+
+        def _add_sc(seq, delta):
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            sc.activated.connect(partial(self.zoom_table_font, delta))
+            self._zoom_shortcuts.append(sc)
+
+        # Variasi zoom in
+        for seq in ("Ctrl+Shift+=", "Ctrl+Shift++", "Ctrl++", "Ctrl+="):
+            _add_sc(seq, 1)
+
+        # Variasi zoom out
+        for seq in ("Ctrl+Shift+-", "Ctrl+-"):
+            _add_sc(seq, -1)
+
+        # Reset zoom (Ctrl+0 hanya dari sini)
+        _add_sc("Ctrl+0", 0)
 
         help_menu = menubar.addMenu("Help")
-        help_menu.addAction(QAction(" Shortcut", self, shortcut="Alt+Z"))
-
         action_setting = QAction(" Setting Aplikasi", self)
         action_setting.setShortcut("Alt+T")
         action_setting.triggered.connect(self.show_setting_dialog)
@@ -5780,23 +5826,62 @@ class MainWindow(QMainWindow):
         self.table.setShowGrid(True)
         self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.horizontalHeader().setFixedHeight(24)
-        self.checkbox_delegate = CheckboxDelegate(self.table)
-        self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
-        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
-        self.installEventFilter(self)
-        self.menuBar().installEventFilter(self)
-        for tb in self.findChildren(QToolBar):
-            tb.installEventFilter(self)
+
+        # === Delegates (checkbox & hover)
+        self.checkbox_delegate = CheckboxDelegate(self.table)
+        self.hover_delegate = HoverDelegate(self.table)
+        self.table.setItemDelegateForColumn(0, self.checkbox_delegate)
+        for c in range(1, len(columns)):
+            self.table.setItemDelegateForColumn(c, self.hover_delegate)
+
+        # === Context Menu
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.itemDoubleClicked.connect(self.on_row_double_clicked)
+
+        # === Warna seleksi kuning lembut transparan ===
         pal = self.table.palette()
-        pal.setColor(QPalette.ColorRole.Highlight, QColor("transparent"))     # hilangkan warna biru saat seleksi
-        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))   # teks tetap hitam
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))      # teks tetap hitam
         self.table.setPalette(pal)
 
+        # === Aktifkan Ctrl+C copy stabil (event filter)
+        self.copy_filter = CopyEventFilter(self.table)
+        self.table.installEventFilter(self.copy_filter)
+
+        # === Auto deselect aman (tidak ganggu drag)
+        def _setup_table_auto_deselect_safe():
+            self.table.setMouseTracking(True)
+            self.table.viewport().installEventFilter(self)
+        self._setup_table_auto_deselect = _setup_table_auto_deselect_safe
+        self._setup_table_auto_deselect()
+
+        # === Style umum tabel ===
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background: #ececec;
+                alternate-background-color: #f7f7f7;
+                border: 1px solid #4E4E4E;
+                color: #000000;
+                font-family: Segoe UI;
+                font-size: 10pt;
+            }
+            QHeaderView::section {
+                background-color: #3a3a3a;
+                color: #ffffff;
+                padding: 4px;
+                font-weight: 600;
+            }
+            QTableView::item:focus { outline: none; }
+            QTableWidget::item:hover { background-color: rgba(255, 247, 194, 100); }  /* hover serasi */
+        """)
+
+        # === Kolom lebar default ===
         col_widths = {
             " ": 30,
             "KECAMATAN": 120,
@@ -5826,44 +5911,20 @@ class MainWindow(QMainWindow):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
 
-        # 🔒 Sembunyikan kolom CEK_DATA/JK_ASAL/TPS_ASAL (tetap ada datanya)
-        # (Tetap dipanggil di sini agar tidak mengurangi perilaku asli)
+        # 🔒 Sembunyikan kolom sensitif
         if hasattr(self, "hide_sensitive_columns"):
             self.hide_sensitive_columns()
 
-        # 🔹 Seleksi & delegate hover
-        self.make_table_text_selectable()
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.hover_delegate = HoverDelegate(self.table)
-        self.table.setItemDelegate(self.hover_delegate)
-        self._setup_table_auto_deselect()
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background: #ececec;
-                alternate-background-color: #f7f7f7;
-                border: 1px solid #4E4E4E;
-                color: #000000;
-                font-family: Segoe UI;
-                font-size: 10pt;
-            }
-            QHeaderView::section {
-                background-color: #3a3a3a;
-                color: #ffffff;
-                padding: 4px;
-                font-weight: 600;
-            }
-            QTableView::item:focus {
-                outline: none;              /* hilangkan outline fokus hitam */
-            }
-            /* Opsional hover halus */
-            /* QTableWidget::item:hover { background-color: #dcdcdc; } */
-        """)
-
+        # === Header fix & stretch ===
         self.connect_header_events()
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        #self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(0, 30)
         self.table.horizontalHeader().setStretchLastSection(True)
+        # === Muat lebar kolom terakhir (jika ada)
+        QTimer.singleShot(0, self.load_column_widths)
+        # === Simpan otomatis saat user mengubah lebar kolom
+        header = self.table.horizontalHeader()
+        header.sectionResized.connect(self._on_column_resized)
         QTimer.singleShot(0, self.init_header_checkbox)
 
         # ==== Pagination container ====
@@ -5898,7 +5959,7 @@ class MainWindow(QMainWindow):
         self.apply_column_visibility()
 
         # ✅ Panggilan ditunda SETELAH semua siap (hindari atribut belum ada)
-        QTimer.singleShot(0, self.auto_fit_columns)                 # auto fit + hide ulang kolom sensitif
+        #QTimer.singleShot(0, self.auto_fit_columns)                 # auto fit + hide ulang kolom sensitif
         QTimer.singleShot(200, lambda: self.sort_data(auto=True))   # urut senyap
         QTimer.singleShot(0, self.showMaximized)
 
@@ -5907,15 +5968,8 @@ class MainWindow(QMainWindow):
         pal.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))
         self.setPalette(pal)
 
-
     def _safe_clear_selection(self):
-        """Hilangkan seleksi dengan aman tanpa memicu warning editor Qt."""
-        from PyQt6.QtCore import QTimer
-
-        QTimer.singleShot(0, lambda: (
-            self.table.clearFocus(),
-            self.table.clearSelection()
-        ))
+        QTimer.singleShot(0, lambda: self.table.clearSelection())
 
 
     def _setup_table_auto_deselect(self):
@@ -5924,28 +5978,21 @@ class MainWindow(QMainWindow):
         self.table.viewport().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        # === 🩶 Menangani klik luar tabel untuk clear selection ===
         if event.type() == QEvent.Type.MouseButtonPress:
             pos = self.mapFromGlobal(event.globalPosition().toPoint())
             if not self.table.geometry().contains(pos):
                 self._safe_clear_selection()
 
-        # === 🩶 Area viewport tabel ===
-        if obj == self.table.viewport():
-            if event.type() == QEvent.Type.MouseMove:
-                index = self.table.indexAt(event.pos())
-                if not index.isValid():
-                    self._safe_clear_selection()
-            elif event.type() == QEvent.Type.Leave:
-                self._safe_clear_selection()
-            elif event.type() == QEvent.Type.Resize:
-                # Pastikan overlay “Data Tidak Ditemukan” tetap di tengah
-                if hasattr(self, "_empty_overlay") and self._empty_overlay:
-                    self._empty_overlay.resize(self.table.viewport().size())
+        if obj == self.table.viewport() and event.type() == QEvent.Type.Resize:
+            if hasattr(self, "_empty_overlay") and self._empty_overlay:
+                self._empty_overlay.resize(self.table.viewport().size())
 
         return super().eventFilter(obj, event)
-
     
+    def _on_column_resized(self, index, old_size, new_size):
+            """Tangani perubahan lebar kolom dan simpan otomatis (debounce singkat)."""
+            QTimer.singleShot(300, self.save_column_widths)
+
     def reset_tampilkan_semua_data(self, silent=False):
         """
         🔁 Menampilkan kembali seluruh data dari tabel aktif (reset hasil filter/pemeriksaan)
@@ -6030,18 +6077,6 @@ class MainWindow(QMainWindow):
                     flags = item.flags()
                     item.setFlags((flags | Qt.ItemFlag.ItemIsSelectable) & ~Qt.ItemFlag.ItemIsEditable)
 
-    def keyPressEvent(self, event):
-        """Menangani Ctrl+C untuk menyalin teks dari cell/table."""
-        if event.key() == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            selected_items = self.table.selectedItems()
-            if not selected_items:
-                return
-            # Ambil semua teks dari cell yang dipilih
-            text = "\n".join([item.text() for item in selected_items])
-            QApplication.clipboard().setText(text)
-        else:
-            super().keyPressEvent(event)
-
     def _on_row_checkbox_changed_for_header_sync(self, item):
         # Hanya respons kalau kolom checkbox (kolom 0) yang berubah
         if item and item.column() == 0 and not getattr(self, "_header_bulk_toggling", False):
@@ -6053,6 +6088,45 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.apply_column_visibility()
             self.auto_fit_columns()
+
+    def zoom_table_font(self, delta: int):
+        """Perbesar/perkecil font tabel. delta: +1 zoom in, -1 zoom out, 0 reset."""
+        try:
+            font = self.table.font()
+            default_size = 10
+
+            # Ambil ukuran font terkini (gunakan float supaya akurat)
+            current_size = font.pointSizeF() or default_size
+
+            # Hitung ukuran baru
+            if delta == 0:
+                new_size = default_size
+            else:
+                new_size = current_size + delta
+
+            # Batasi ukuran
+            new_size = max(6, min(new_size, 20))
+
+            # Terapkan ke tabel
+            font.setPointSizeF(new_size)
+            self.table.setFont(font)
+
+            # Sesuaikan tinggi baris & header
+            self.table.verticalHeader().setDefaultSectionSize(
+                max(18, int(22 + (new_size - default_size) * 1.3))
+            )
+            self.table.horizontalHeader().setFixedHeight(
+                max(22, int(24 + (new_size - default_size) * 1.0))
+            )
+
+            # Segarkan tampilan
+            self.table.viewport().update()
+            QApplication.processEvents()
+
+            #print(f"[Zoom] Font size: {new_size} pt")
+
+        except Exception as e:
+            print(f"[Zoom] Error: {e}")
 
 
     @with_safe_db
@@ -6087,7 +6161,6 @@ class MainWindow(QMainWindow):
             else:
                 # default: kolom terlihat
                 self.table.setColumnHidden(i, False)
-
 
     def showEvent(self, event):
         """Otomatis maximize saat pertama kali tampil."""
@@ -7303,15 +7376,16 @@ class MainWindow(QMainWindow):
                 continue
 
     def auto_fit_columns(self):
-        """Atur lebar kolom otomatis dan sembunyikan kolom sensitif."""
+        """Biarkan kolom bisa diatur manual tanpa auto-resize otomatis."""
         header = self.table.horizontalHeader()
-        
-        # ⛏️ 1️⃣ Sesuaikan lebar kolom ke isi
-        self.table.resizeColumnsToContents()
 
-        # ⛏️ 2️⃣ Batasi kolom tertentu agar tidak terlalu lebar
+        # 🔹 1️⃣ Pastikan semua kolom bisa diatur manual oleh pengguna
+        for i in range(self.table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+
+        # 🔹 2️⃣ Batasi kolom tertentu agar tidak terlalu lebar
         max_widths = {
-            "CEK_DATA": 200,   # cukup untuk teks panjang seperti yyyy-mm-dd atau status
+            "CEK_DATA": 200,   # contoh: batasi agar tidak terlalu panjang
         }
 
         for i in range(self.table.columnCount()):
@@ -7325,16 +7399,12 @@ class MainWindow(QMainWindow):
                 if current > max_allowed:
                     self.table.setColumnWidth(i, max_allowed)
 
-        # ⛏️ 3️⃣ Pengaturan stretch
+        # 🔹 3️⃣ Pastikan kolom terakhir tidak auto-stretch
         header.setStretchLastSection(False)
-        last_col = self.table.columnCount() - 1
-        if last_col >= 0:
-            header.setSectionResizeMode(last_col, QHeaderView.ResizeMode.Interactive)
 
-        # ⛏️ 4️⃣ Sembunyikan kolom sensitif
+        # 🔹 4️⃣ Tetap sembunyikan kolom sensitif (CEK_DATA, JK_ASAL, TPS_ASAL)
         if hasattr(self, "hide_sensitive_columns"):
             self.hide_sensitive_columns()
-
 
     # === Checkbox di Header Kolom Pertama (Select All) ===
     def init_header_checkbox(self):
@@ -9918,6 +9988,70 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[UI ERROR] Gagal transisi window: {e}")
 
+    def _get_column_config_path(self):
+        """Dapatkan path file config lebar kolom user (lokasi: AppData/NexVo/column_widths.json)."""
+        appdata = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        config_dir = os.path.join(appdata, "NexVo")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "column_widths.json")
+
+
+    def save_column_widths(self):
+        """Simpan lebar kolom tabel ke file JSON."""
+        try:
+            path = self._get_column_config_path()
+
+            # Ambil lebar kolom saat ini
+            widths = [self.table.columnWidth(i) for i in range(self.table.columnCount())]
+            headers = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
+
+            # Identitas unik user/tahapan supaya setting tidak tertukar
+            profile_key = f"{self._nama}_{self._desa}_{self._tahapan}".lower().replace(" ", "_")
+
+            data = {}
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+            data[profile_key] = dict(zip(headers, widths))
+
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            #print(f"[ColumnConfig] ✅ Lebar kolom disimpan ({profile_key})")
+
+        except Exception as e:
+            print(f"[ColumnConfig] ❌ Gagal menyimpan lebar kolom: {e}")
+
+
+    def load_column_widths(self):
+        """Muat ulang lebar kolom dari file JSON jika ada."""
+        try:
+            path = self._get_column_config_path()
+            if not os.path.exists(path):
+                return
+
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            profile_key = f"{self._nama}_{self._desa}_{self._tahapan}".lower().replace(" ", "_")
+            if profile_key not in data:
+                return
+
+            widths = data[profile_key]
+
+            for i in range(self.table.columnCount()):
+                header = self.table.horizontalHeaderItem(i)
+                if not header:
+                    continue
+                col_name = header.text()
+                if col_name in widths:
+                    self.table.setColumnWidth(i, int(widths[col_name]))
+
+            #print(f"[ColumnConfig] 📏 Lebar kolom dipulihkan ({profile_key})")
+
+        except Exception as e:
+            print(f"[ColumnConfig] ⚠️ Gagal memuat lebar kolom: {e}")
 
     # =================================================
     # Pagination UI
@@ -11319,6 +11453,17 @@ class RekapWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
             self.table.setItem(len(rows), j, item)
 
+
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # =========================================================
@@ -11341,6 +11486,46 @@ class RekapWindow(QMainWindow):
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
 
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -11507,6 +11692,16 @@ class BaruWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
             self.table.setItem(len(rows), j, item)
 
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # =========================================================
@@ -11529,6 +11724,46 @@ class BaruWindow(QMainWindow):
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
 
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -11695,6 +11930,16 @@ class UbahWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
             self.table.setItem(len(rows), j, item)
 
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # =========================================================
@@ -11717,6 +11962,46 @@ class UbahWindow(QMainWindow):
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
 
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -11867,6 +12152,16 @@ class SaringWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))
             self.table.setItem(len(rows), j, item)
 
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # === Tombol Tutup ===
@@ -11884,6 +12179,47 @@ class SaringWindow(QMainWindow):
         """)
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     def kembali_ke_main(self):
         """Kembalikan ke jendela utama."""
@@ -12025,6 +12361,16 @@ class KtpWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))
             self.table.setItem(len(rows), j, item)
 
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # === Tombol Tutup ===
@@ -12042,6 +12388,47 @@ class KtpWindow(QMainWindow):
         """)
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow."""
@@ -12187,6 +12574,16 @@ class DifabelWindow(QMainWindow):
             item.setBackground(QBrush(QColor("#B0AEAD")))
             self.table.setItem(len(rows), j, item)
 
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
         layout.addWidget(self.table)
 
         # === Tombol Tutup ===
@@ -12204,6 +12601,47 @@ class DifabelWindow(QMainWindow):
         """)
         btn_tutup.clicked.connect(self.kembali_ke_main)
         layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
 
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow."""
@@ -19188,6 +19626,39 @@ class RegisterWindow(QMainWindow):
         btn.clicked.connect(lanjut_verifikasi)
 
         qr_dialog.exec()
+
+# =========================== COPY FILTER ===========================
+from PyQt6.QtCore import QObject, QEvent, Qt
+from PyQt6.QtWidgets import QApplication
+
+class CopyEventFilter(QObject):
+    """Filter stabil untuk menangani Ctrl+C pada QTableWidget."""
+    def __init__(self, table):
+        super().__init__(table)
+        self.table = table
+
+    def eventFilter(self, obj, event):
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                selected_ranges = self.table.selectedRanges()
+                if not selected_ranges:
+                    return True  # tahan event agar tidak bocor
+
+                copied_text = ""
+                for sel_range in selected_ranges:
+                    top = sel_range.topRow()
+                    bottom = sel_range.bottomRow()
+                    left = sel_range.leftColumn()
+                    right = sel_range.rightColumn()
+                    for row in range(top, bottom + 1):
+                        row_data = []
+                        for col in range(left, right + 1):
+                            item = self.table.item(row, col)
+                            row_data.append(item.text() if item else "")
+                        copied_text += "\t".join(row_data) + "\n"
+                QApplication.clipboard().setText(copied_text.strip())
+                return True  # tandai sudah diproses, jangan teruskan ke Qt
+        return super().eventFilter(obj, event)
 
 
     # =========================================================
