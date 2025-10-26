@@ -17063,8 +17063,8 @@ class LapCoklit(QMainWindow):
 
                 # === Tabel Data ===
                 header_style = ParagraphStyle("Head", fontName=self._font_base, fontSize=11, alignment=TA_CENTER)
-                cell_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_CENTER, leading=10)
-                coklit_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_LEFT, leading=10)
+                cell_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_CENTER, leading=14)
+                coklit_style = ParagraphStyle("Cell", fontName=self._font_base, fontSize=11, alignment=TA_LEFT, leading=14)
 
                 # ⚙️ Data tabel (baris ditata agar indeks tepat untuk SPAN/warna)
                 data = [
