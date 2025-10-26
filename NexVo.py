@@ -947,8 +947,8 @@ class SettingDialog(QDialog):
 # =========================================================
 # 🔹 FUNGSI GLOBAL: PALET TEMA
 # =========================================================
-def apply_global_palette(app, mode: str):
-    """Atur palet global (QPalette) agar semua widget ikut tema aktif."""
+def apply_global_palette(app):
+    """Atur palet global terang (fixed light mode), tidak terpengaruh tema Windows."""
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor("#f9f9f9"))
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#000000"))
@@ -962,7 +962,6 @@ def apply_global_palette(app, mode: str):
     palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff6600"))
     palette.setColor(QPalette.ColorRole.Highlight, QColor("#bcbcbc"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
-    app.setPalette(palette)
     app.setPalette(palette)
 
 # =====================================================
@@ -5435,7 +5434,9 @@ class MainWindow(QMainWindow):
 
         action_unggah_reguler = QAction(" Unggah Webgrid TPS Reguler", self)
         action_unggah_reguler.setShortcut("Alt+I")
+        action_unggah_reguler.triggered.connect(self.open_unggah_reguler)
         file_menu.addAction(action_unggah_reguler)
+
         action_rekap = QAction(" Rekapitulasi", self)
         action_rekap.setShortcut("Alt+R")
         file_menu.addAction(action_rekap)
@@ -9907,6 +9908,7 @@ class MainWindow(QMainWindow):
             anim.setEndValue(1)
             anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
             anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+            anim.finished.connect(new_window.repaint)
             new_window._fade_anim = anim
 
             new_window.showMaximized()
@@ -10922,6 +10924,183 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Gagal Ekspor", f"Terjadi kesalahan saat ekspor:<br><b>{e}</b>")
 
+    def open_unggah_reguler(self):
+        """Buka halaman Unggah Webgrid TPS Reguler (editable table 500 baris, fullscreen, dengan format kolom sesuai)."""
+        try:
+            self.show_window_with_transition(UnggahRegulerWindow)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memuat Webgrid unggah data")
+
+
+class UnggahRegulerWindow(QWidget):
+    """Jendela Unggah Webgrid TPS Reguler (editable table 500 baris)."""
+    def __init__(self, main_window):
+        super().__init__()
+        self.setPalette(QApplication.instance().palette())
+        self.main_window = main_window
+
+        # ==========================================
+        # 🔹 Identitas yang dibawa dari MainWindow
+        # ==========================================
+        self._nama = getattr(main_window, "_nama", "")
+        self._kecamatan = getattr(main_window, "_kecamatan", "")
+        self._desa = getattr(main_window, "_desa", "")
+        self._tahapan = getattr(main_window, "_tahapan", "")
+        self._active_table = getattr(main_window, "_active_table", lambda: None)
+
+        # ==========================================
+        # 🔹 Konfigurasi dasar jendela
+        # ==========================================
+        self.setWindowTitle(f"Unggah Webgrid TPS Desa {self._desa.title()} – Tahap {self._tahapan}")
+        self.setStyleSheet("background-color:white;")
+
+        # Terapkan ikon aplikasi
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(base_dir, "KPU.png")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+        except Exception as e:
+            print(f"[Warning] Gagal memuat ikon KPU: {e}")
+
+        # ==========================================
+        # 🔹 Layout utama
+        # ==========================================
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(10)
+
+        # ==========================================
+        # 🔹 Tabel utama
+        # ==========================================
+        self.table = QTableWidget(500, 17)
+        headers = [
+            "No.", "DPID", "NKK", "NIK", "NAMA", "JK", "TMPT_LHR", "TGL_LHR",
+            "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel", "SUMBER", "KET", "TPS"
+        ]
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color:#ff6600;
+                color:white;
+                font-weight:bold;
+                padding:6px;
+                border:none;
+            }
+            QTableWidget {
+                font-size:10.5pt;
+                gridline-color:#cccccc;
+                selection-background-color:#ffe0cc;
+                selection-color:#000;
+            }
+        """)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.horizontalHeader().setStretchLastSection(True)
+
+        col_widths = [50, 70, 130, 130, 200, 30, 130, 100, 40, 235, 40, 40, 40, 45, 110, 40, 50]
+        for i, w in enumerate(col_widths):
+            self.table.setColumnWidth(i, w)
+
+        # === Kolom rata kiri khusus
+        left_columns = ["NAMA", "ALAMAT", "TMPT_LHR", "SUMBER"]
+        left_indexes = [headers.index(c) for c in left_columns]
+
+        # Isi awal tabel
+        for row in range(500):
+            for col in range(len(headers)):
+                item = QTableWidgetItem("")
+                if col == 0:
+                    # kolom No tidak bisa diedit
+                    item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                # Alignment
+                if col in left_indexes:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                else:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row, col, item)
+
+        # Event handler: isi nomor otomatis bila baris penuh
+        self.table.itemChanged.connect(self._fill_numbers)
+        self.layout.addWidget(self.table)
+
+        # ==========================================
+        # 🔹 Tombol bawah
+        # ==========================================
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+
+        # Tombol Simpan
+        btn_simpan = QPushButton("💾 Simpan")
+        btn_simpan.setFixedSize(140, 40)
+        btn_simpan.setStyleSheet("""
+            QPushButton {
+                background-color:#ff6600;
+                color:white;
+                font-weight:bold;
+                border-radius:8px;
+            }
+            QPushButton:hover {
+                background-color:#d94f00;
+            }
+        """)
+        btn_simpan.clicked.connect(lambda: print("[INFO] Tombol Simpan ditekan (fungsi belum diisi)."))
+        btn_layout.addWidget(btn_simpan)
+
+        # Tombol Tutup
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color:#555;
+                color:white;
+                font-weight:bold;
+                border-radius:8px;
+            }
+            QPushButton:hover {
+                background-color:#333;
+            }
+        """)
+        btn_tutup.clicked.connect(self._close_window)
+        btn_layout.addWidget(btn_tutup)
+
+        btn_layout.addStretch(1)
+        self.layout.addLayout(btn_layout)
+
+    # ==========================================
+    # 🔸 Fungsi bantu
+    # ==========================================
+    def _fill_numbers(self):
+        """Isi kolom No. otomatis bila seluruh kolom lain terisi."""
+        for row in range(500):
+            filled = all(
+                (self.table.item(row, c) and self.table.item(row, c).text().strip() != "")
+                for c in range(1, 17)
+            )
+            no_item = self.table.item(row, 0)
+            if filled:
+                if not no_item.text().strip():
+                    no_item.setText(str(row + 1))
+            else:
+                no_item.setText("")
+
+    def _close_window(self):
+        """Tutup jendela unggah dan tampilkan kembali MainWindow."""
+        try:
+            if self.main_window:
+                # Pastikan main window tampil penuh dan berada di depan
+                self.main_window.showNormal()
+                self.main_window.showMaximized()
+                self.main_window.raise_()
+                self.main_window.activateWindow()
+
+            # Tutup jendela ini
+            self.close()
+
+        except Exception as e:
+            print(f"[UI] Gagal menutup jendela UnggahRegulerWindow: {e}")
 
 # =========================================================
 # 🔹 KELAS TAMPILAN REKAP
@@ -19092,7 +19271,7 @@ if __name__ == "__main__":
     # 🔹 Bangun aplikasi Qt
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
-    apply_global_palette(app, mode="light")
+    apply_global_palette(app)
     app.setApplicationName("NexVo")
 
     # ===================================================
