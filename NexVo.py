@@ -16950,17 +16950,17 @@ class LapCoklit(QMainWindow):
                     # Normalisasi nilai TPS agar '1', '01', '001' dianggap sama
                     tps_norm = str(int(tps)) if str(tps).isdigit() else str(tps)
                     cur.execute("""
-                        SELECT nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan,
+                        SELECT nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, lembar_bukti,
                             stiker1, stiker2, stiker3
                         FROM data_pantarlih
                         WHERE TRIM(tps)=? OR TRIM(tps)=?
                     """, (tps_norm, f"{int(tps):03d}" if str(tps).isdigit() else str(tps)))
-                    pantarlih = cur.fetchone() or ("-", "-", "-", "-", "-", "-", "-")
+                    pantarlih = cur.fetchone() or ("-", "-", "-", "-", "-", "-", "-", "-")
                 except Exception as e:
                     print(f"[LapCoklit] ⚠️ Gagal baca data pantarlih untuk TPS {tps}: {e}")
-                    pantarlih = ("-", "-", "-", "-", "-", "-", "-")
+                    pantarlih = ("-", "-", "-", "-", "-", "-", "-", "-")
 
-                nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, stiker1, stiker2, stiker3 = pantarlih
+                nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, lembar_bukti, stiker1, stiker2, stiker3 = pantarlih
 
                 # === Fungsi format angka aman ===
                 def fmt_val(key):
@@ -17152,7 +17152,7 @@ class LapCoklit(QMainWindow):
                     "", "", "", "", "", fmt_val("data66")],
 
                     [Paragraph("XI", cell_style), Paragraph("Jumlah Lembar Bukti Pemilih Terdaftar dibagikan", coklit_style),
-                    "", "", "", "", "", ""],
+                    "", "", "", "", "", str(lembar_bukti)],
 
                     ["", "", "", "", "", "", "", ""],  # separator
 
@@ -17605,62 +17605,140 @@ class LapCoklit(QMainWindow):
     # SIMPAN PDF
     # ===========================================================
     def simpan_pdf(self):
+        """Simpan PDF hasil generate hanya jika tabel data_pantarlih sudah ada dan berisi data (gaya khas NexVo)."""
         import os, datetime
+        from db_manager import get_connection
         try:
-            buf = getattr(self, "_pdf_buf", None)
-            if not buf:
-                QMessageBox.warning(self, "Gagal", "Tidak ada dokumen PDF untuk disimpan.")
+            # === 1️⃣ Validasi tabel data_pantarlih ===
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='data_pantarlih';
+            """)
+            tbl_exists = cur.fetchone()
+
+            if not tbl_exists:
+                show_modern_error(
+                    self,
+                    "Gagal Menyimpan",
+                    "❌ <b>Data Pantarlih belum diisi.</b><br>"
+                    "Isi Data Pantarlih terlebih dahulu sebelum menyimpan dokumen."
+                )
                 return
-            data = buf.data()
-            tahap = self.tahap
-            desa = self.desa.title()
+
+            # === 2️⃣ Cek apakah tabel kosong ===
+            cur.execute("SELECT COUNT(*) FROM data_pantarlih;")
+            total = cur.fetchone()[0] or 0
+            if total == 0:
+                show_modern_error(
+                    self,
+                    "Gagal Menyimpan",
+                    "⚠️ <b>Data Pantarlih belum diisi.</b><br>"
+                    "Isi Data Pantarlih terlebih dahulu sebelum menyimpan dokumen."
+                )
+                return
+
+            # === 3️⃣ Validasi buffer PDF (pastikan bukan placeholder kosong) ===
+            buf = getattr(self, "_pdf_buf", None)
+            if not buf or buf.size() < 800:
+                show_modern_error(
+                    self,
+                    "Gagal Menyimpan",
+                    "❌ <b>Data Pantarlih belum diisi.</b><br>"
+                    "Isi Data Pantarlih terlebih dahulu sebelum menyimpan dokumen."
+                )
+                return
+
+            # === 4️⃣ Siapkan direktori penyimpanan ===
+            tahap = getattr(self, "tahap", "TAHAPAN").upper()
+            desa = getattr(self, "desa", "DESA").title()
             base_dir = os.path.join("C:/NexVo", tahap)
             os.makedirs(base_dir, exist_ok=True)
-            waktu_str = datetime.datetime.now().strftime("%d-%m-%Y %H.%M")
-            path_file = os.path.join(base_dir, f"Model A-Rekap PPS {tahap} Desa {desa} {waktu_str}.pdf")
+
+            waktu_str = datetime.datetime.now().strftime("%d%m%Y %H.%M")
+            path_file = os.path.join(base_dir, f"Laporan Hasil Coklit Desa {desa} {waktu_str}.pdf")
+
+            # === 5️⃣ Simpan file PDF ===
+            data = buf.data()
             with open(path_file, "wb") as f:
                 f.write(data)
-            QMessageBox.information(self, "Berhasil", f"PDF berhasil disimpan:\n{path_file}")
+
+            # === 6️⃣ Notifikasi sukses khas NexVo ===
+            show_modern_info(
+                self,
+                "Berhasil",
+                f"✅ <b>Laporan Hasil Coklit</b> berhasil disimpan di:<br><b>{path_file}</b>"
+            )
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Gagal menyimpan PDF:\n{e}")
+            # === 7️⃣ Tangani error tak terduga ===
+            show_modern_error(
+                self,
+                "Error",
+                f"Gagal menyimpan PDF:<br><b>{e}</b>"
+            )
 
     # ===========================================================
     # CETAK PDF
     # ===========================================================
     def print_pdf(self):
-        """Cetak PDF Model A-Rkap PPS langsung ke printer (fit-to-page sesuai DPI, auto orientasi)."""
+        """Cetak PDF Model A-Rekap PPS langsung ke printer (fit-to-page 300–600 DPI, auto orientasi, gaya NexVo)."""
+        import os, contextlib
+        from db_manager import get_connection
+
         try:
-            # 🔇 Sembunyikan log 'User System - ... = Gray'
+            # 🔇 Hilangkan log 'User System – ... = Gray'
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
 
                 tahap = getattr(self, "tahap", "TAHAPAN")
 
-                # === 1️⃣ Pastikan dokumen PDF ada ===
+                # === 1️⃣ Validasi tabel data_pantarlih ===
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name='data_pantarlih';
+                """)
+                if not cur.fetchone():
+                    show_modern_error(
+                        self,
+                        "Gagal Mencetak",
+                        "❌ <b>Data Pantarlih belum diisi.</b><br>"
+                        "Isi Data Pantarlih terlebih dahulu sebelum mencetak dokumen."
+                    )
+                    return
+
+                cur.execute("SELECT COUNT(*) FROM data_pantarlih;")
+                if (cur.fetchone()[0] or 0) == 0:
+                    show_modern_error(
+                        self,
+                        "Gagal Mencetak",
+                        "⚠️ <b>Data Pantarlih belum diisi.</b><br>"
+                        "Isi Data Pantarlih terlebih dahulu sebelum mencetak dokumen."
+                    )
+                    return
+
+                # === 2️⃣ Validasi dokumen PDF ===
                 pdf_doc = getattr(self, "_pdf_doc", None)
                 if pdf_doc is None or pdf_doc.pageCount() == 0:
-                    QMessageBox.warning(self, "Tidak Ada Dokumen", "Tidak ada dokumen PDF yang bisa dicetak.")
+                    show_modern_error(
+                        self,
+                        "Tidak Ada Dokumen",
+                        "❌ <b>Data Pantarlih belum diisi.</b><br>"
+                        "Isi Data Pantarlih terlebih dahulu sebelum mencetak dokumen."
+                    )
                     return
 
-                # === 2️⃣ Konfirmasi Cetak ===
-                msg = QMessageBox(self)
-                msg.setWindowTitle("Konfirmasi Cetak")
-                msg.setText(f"Apakah Anda yakin ingin mencetak Model A-Rekap PPS tahap <b>{tahap}</b>?")
-                msg.setIcon(QMessageBox.Icon.Question)
-                msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                msg.button(QMessageBox.StandardButton.Yes).setText("Cetak")
-                msg.button(QMessageBox.StandardButton.No).setText("Batal")
-                msg.setStyleSheet("""
-                    QMessageBox { background:#fff; color:#000; font-family:'Segoe UI'; font-size:10.5pt; }
-                    QMessageBox QLabel { color:#000; font-size:11pt; font-weight:500; }
-                    QPushButton { min-width:80px; min-height:32px; border-radius:6px; font-weight:bold; color:#fff; background:#ff6600; }
-                    QPushButton:hover { background:#e65c00; }
-                    QPushButton[text="Batal"] { background:#777; }
-                    QPushButton[text="Batal"]:hover { background:#555; }
-                """)
-                if msg.exec() != QMessageBox.StandardButton.Yes:
+                # === 3️⃣ Konfirmasi cetak ===
+                if not show_modern_question(
+                    self,
+                    "Konfirmasi Cetak",
+                    f"Apakah Anda yakin ingin mencetak <b>Dokumen Laporan Hasil Coklit?"
+                ):
                     return
 
-                # === 3️⃣ Siapkan printer + orientasi otomatis ===
+                # === 4️⃣ Siapkan printer + orientasi otomatis ===
                 first_size = pdf_doc.pagePointSize(0)
                 orient = (
                     QPageLayout.Orientation.Landscape
@@ -17671,15 +17749,21 @@ class LapCoklit(QMainWindow):
                 printer = QPrinter(QPrinter.PrinterMode.HighResolution)
                 printer.setPageOrientation(orient)
 
+                # 🟧 Pastikan DPI tinggi (300–600 DPI)
+                printer.setResolution(600)
+                if printer.resolution() < 300:
+                    printer.setResolution(300)
+
                 dlg = QPrintDialog(printer, self)
-                dlg.setWindowTitle("Cetak Model A-RPP")
+                dlg.setWindowTitle("Cetak Model A-Rekap PPS")
                 if dlg.exec() != QDialog.DialogCode.Accepted:
                     return
 
-                # === 4️⃣ Render ke printer ===
+                # === 5️⃣ Render PDF ke printer ===
                 painter = QPainter()
                 if not painter.begin(printer):
-                    raise Exception("Tidak dapat memulai printer.")
+                    show_modern_error(self, "Gagal Mencetak", "❌ Tidak dapat memulai printer.")
+                    return
 
                 total_pages = pdf_doc.pageCount()
                 page_rect = printer.pageRect(QPrinter.Unit.Point)
@@ -17692,13 +17776,13 @@ class LapCoklit(QMainWindow):
                     if not pdf_sz.isValid():
                         continue
 
-                    scaled_width = pdf_sz.width() * scale_dpi
-                    scaled_height = pdf_sz.height() * scale_dpi
-                    scale_x = (page_rect.width() * scale_dpi) / scaled_width
-                    scale_y = (page_rect.height() * scale_dpi) / scaled_height
+                    scaled_w = pdf_sz.width() * scale_dpi
+                    scaled_h = pdf_sz.height() * scale_dpi
+                    scale_x = (page_rect.width() * scale_dpi) / scaled_w
+                    scale_y = (page_rect.height() * scale_dpi) / scaled_h
                     scale = min(scale_x, scale_y)
-                    target_w = scaled_width * scale
-                    target_h = scaled_height * scale
+                    target_w = scaled_w * scale
+                    target_h = scaled_h * scale
                     off_x = (page_rect.width() * scale_dpi - target_w) / 2
                     off_y = (page_rect.height() * scale_dpi - target_h) / 2
 
@@ -17710,11 +17794,19 @@ class LapCoklit(QMainWindow):
 
                 painter.end()
 
-            # ✅ Notifikasi setelah keluar dari redirect stdout
-            QMessageBox.information(self, "Cetak Selesai", f"Model A-Rekap PPS tahap {tahap} berhasil dicetak.")
+            # === 6️⃣ Notifikasi sukses khas NexVo ===
+            show_modern_info(
+                self,
+                "Cetak Selesai",
+                f"✅ <b>Dokumen Laporan Hasil Coklit</b> berhasil dikirim ke printer."
+            )
 
         except Exception as e:
-            QMessageBox.critical(self, "Gagal Mencetak", f"Terjadi kesalahan:\n{e}")
+            show_modern_error(
+                self,
+                "Gagal Mencetak",
+                f"Terjadi kesalahan:<br><b>{e}</b>"
+            )
             print(f"[ARPP PRINT] ❌ {e}")
 
     # ===========================================================
@@ -17778,6 +17870,7 @@ class Data_Pantarlih(QMainWindow):
                 nik_pantarlih TEXT,
                 hp_pantarlih TEXT,
                 tanggal_laporan TEXT,
+                lembar_bukti INTEGER,
                 stiker1 INTEGER,
                 stiker2 INTEGER,
                 stiker3 INTEGER
@@ -17805,30 +17898,30 @@ class Data_Pantarlih(QMainWindow):
 
         # ---------------- TABEL ----------------
         self.table = QTableWidget(self)
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(10)
 
-        # === Header dua baris pakai \n ===
         headers = [
             "No",
             "Nama TPS",
             "Nama Pantarlih",
             "NIK Pantarlih",
             "Nomor HP\nPantarlih",
-            "Tanggal Laporan",
+            "Tanggal\nLaporan",
+            "Jumlah Lembar Bukti\nTerdaftar Dibagikan",
             "Jumlah Stiker\nDiterima",
             "Jumlah Stiker\nDigunakan",
             "Jumlah Stiker\nTersisa"
         ]
         self.table.setHorizontalHeaderLabels(headers)
 
-        # === Properti dasar tabel ===
+        # === Properti dasar ===
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
         self.table.installEventFilter(self)
 
-        # === Style tabel ===
+        # === Style ===
         self.table.setStyleSheet("""
             QHeaderView::section {
                 background-color:#ff6600;
@@ -17845,17 +17938,22 @@ class Data_Pantarlih(QMainWindow):
             }
         """)
 
-        # === Rata tengah header ===
+        # === Header tengah & tinggi dua baris ===
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table.horizontalHeader().setFixedHeight(40)  # tinggi header pas untuk dua baris
+        self.table.horizontalHeader().setFixedHeight(40)
 
-        # === Lebar kolom ===
-        col_widths = [70, 100, 330, 180, 170, 150, 150, 150, 150]
+        # === Lebar kolom manual ===
+        col_widths = [70, 100, 330, 180, 170, 110, 170, 100, 100, 100]
         for i, w in enumerate(col_widths):
             self.table.setColumnWidth(i, w)
-        self.table.horizontalHeader().setStretchLastSection(False)
 
-        # === Center tabel di tengah halaman ===
+        # === Hilangkan scrollbar horizontal ===
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        # === Hitung total lebar tabel ===
+        total_width = sum(col_widths)
+
+        # === Bungkus tabel di layout supaya pas tengah dan selebar jendela ===
         table_container = QWidget()
         table_layout = QHBoxLayout(table_container)
         table_layout.setContentsMargins(0, 20, 0, 20)
@@ -17864,8 +17962,7 @@ class Data_Pantarlih(QMainWindow):
         table_layout.addWidget(self.table)
         table_layout.addStretch(1)
 
-        # === Tetapkan lebar total tabel agar tetap proporsional ===
-        total_width = sum(col_widths) + 40
+        # === Pastikan tabel selalu pas di tengah tanpa bergeser ===
         self.table.setFixedWidth(total_width)
         self.table.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
@@ -17983,7 +18080,7 @@ class Data_Pantarlih(QMainWindow):
                 # === 2️⃣ Ambil data pantarlih tersimpan ===
                 self.cur.execute("""
                     SELECT tps, nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan,
-                        stiker1, stiker2, stiker3
+                        lembar_bukti, stiker1, stiker2, stiker3
                     FROM data_pantarlih
                     ORDER BY CAST(tps AS INTEGER)
                 """)
@@ -18008,7 +18105,7 @@ class Data_Pantarlih(QMainWindow):
                     self.table.setItem(i - 1, 1, tps_item)
 
                     # Ambil data pantarlih (jika sudah tersimpan)
-                    vals = pantarlih_data.get(tps, ("", "", "", "", "", "", ""))
+                    vals = pantarlih_data.get(tps, ("", "", "", "", "", "", "", ""))
 
                     def make_item(txt, align_center=False, readonly=False):
                         item = QTableWidgetItem(str(txt) if txt is not None else "")
@@ -18018,21 +18115,23 @@ class Data_Pantarlih(QMainWindow):
                             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                         return item
 
+                    # Kolom data pantarlih
                     self.table.setItem(i - 1, 2, make_item(vals[0]))  # Nama Pantarlih
-                    self.table.setItem(i - 1, 3, make_item(vals[1]))  # NIK
+                    self.table.setItem(i - 1, 3, make_item(vals[1], align_center=True))  # NIK
                     self.table.setItem(i - 1, 4, make_item(vals[2], align_center=True))  # HP
-                    self.table.setItem(i - 1, 5, make_item(vals[3]))  # Tanggal
-                    self.table.setItem(i - 1, 6, make_item(vals[4] or "0", align_center=True))  # Stiker1
-                    self.table.setItem(i - 1, 7, make_item(vals[5] or "0", align_center=True))  # Stiker2
+                    self.table.setItem(i - 1, 5, make_item(vals[3], align_center=True))  # Tanggal Laporan
+                    self.table.setItem(i - 1, 6, make_item(vals[4], align_center=True))  # Lembar Bukti
+                    self.table.setItem(i - 1, 7, make_item(vals[5] or "0", align_center=True))  # Stiker1
+                    self.table.setItem(i - 1, 8, make_item(vals[6] or "0", align_center=True))  # Stiker2
 
-                    # Kolom 8: Hitung otomatis stiker tersisa
-                    s3 = vals[6]
+                    # Kolom 9: Hitung otomatis stiker tersisa
+                    s3 = vals[7]
                     if s3 in ("", None):
                         try:
-                            s3 = max(int(str(vals[4] or 0)) - int(str(vals[5] or 0)), 0)
+                            s3 = max(int(str(vals[5] or 0)) - int(str(vals[6] or 0)), 0)
                         except Exception:
                             s3 = 0
-                    self.table.setItem(i - 1, 8, make_item(s3, align_center=True, readonly=True))
+                    self.table.setItem(i - 1, 9, make_item(s3, align_center=True, readonly=True))
 
                 self.table.blockSignals(False)
                 #print(f"[LOAD_TPS] ✅ Muat {len(tps_list)} TPS dari LapCoklit.")
@@ -18042,9 +18141,11 @@ class Data_Pantarlih(QMainWindow):
 
 
     def _paste_from_clipboard(self):
+        """Paste data dari clipboard ke tabel (kolom 2–8) dan hitung otomatis stiker tersisa."""
         text = QGuiApplication.clipboard().text()
         if not text:
             return
+
         rows = [r for r in text.splitlines()]
         grid = [r.split("\t") for r in rows]
 
@@ -18053,51 +18154,74 @@ class Data_Pantarlih(QMainWindow):
         if start_row < 0 or start_col < 0:
             return
 
-        # Batas: hanya kolom 2..7 yang editable (nama, nik, hp, tanggal, s1, s2)
+        # Batas: hanya kolom 2..8 yang editable (nama, nik, hp, tanggal, lembar, s1, s2)
         for r_idx, r_vals in enumerate(grid):
             for c_idx, cell in enumerate(r_vals):
                 rr = start_row + r_idx
                 cc = start_col + c_idx
                 if rr >= self.table.rowCount():
                     break
-                if cc < 2 or cc > 7:
+                if cc < 2 or cc > 8:
                     continue
+
                 item = QTableWidgetItem(cell.strip())
-                if cc in (4, 6, 7):  # hp, s1, s2 center
+
+                # Kolom HP (4), Lembar Bukti (6), Stiker1 (7), dan Stiker2 (8) rata tengah
+                if cc in (3, 4, 5, 6, 7, 8):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
                 self.table.setItem(rr, cc, item)
-                # trigger hitung otomatis sisa
-                self.hitung_otomatis(rr, 6)
+
+                # Trigger hitung otomatis untuk kolom stiker
                 self.hitung_otomatis(rr, 7)
+                self.hitung_otomatis(rr, 8)
+
 
     @contextmanager
     def freeze_ui(self):
-        """Bekukan event & tampilan GUI sementara (seperti EnableEvents=False + ScreenUpdating=False)."""
+        """
+        Bekukan event & tampilan GUI sementara (setara EnableEvents=False + ScreenUpdating=False di Excel).
+        Digunakan untuk mencegah flicker saat update tabel besar.
+        """
         try:
+            # 🔹 Nonaktifkan repaint & sinyal tabel
             self.setUpdatesEnabled(False)
-            self.table.blockSignals(True)
+            if hasattr(self, "table"):
+                self.table.blockSignals(True)
             yield
         finally:
-            self.table.blockSignals(False)
+            # 🔹 Aktifkan kembali semua
+            if hasattr(self, "table"):
+                self.table.blockSignals(False)
             self.setUpdatesEnabled(True)
             self.repaint()
 
     # ===========================================================
     def hitung_otomatis(self, row, col):
-        """Hitung stiker tersisa setiap edit kolom 6 atau 7."""
+        """Hitung otomatis stiker tersisa setiap kali edit kolom Stiker1 (7) atau Stiker2 (8)."""
         try:
-            if col in (6, 7):
-                val1 = int(self.table.item(row, 6).text()) if self.table.item(row, 6) and self.table.item(row, 6).text().strip().isdigit() else 0
-                val2 = int(self.table.item(row, 7).text()) if self.table.item(row, 7) and self.table.item(row, 7).text().strip().isdigit() else 0
+            # Jika yang diubah adalah kolom Stiker1 atau Stiker2
+            if col in (7, 8):
+                val1 = 0
+                val2 = 0
+
+                if self.table.item(row, 7) and self.table.item(row, 7).text().strip().isdigit():
+                    val1 = int(self.table.item(row, 7).text())
+                if self.table.item(row, 8) and self.table.item(row, 8).text().strip().isdigit():
+                    val2 = int(self.table.item(row, 8).text())
+
                 sisa = max(val1 - val2, 0)
+
                 from PyQt6.QtWidgets import QTableWidgetItem
                 from PyQt6.QtCore import Qt
                 item = QTableWidgetItem(str(sisa))
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # Read-only
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)  # read-only
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(row, 8, item)
+                self.table.setItem(row, 9, item)
+
         except Exception as e:
             print(f"[Hitung Otomatis Error] Row {row}, Col {col}: {e}")
+
 
     # ===========================================================
     # 🧩 Event Filter untuk Ctrl+C / Ctrl+V (tanpa ganggu navigasi)
@@ -18127,13 +18251,20 @@ class Data_Pantarlih(QMainWindow):
                         for c_idx, value in enumerate(cols):
                             rr = start_row + r_idx
                             cc = start_col + c_idx
-                            if rr >= self.table.rowCount() or cc < 2 or cc > 7:
+                            # Kolom valid: 2..8 (nama, nik, hp, tanggal, lembar, s1, s2)
+                            if rr >= self.table.rowCount() or cc < 2 or cc > 8:
                                 continue
+
                             item = QTableWidgetItem(value.strip())
-                            if cc in (4, 6, 7):
+
+                            # Kolom rata tengah: HP(4), Lembar(6), Stiker1(7), Stiker2(8)
+                            if cc in (3, 4, 5, 6, 7, 8):
                                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
                             self.table.setItem(rr, cc, item)
-                            if cc in (6, 7):
+
+                            # Trigger hitung otomatis bila stiker berubah
+                            if cc in (7, 8):
                                 self.hitung_otomatis(rr, cc)
                 finally:
                     self.table.blockSignals(False)
@@ -18154,10 +18285,12 @@ class Data_Pantarlih(QMainWindow):
                         it = self.table.item(r, c)
                         vals.append(it.text() if it else "")
                     lines.append("\t".join(vals))
+
                 QGuiApplication.clipboard().setText("\n".join(lines))
                 return True
 
         return super().eventFilter(obj, event)
+
 
     def keyPressEvent(self, event):
         """Menangani navigasi dan edit dengan tombol tertentu."""
@@ -18181,95 +18314,68 @@ class Data_Pantarlih(QMainWindow):
 
     # ===========================================================
     def hapus_baris_dipilih(self):
-        """Hapus semua data dari data_pantarlih dan muat ulang TPS dari tabel aktif."""
-
-        # Konfirmasi hapus semua data
+        """Hapus semua data dan muat ulang daftar TPS."""
         if not self._confirm("Konfirmasi", "Hapus semua data Pantarlih dari database?"):
             return
 
-        # Hapus semua data di DB
         try:
             self.cur.execute("DELETE FROM data_pantarlih")
             self.conn.commit()
         except Exception as e:
-            self._msgbox("Error", f"Gagal menghapus data dari database:\n{e}", "crit").exec()
+            self._msgbox("Error", f"Gagal menghapus data:\n{e}", "crit").exec()
             return
 
-        # Muat ulang daftar TPS dari tabel aktif
-        tps_list = [str(tps).strip() for tps in self.lapcoklit.tps_list]
-
-        # Kosongkan tabel GUI dan isi ulang dengan TPS
-        self.table.blockSignals(True)
-        self.table.setRowCount(len(tps_list))
-        for i, tps in enumerate(tps_list, start=1):
-            # Kolom 0: Nomor urut
-            nomor = QTableWidgetItem(str(i))
-            nomor.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            nomor.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i-1, 0, nomor)
-
-            # Kolom 1: Nama TPS
-            nama_tps = f"TPS {int(tps):03d}" if str(tps).isdigit() else f"TPS {tps}"
-            tps_item = QTableWidgetItem(nama_tps)
-            tps_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table.setItem(i-1, 1, tps_item)
-
-            # Kolom 2-7: Kosong
-            for col in range(2, 8):
-                item = QTableWidgetItem("")
-                if col in (4, 6, 7):  # HP, Stiker1, Stiker2: align center
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(i-1, col, item)
-
-            # Kolom 8: Stiker Tersisa = 0 (read-only)
-            s3_item = QTableWidgetItem("0")
-            s3_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            s3_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(i-1, 8, s3_item)
-
-        self.table.blockSignals(False)
-
-        self._msgbox("Sukses", "Semua data Pantarlih telah dihapus dan tabel dimuat ulang.", "info").exec()
+        # 🔹 Bekukan tampilan selama transisi supaya halus
+        with self.freeze_ui():
+            if hasattr(self, "lapcoklit") and self.lapcoklit:
+                self.lapcoklit.isidata_pantarlih()
+                self.close()
 
     # ===========================================================
     def simpan_data(self):
         """Validasi, hapus semua data di data_pantarlih, dan simpan data baru ke database lalu refresh PDF."""
         row_count = self.table.rowCount()
         all_data = []
+
         for row in range(row_count):
             tps_label = (self.table.item(row, 1).text() or "").replace("TPS ", "").strip()
             nama = (self.table.item(row, 2).text() if self.table.item(row, 2) else "").strip()
             nik = (self.table.item(row, 3).text() if self.table.item(row, 3) else "").strip()
             hp = (self.table.item(row, 4).text() if self.table.item(row, 4) else "").strip()
             tanggal = (self.table.item(row, 5).text() if self.table.item(row, 5) else "").strip()
-            s1 = (self.table.item(row, 6).text() if self.table.item(row, 6) else "0").strip()
-            s2 = (self.table.item(row, 7).text() if self.table.item(row, 7) else "0").strip()
-            s3 = (self.table.item(row, 8).text() if self.table.item(row, 8) else "0").strip()
+            lembar = (self.table.item(row, 6).text() if self.table.item(row, 6) else "").strip()
+            s1 = (self.table.item(row, 7).text() if self.table.item(row, 7) else "0").strip()
+            s2 = (self.table.item(row, 8).text() if self.table.item(row, 8) else "0").strip()
+            s3 = (self.table.item(row, 9).text() if self.table.item(row, 9) else "0").strip()
 
             # === Validasi dasar ===
-            if not all([tps_label, nama, nik, hp, tanggal, s1, s2]):
-                self._msgbox("Validasi", f"TPS {tps_label}: semua kolom wajib diisi (kecuali 'Tersisa' otomatis).", "warn").exec()
+            if not all([tps_label, nama, nik, hp, tanggal, lembar, s1, s2]):
+                self._msgbox("Validasi", f"TPS {tps_label}: semua kolom wajib diisi.", "warn").exec()
                 return
+
             if not re.fullmatch(r"\d{16}", nik):
                 self._msgbox("Validasi", f"TPS {tps_label}: NIK harus 16 digit angka.", "warn").exec()
                 return
+
             if not re.fullmatch(r"\d+", hp):
                 self._msgbox("Validasi", f"TPS {tps_label}: Nomor HP hanya boleh angka.", "warn").exec()
                 return
+
             if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", tanggal):
                 self._msgbox("Validasi", f"TPS {tps_label}: Tanggal harus format dd/mm/yyyy.", "warn").exec()
                 return
 
-            # === Validasi angka stiker ===
+            # === Validasi angka lembar bukti & stiker ===
             try:
+                lembar_i = int(lembar)
                 s1i = int(s1)
                 s2i = int(s2)
                 s3i = max(s1i - s2i, 0)
             except Exception:
-                self._msgbox("Validasi", f"TPS {tps_label}: Stiker harus berupa angka.", "warn").exec()
+                self._msgbox("Validasi", f"TPS {tps_label}: Kolom lembar bukti dan stiker harus berupa angka.", "warn").exec()
                 return
 
-            all_data.append((tps_label, nama, nik, hp, tanggal, s1i, s2i, s3i))
+            all_data.append((tps_label, nama, nik, hp, tanggal, lembar_i, s1i, s2i, s3i))
 
         # === Hapus semua data lama ===
         try:
@@ -18290,8 +18396,8 @@ class Data_Pantarlih(QMainWindow):
         try:
             self.cur.executemany("""
                 INSERT INTO data_pantarlih
-                (tps, nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, stiker1, stiker2, stiker3)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (tps, nama_pantarlih, nik_pantarlih, hp_pantarlih, tanggal_laporan, lembar_bukti, stiker1, stiker2, stiker3)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, all_data)
             self.conn.commit()
         except Exception as e:
@@ -18308,6 +18414,7 @@ class Data_Pantarlih(QMainWindow):
         except Exception as e:
             print(f"[Data_Pantarlih] Gagal refresh PDF otomatis: {e}")
 
+
     # ===========================================================
     def kembali(self):
         """Kembali ke jendela LapCoklit dan otomatis refresh PDF dengan UI beku sementara."""
@@ -18319,7 +18426,7 @@ class Data_Pantarlih(QMainWindow):
         with self.freeze_ui():
             try:
                 # 🔹 Tampilkan kembali jendela utama LapCoklit
-                self.lapcoklit.showNormal()
+                #self.lapcoklit.showNormal()
                 self.lapcoklit.showMaximized()
                 self.lapcoklit.raise_()
                 self.lapcoklit.activateWindow()
