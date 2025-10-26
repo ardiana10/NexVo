@@ -10933,6 +10933,29 @@ class MainWindow(QMainWindow):
             show_modern_error(self, "Error", f"Gagal memuat Webgrid unggah data")
 
 
+class ComboDelegate(QStyledItemDelegate):
+    """Delegate super ringan untuk dropdown kolom tertentu (tanpa widget permanen)."""
+    def __init__(self, options, parent=None):
+        super().__init__(parent)
+        self.options = options
+
+    def createEditor(self, parent, option, index):
+        combo = QComboBox(parent)
+        combo.addItems([""] + self.options)
+        combo.setEditable(False)
+        combo.setStyleSheet("QComboBox{background:#fff;border:1px solid #ccc;border-radius:4px;padding:2px 4px;}")
+        return combo
+
+    def setEditorData(self, editor, index):
+        value = index.model().data(index, Qt.ItemDataRole.EditRole)
+        i = editor.findText(value)
+        if i >= 0:
+            editor.setCurrentIndex(i)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
+
+
 class UnggahRegulerWindow(QWidget):
     """Jendela Unggah Webgrid TPS Reguler (editable table 500 baris)."""
     def __init__(self, main_window):
@@ -11005,24 +11028,34 @@ class UnggahRegulerWindow(QWidget):
             self.table.setColumnWidth(i, w)
 
         # === Kolom rata kiri khusus
+        self.table.setWordWrap(True)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+
+        # === Kolom rata kiri khusus
         left_columns = ["NAMA", "ALAMAT", "TMPT_LHR", "SUMBER"]
         left_indexes = [headers.index(c) for c in left_columns]
 
-        # Isi awal tabel
+        # === Isi awal tabel (kosong tapi siap edit)
         for row in range(500):
             for col in range(len(headers)):
                 item = QTableWidgetItem("")
                 if col == 0:
-                    # kolom No tidak bisa diedit
                     item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-                # Alignment
                 if col in left_indexes:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
                 else:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
 
-        # Event handler: isi nomor otomatis bila baris penuh
+        # === Delegasi dropdown ringan
+        self.table.setItemDelegateForColumn(headers.index("JK"), ComboDelegate(["L", "P"], self))
+        self.table.setItemDelegateForColumn(headers.index("STS"), ComboDelegate(["B", "S", "P"], self))
+        self.table.setItemDelegateForColumn(headers.index("DIS"), ComboDelegate(["0", "1", "2", "3", "4", "5", "6"], self))
+        self.table.setItemDelegateForColumn(headers.index("KTPel"), ComboDelegate(["B", "S"], self))
+        self.table.setItemDelegateForColumn(headers.index("KET"), ComboDelegate(["B", "U", "1", "2", "3", "4", "5", "6", "7", "8"], self))
+
+        # === Event handler: isi nomor otomatis bila baris penuh
         self.table.itemChanged.connect(self._fill_numbers)
         self.layout.addWidget(self.table)
 
@@ -11068,6 +11101,7 @@ class UnggahRegulerWindow(QWidget):
 
         btn_layout.addStretch(1)
         self.layout.addLayout(btn_layout)
+        self._install_delete_handler()
 
     # ==========================================
     # 🔸 Fungsi bantu
@@ -11085,6 +11119,36 @@ class UnggahRegulerWindow(QWidget):
                     no_item.setText(str(row + 1))
             else:
                 no_item.setText("")
+
+    def _install_delete_handler(self):
+        """Pasang event filter agar tombol Delete bisa menghapus isi sel."""
+        self.table.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Tangani tombol Delete dari mana pun dalam tabel (termasuk editor)."""
+        if obj == self.table and event.type() == event.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Delete:
+                selected_ranges = self.table.selectedRanges()
+                if not selected_ranges:
+                    return True  # tidak ada seleksi, abaikan
+
+                for sel in selected_ranges:
+                    for row in range(sel.topRow(), sel.bottomRow() + 1):
+                        for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                            if col == 0:  # kolom "No." tidak bisa dihapus
+                                continue
+
+                            # Jika cell pakai combobox (delegate)
+                            widget = self.table.cellWidget(row, col)
+                            if widget and hasattr(widget, "setCurrentIndex"):
+                                widget.setCurrentIndex(0)  # reset ke kosong
+                            else:
+                                item = self.table.item(row, col)
+                                if item:
+                                    item.setText("")
+                self._fill_numbers()
+                return True  # hentikan propagasi event
+        return super().eventFilter(obj, event)
 
     def _close_window(self):
         """Tutup jendela unggah dan tampilkan kembali MainWindow."""
