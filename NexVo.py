@@ -50,7 +50,7 @@ from PyQt6.QtCore import (
 
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence, QMouseEvent,
-    QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication,
+    QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication, QClipboard,
     QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut
 )
 
@@ -11248,13 +11248,21 @@ class UnggahRegulerWindow(QWidget):
     # 🔸 Fungsi bantu
     # ==========================================
     def _fill_numbers(self):
-        """Isi kolom No. otomatis bila seluruh kolom lain terisi."""
+        """Isi kolom No. otomatis bila semua kolom (kecuali DPID) terisi."""
         for row in range(500):
+            # Kolom yang dicek dimulai dari kolom 2 (index 2 = NKK)
+            # karena kolom 1 (DPID) boleh kosong
             filled = all(
                 (self.table.item(row, c) and self.table.item(row, c).text().strip() != "")
-                for c in range(1, 17)
+                for c in range(2, 17)  # kolom 2 s.d. 16 wajib terisi
             )
+
             no_item = self.table.item(row, 0)
+            if not no_item:
+                no_item = QTableWidgetItem()
+                no_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                self.table.setItem(row, 0, no_item)
+
             if filled:
                 if not no_item.text().strip():
                     no_item.setText(str(row + 1))
@@ -11341,6 +11349,96 @@ class UnggahRegulerWindow(QWidget):
                 #print(f"[UnggahReguler] ✅ Ukuran kolom diterapkan dari {path}")
         except Exception as e:
             print(f"[UnggahReguler] ⚠️ Gagal memuat ukuran kolom: {e}")
+
+    # ===========================================================
+    # 📋 Copy & Paste Excel-Compatible (dengan header)
+    # ===========================================================
+    def keyPressEvent(self, event):
+        """Tangani kombinasi Ctrl+C dan Ctrl+V untuk copy–paste ke/dari Excel."""
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection_to_clipboard()
+            event.accept()
+            return
+        elif event.matches(QKeySequence.StandardKey.Paste):
+            self.paste_from_clipboard()
+            event.accept()
+            return
+        else:
+            super().keyPressEvent(event)
+
+    def copy_selection_to_clipboard(self):
+        """Salin sel yang diseleksi ke clipboard (format tab agar langsung terpisah kolom di Excel)."""
+        selected_ranges = self.table.selectedRanges()
+        if not selected_ranges:
+            return
+
+        all_text = []
+        for sel in selected_ranges:
+            # Deteksi apakah seluruh tabel diseleksi → sertakan header
+            full_table_selected = (
+                sel.topRow() == 0
+                and sel.bottomRow() == self.table.rowCount() - 1
+                and sel.leftColumn() == 0
+                and sel.rightColumn() == self.table.columnCount() - 1
+            )
+
+            rows_text = []
+
+            if full_table_selected:
+                headers = [
+                    self.table.horizontalHeaderItem(c).text()
+                    if self.table.horizontalHeaderItem(c)
+                    else f"Kolom {c+1}"
+                    for c in range(self.table.columnCount())
+                ]
+                rows_text.append("\t".join(headers))  # 🔹 TAB separator untuk Excel
+
+            for row in range(sel.topRow(), sel.bottomRow() + 1):
+                cols = []
+                for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                    item = self.table.item(row, col)
+                    text = item.text() if item else ""
+                    # Hapus tab dan newline agar tidak merusak struktur
+                    clean = text.replace("\t", " ").replace("\n", " ").strip()
+                    cols.append(clean)
+                rows_text.append("\t".join(cols))  # 🔹 TAB antar kolom
+            all_text.append("\n".join(rows_text))
+
+        final_text = "\n".join(all_text).strip()
+        QApplication.clipboard().setText(final_text, mode=QClipboard.Mode.Clipboard)
+        #print("[Clipboard] ✅ Data disalin dalam format tab-separated (langsung pecah di Excel).")
+
+    def paste_from_clipboard(self):
+        """Tempel data dari clipboard (Excel) ke tabel mulai dari sel terpilih."""
+        text = QApplication.clipboard().text()
+        if not text:
+            return
+
+        selected = self.table.selectedIndexes()
+        if not selected:
+            return
+
+        start_row = selected[0].row()
+        start_col = selected[0].column()
+
+        # Pecah teks berdasarkan baris dan tab
+        rows = [r for r in text.splitlines() if r.strip()]
+        for r_offset, row_data in enumerate(rows):
+            cols = row_data.split("\t")
+            for c_offset, value in enumerate(cols):
+                row = start_row + r_offset
+                col = start_col + c_offset
+                if row < self.table.rowCount() and col < self.table.columnCount():
+                    if col == 0:  # Kolom "No." tidak diubah
+                        continue
+                    item = self.table.item(row, col)
+                    if not item:
+                        item = QTableWidgetItem()
+                        self.table.setItem(row, col, item)
+                    item.setText(value.strip())
+
+        self._fill_numbers()
+        #print("[Clipboard] ✅ Data dari Excel berhasil ditempel ke tabel")
 
     def closeEvent(self, event):
         """Simpan ukuran kolom saat jendela ditutup."""
@@ -18668,7 +18766,7 @@ class Data_Pantarlih(QMainWindow):
 
         # === Header tengah & tinggi dua baris ===
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table.horizontalHeader().setFixedHeight(40)
+        self.table.horizontalHeader().setFixedHeight(45)
 
         # === Lebar kolom manual ===
         col_widths = [70, 100, 330, 180, 170, 110, 170, 100, 100, 100]
@@ -19717,38 +19815,74 @@ class RegisterWindow(QMainWindow):
         qr_dialog.exec()
 
 # =========================== COPY FILTER ===========================
+import win32clipboard
+import win32con
 from PyQt6.QtCore import QObject, QEvent, Qt
 from PyQt6.QtWidgets import QApplication
 
 class CopyEventFilter(QObject):
-    """Filter stabil untuk menangani Ctrl+C pada QTableWidget."""
+    """Ctrl+C agar QTableWidget bisa di-paste ke Excel, multi kolom, dan NIK/NKK tidak rusak."""
     def __init__(self, table):
         super().__init__(table)
         self.table = table
 
     def eventFilter(self, obj, event):
         if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            # Tangkap kombinasi Ctrl + C
             if event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
                 selected_ranges = self.table.selectedRanges()
                 if not selected_ranges:
-                    return True  # tahan event agar tidak bocor
+                    return True  # tidak ada seleksi
 
-                copied_text = ""
-                for sel_range in selected_ranges:
-                    top = sel_range.topRow()
-                    bottom = sel_range.bottomRow()
-                    left = sel_range.leftColumn()
-                    right = sel_range.rightColumn()
-                    for row in range(top, bottom + 1):
-                        row_data = []
-                        for col in range(left, right + 1):
+                text_lines = []
+                # Hilangkan border agar Excel tidak menggambar garis tabel
+                html = ["<table border='0' cellspacing='0' cellpadding='2'>"]
+
+                for sel in selected_ranges:
+                    for row in range(sel.topRow(), sel.bottomRow() + 1):
+                        html.append("<tr>")
+                        row_text = []
+                        for col in range(sel.leftColumn(), sel.rightColumn() + 1):
                             item = self.table.item(row, col)
-                            row_data.append(item.text() if item else "")
-                        copied_text += "\t".join(row_data) + "\n"
-                QApplication.clipboard().setText(copied_text.strip())
-                return True  # tandai sudah diproses, jangan teruskan ke Qt
-        return super().eventFilter(obj, event)
+                            val = item.text() if item else ""
 
+                            # 💡 Jika kolom berisi angka panjang (mis. NIK/NKK), anggap teks agar tidak rusak di Excel
+                            if val.isdigit() and len(val) >= 6:
+                                html.append(
+                                    f"<td style='mso-number-format:\"\\@\";white-space:nowrap;'>{val}</td>"
+                                )
+                                val = f"'{val}"  # agar Ctrl+Shift+V tetap text
+                            else:
+                                safe = (
+                                    val.replace("&", "&amp;")
+                                    .replace("<", "&lt;")
+                                    .replace(">", "&gt;")
+                                )
+                                html.append(f"<td style='white-space:nowrap;'>{safe}</td>")
+                            row_text.append(val)
+                        html.append("</tr>")
+                        text_lines.append("\t".join(row_text))
+
+                html.append("</table>")
+                html_data = "".join(html)
+                text_data = "\n".join(text_lines)
+
+                # Simpan teks biasa untuk kompatibilitas
+                QApplication.clipboard().setText(text_data)
+
+                # Simpan format HTML ke clipboard Windows (agar Excel paham kolom dan tidak wrap)
+                try:
+                    import win32clipboard
+                    import win32con
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, html_data)
+                    win32clipboard.CloseClipboard()
+                except Exception:
+                    pass  # fallback aman jika bukan Windows / pywin32 tidak tersedia
+
+                return True
+        return super().eventFilter(obj, event)
 
     # =========================================================
     # 🔢 Alur Verifikasi OTP (tanpa popup ganda, UX halus)
