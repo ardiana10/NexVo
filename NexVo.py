@@ -2945,14 +2945,14 @@ class FilterSidebar(QWidget):
     # Metode: Reset Semua Filter
     # ==========================
     def reset_filters(self):
-        """Reset semua field filter ke nilai default/kosong dan panggil clear_filters di MainWindow."""
+        """Reset semua field filter ke nilai default/kosong dan panggil reset_tampilan_filter di MainWindow."""
         self._reset_form_only()
         main = self._get_main_window()
-        if main and hasattr(main, "clear_filters"):
+        if main and hasattr(main, "reset_tampilan_filter"):
             try:
-                main.clear_filters()
+                main.reset_tampilan_filter()
             except Exception as e:
-                print(f"[FilterSidebar.reset_filters Error] {e}")
+                print(f"[FilterSidebar.reset_tampilan_filter Error] {e}")
 
     
     def _reset_form_only(self):
@@ -3091,7 +3091,7 @@ class FilterSidebar(QWidget):
             except Exception as e:
                 print(f"[FilterSidebar._apply_filters Error] {e}")
                 return
-        print("[FilterSidebar] Gagal menemukan MainWindow.apply_filters()")
+        #print("[FilterSidebar] Gagal menemukan MainWindow.apply_filters()")
 
     
     def apply_theme(self, mode):
@@ -5922,7 +5922,6 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         # === Muat lebar kolom terakhir (jika ada)
         QTimer.singleShot(0, self.load_column_widths)
-        #self.table.horizontalHeader().sectionResized.connect(lambda *_: self.save_column_widths())
         # === Simpan otomatis saat user mengubah lebar kolom
         header = self.table.horizontalHeader()
         header.sectionResized.connect(self._on_column_resized)
@@ -5994,54 +5993,139 @@ class MainWindow(QMainWindow):
             """Tangani perubahan lebar kolom dan simpan otomatis (debounce singkat)."""
             QTimer.singleShot(300, self.save_column_widths)
 
+
     def reset_tampilkan_semua_data(self, silent=False):
         """
-        🔁 Menampilkan kembali seluruh data dari tabel aktif (reset hasil filter/pemeriksaan)
-        Data akan diurutkan ulang dengan metode numerik-alfabetik yang sama seperti sort_data().
-        
-        Jika silent=True → tidak menampilkan popup sama sekali (digunakan oleh import_csv / batch).
+        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF.
+        Penting: muat juga ROWID agar aksi hapus berikutnya tetap spesifik ke baris.
+        Setelah reset, fungsi-fungsi pagination, sorting, dan pewarnaan juga dijalankan ulang.
         """
         from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
         try:
-            # 🔹 Tutup sidebar filter jika sedang aktif
+            # Tutup sidebar filter jika ada
             try:
                 if hasattr(self, "filter_dock") and self.filter_dock and self.filter_dock.isVisible():
                     self.filter_dock.hide()
-                    #print("[UI] Sidebar filter ditutup otomatis.")
             except Exception as e:
                 print("[UI WARNING] Gagal menutup sidebar filter:", e)
 
-            tahap = getattr(self, "_tahapan", "").strip().upper()
-            tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
+            tbl_name = self._active_table()
+            if not tbl_name:
+                show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
 
             conn = get_connection()
+            conn.row_factory = sqlcipher.Row
+
+            # Pastikan sinkronisasi dari koneksi lain
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            conn.commit()
+            #print("[DEBUG RESET] database_list =", conn.execute("PRAGMA database_list;").fetchall())
+
             cur = conn.cursor()
-            cur.execute(f"SELECT * FROM {tbl_name}")
-            col_names = [desc[0] for desc in cur.description]
+            cur.execute(f"SELECT rowid, * FROM {tbl_name}")
             rows = cur.fetchall()
 
-            # Jika tabel kosong
             if not rows:
                 if not silent:
                     show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
+                self.all_data = []
+                self.total_pages = 1
+                self.show_page(1)
                 return
 
-            # Muat semua data ke memori
-            self.all_data = []
+            # === Bangun ulang data dengan rowid
+            headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
+            all_data = []
             for r in rows:
-                d = {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
-                self.all_data.append(d)
+                d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+                d["rowid"] = r["rowid"]
+                all_data.append(d)
+            self.all_data = all_data
 
-            # 🔹 Tampilkan kembali di tabel utama (belum disort)
+            # === Tampilkan ulang tabel dengan freeze_ui untuk mencegah flicker
             with self.freeze_ui():
                 self._refresh_table_with_new_data(self.all_data)
-                self._warnai_baris_berdasarkan_ket()
 
-            # 🔹 Jalankan sortir numerik seperti di fungsi sort_data()
+            # === Jalankan seluruh fungsi pendukung pasca-reset
+            self.update_pagination()
+            self.show_page(1)
+            self.connect_header_events()
             self.sort_data(auto=True)
-            self.clear_filters(auto=True)
+            self._warnai_baris_berdasarkan_ket()
 
+            # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
             QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            #print("[RESET] Data tabel berhasil dimuat ulang dan tampilan diperbarui ✅")
+
+        except Exception as e:
+            if not silent:
+                show_modern_error(self, "Error", f"Gagal menampilkan ulang data:\n{e}")
+            else:
+                print(f"[Silent Reset Warning] {e}")
+
+
+    def reset_tampilan_filter(self, silent=False):
+        """
+        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF.
+        Penting: muat juga ROWID agar aksi hapus berikutnya tetap spesifik ke baris.
+        Setelah reset, fungsi-fungsi pagination, sorting, dan pewarnaan juga dijalankan ulang.
+        """
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
+        try:
+
+            tbl_name = self._active_table()
+            if not tbl_name:
+                show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            conn = get_connection()
+            conn.row_factory = sqlcipher.Row
+
+            # Pastikan sinkronisasi dari koneksi lain
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            conn.commit()
+            #print("[DEBUG RESET] database_list =", conn.execute("PRAGMA database_list;").fetchall())
+
+            cur = conn.cursor()
+            cur.execute(f"SELECT rowid, * FROM {tbl_name}")
+            rows = cur.fetchall()
+
+            if not rows:
+                if not silent:
+                    #show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
+                    self.all_data = []
+                    self.total_pages = 1
+                    self.show_page(1)
+                    return
+
+            # === Bangun ulang data dengan rowid
+            headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
+            all_data = []
+            for r in rows:
+                d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+                d["rowid"] = r["rowid"]
+                all_data.append(d)
+            self.all_data = all_data
+
+            # === Tampilkan ulang tabel dengan freeze_ui untuk mencegah flicker
+            with self.freeze_ui():
+                self._refresh_table_with_new_data(self.all_data)
+
+            # === Jalankan seluruh fungsi pendukung pasca-reset
+            self.update_pagination()
+            self.show_page(1)
+            self.connect_header_events()
+            self.sort_data(auto=True)
+            self._warnai_baris_berdasarkan_ket()
+
+            # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
+            QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            #print("[RESET] Data tabel berhasil dimuat ulang dan tampilan diperbarui ✅")
 
         except Exception as e:
             if not silent:
@@ -6243,55 +6327,117 @@ class MainWindow(QMainWindow):
 
     
     def apply_filters(self):
-        """Apply filters from the filter sidebar"""
-        if not self.filter_sidebar:
+        """Terapkan filter dari sidebar langsung ke database aktif (bukan dari cache) lalu refresh UI lengkap."""
+        if not getattr(self, "filter_sidebar", None):
             return
-            
+
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
+
         filters = self.filter_sidebar.get_filters()
-        
-        # Store original data if not already stored
-        if not hasattr(self, 'original_data') or self.original_data is None:
-            self.original_data = self.all_data.copy()
-        
-        # Always filter from original data, not from previously filtered data
-        # This allows applying new filters without resetting first
-        filtered_data = []
-        for item in self.original_data:
-            if self.matches_filters(item, filters):
-                filtered_data.append(item)
-        
-        # Replace all_data with filtered data
-        self.all_data = filtered_data
-        
-        # Update pagination and display
-        self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
-        self.current_page = 1
-        self.update_pagination()
-        self.show_page(1)
-        
-        # Update status bar with filter info
-        self.lbl_total.setText(f"{len(filtered_data)} dari {len(self.original_data)} total (filtered)")
+        tbl = self._active_table()
+        if not tbl:
+            show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+            return
+
+        conn = get_connection()
+        try:
+            conn.row_factory = sqlcipher.Row  # dict-like access
+        except Exception:
+            pass
+
+        cur = conn.cursor()
+
+        # 1) WHERE ringan di SQL (supaya cepat) — sisanya disaring di Python via matches_filters()
+        conditions, params = [], []
+        if filters.get("nama"):
+            conditions.append("NAMA LIKE ?");  params.append(f"%{filters['nama']}%")
+        if filters.get("nik"):
+            conditions.append("NIK LIKE ?");   params.append(f"%{filters['nik']}%")
+        if filters.get("nkk"):
+            conditions.append("NKK LIKE ?");   params.append(f"%{filters['nkk']}%")
+        if filters.get("alamat"):
+            conditions.append("ALAMAT LIKE ?"); params.append(f"%{filters['alamat']}%")
+        if filters.get("jk"):
+            conditions.append("JK = ?");       params.append(filters["jk"])
+        if filters.get("sts"):
+            conditions.append("STS = ?");      params.append(filters["sts"])
+        if filters.get("ktpel"):
+            conditions.append("KTPel = ?");    params.append(filters["ktpel"])
+        if filters.get("sumber"):
+            conditions.append("SUMBER = ?");   params.append(filters["sumber"])
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        # Sertakan rowid supaya baris tetap punya identitas unik
+        query = f"SELECT rowid, * FROM {tbl} {where_clause} ORDER BY rowid ASC"
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        # 2) Refine di Python untuk filter kompleks
+        filtered = []
+        for r in rows:
+            d = dict(r)  # sqlcipher.Row -> dict
+            if self.matches_filters(d, filters):
+                filtered.append(d)
+
+        # 3) Update state
+        self.all_data = filtered
+        self.original_data = None
+
+        # 4) Refresh tampilan & eksekusi fungsi-fungsi pasca-refresh
+        with self.freeze_ui():
+            # hitung ulang pagination dari panjang data terbaru
+            self.total_pages = max(1, (len(filtered) + self.rows_per_page - 1) // self.rows_per_page)
+            self.current_page = 1
+
+            self.update_pagination()
+            self.show_page(1)
+
+        # Pastikan header events terpasang ulang setelah table di-render
+        self.connect_header_events()
+
+        # Jalankan sort default (aman untuk data terfilter)
+        self.sort_data(auto=True)
+
+        # Pewarnaan baris berbasis KET (langsung), lalu terapkan warna final dengan delay pendek
+        self._warnai_baris_berdasarkan_ket()
+        QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+        # Status ringkas
+        if hasattr(self, "lbl_total"):
+            self.lbl_total.setText(f"{len(filtered)} hasil ditemukan")
         self.update_statusbar()
+
     
-    def clear_filters(self, auto=False):
-        """Clear all filters and restore original data"""
-        if hasattr(self, 'original_data') and self.original_data is not None:
-            self.all_data = self.original_data.copy()
+    @with_safe_db
+    def clear_filters(self, auto=False, conn=None):
+        """Hapus semua filter dan muat ulang seluruh data dari tabel aktif."""
+        try:
+            tbl = self._active_table()
+            cur = conn.cursor()
+            cur.execute(f"SELECT * FROM {tbl} ORDER BY rowid ASC")
+            rows = [dict(zip([col[0] for col in cur.description], r)) for r in cur.fetchall()]
+
+            self.all_data = rows
             self.original_data = None
-            
-            # Update pagination and display
-            self.total_pages = max(1, (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page)
+
+            self.total_pages = max(1, (len(rows) + self.rows_per_page - 1) // self.rows_per_page)
             self.current_page = 1
             self.update_pagination()
             self.show_page(1)
-            
-            # Update status bar
-            self.lbl_total.setText(f"{len(self.all_data)} total")
+
+            self.lbl_total.setText(f"{len(rows)} total")
             self.update_statusbar()
-        
-        # Reset filter form only (to avoid infinite loop)
-        if self.filter_sidebar:
-            self.filter_sidebar._reset_form_only()
+
+            if self.filter_sidebar:
+                self.filter_sidebar._reset_form_only()
+
+            print(f"[DEBUG CLEAR FILTER] Reloaded {len(rows)} rows from {tbl}")
+
+        except Exception as e:
+            print(f"[ERROR CLEAR FILTER] {e}")
+
     
     def wildcard_match(self, pattern, text):
         """Wildcard matching with % support
@@ -6348,148 +6494,146 @@ class MainWindow(QMainWindow):
         return True
     
     def matches_filters(self, item, filters):
-        """Check if an item matches the given filters"""
-        # Name filter with wildcard support
-        if filters["nama"]:
-            nama_item = item.get("NAMA", "")
-            if not self.wildcard_match(filters["nama"], nama_item):
-                return False
-            
-        # NIK filter
-        if filters["nik"] and filters["nik"] not in item.get("NIK", ""):
-            return False
-            
-        # NKK filter
-        if filters["nkk"] and filters["nkk"] not in item.get("NKK", ""):
-            return False
-            
-        # Date filter (simple contains check)
-        if filters["tgl_lahir"] and filters["tgl_lahir"] not in item.get("TGL_LHR", ""):
-            return False
-        
-        # Age filter based on birth date
-        if "umur_min" in filters and "umur_max" in filters:
-            umur_min = filters["umur_min"]
-            umur_max = filters["umur_max"]
-            
-            # Skip if age range is default (0-100)
-            if not (umur_min == 0 and umur_max == 100):
-                 # Gunakan key sesuai dataset
-                tgl_lahir_str = (item.get("tgl_lahir", "") or item.get("TGL_LHR", "")).strip()
-                if tgl_lahir_str:
-                    try:
-                        # Try different date formats
-                        birth_date = None
-                        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d|%m|%Y"):
-                            try:
-                                birth_date = datetime.strptime(tgl_lahir_str, fmt).date()
-                                break
-                            except ValueError:
-                                continue
-                        
-                        if birth_date:
-                            today = date.today()
-                            age = today.year - birth_date.year - (
-                                (today.month, today.day) < (birth_date.month, birth_date.day)
-                            )
+        """
+        Cek kecocokan item terhadap filters.
+        item boleh berupa dict atau sqlite Row; key boleh 'tgl_lahir' atau 'TGL_LHR', dll.
+        """
 
-                            # Jika di luar rentang slider, buang data
-                            if age < umur_min or age > umur_max:
-                                return False
-
-                    except Exception:
-                        # Jika parsing gagal, jangan filter berdasarkan umur
-                        pass
-
-            
-        # Keterangan filter
-        if filters["keterangan"]:
-            ket_filter = filters["keterangan"].strip().upper()
-            ket_data = item.get("KET", "").strip().upper()
-            if ket_filter != ket_data:
-                return False
-            
-        # Gender filter
-        if filters["jk"]:
-            jk_filter = filters["jk"].strip().upper()
-            jk_data = item.get("JK", "").strip().upper()
-            if jk_filter != jk_data:
-                return False
-            
-        # Marital status filter
-        if filters["sts"]:
-            sts_filter = filters["sts"].strip().upper()
-            sts_data = item.get("STS", "").strip().upper()
-            if sts_filter != sts_data:
-                return False
-            
-        # Disability filter
-        if filters["dis"]:
-            dis_filter = filters["dis"].strip().upper()
-            dis_data = item.get("DIS", "").strip().upper()
-            if dis_filter != dis_data:
-                return False
-            
-        # KTP-el filter
-        if filters["ktpel"]:
-            ktpel_filter = filters["ktpel"].strip().upper()
-            ktpel_data = item.get("KTPel", "").strip().upper()
-            if ktpel_filter != ktpel_data:
-                return False
-            
-        # Source filter
-        if filters["sumber"]:
-            sumber_filter = filters["sumber"].strip().upper()
-            sumber_data = item.get("SUMBER", "").strip().upper()
-            if sumber_filter != sumber_data:
-                return False
-        
-        # Rank filter (Aktif / Ubah / Baru / TMS) adaptif
-        if filters["rank"]:
-            rank_filter_raw = filters["rank"].strip().upper()
-            ket_raw = (item.get("KET", "") or "").strip().upper()
-            dpid_val = (item.get("DPID", "") or "").strip()
-
-            # Rekonstruksi nilai jika kosong
-            if not ket_raw:
-                if dpid_val and dpid_val != "0":
-                    ket_val = "0"  # dianggap aktif
+        # --- helper ambil nilai dengan alias kunci ---
+        def getv(keys, default=""):
+            if isinstance(keys, str):
+                keys = [keys]
+            for k in keys:
+                if isinstance(item, dict):
+                    if k in item: 
+                        return item.get(k, default) or default
+                    # case-insensitive fallback
+                    for ik in item.keys():
+                        if ik.lower() == k.lower():
+                            return item.get(ik, default) or default
                 else:
-                    ket_val = "B"  # dianggap baru
-            else:
-                ket_val = ket_raw
+                    # sqlite Row: support getattr/key
+                    try:
+                        return item[k]
+                    except Exception:
+                        try:
+                            return getattr(item, k)
+                        except Exception:
+                            pass
+            return default
 
+        # Normalisasi beberapa field utama
+        nama_data   = (getv(["NAMA"]) or "").strip()
+        nik_data    = (getv(["NIK"]) or "").strip()
+        nkk_data    = (getv(["NKK"]) or "").strip()
+        tgl_lhr     = (getv(["TGL_LHR","tgl_lahir","tanggal_lahir"]) or "").strip()
+        ket_data    = (getv(["KET"]) or "").strip().upper()
+        jk_data     = (getv(["JK"]) or "").strip().upper()
+        sts_data    = (getv(["STS"]) or "").strip().upper()
+        dis_data    = (getv(["DIS"]) or "").strip().upper()
+        ktpel_data  = (getv(["KTPel","KTP_EL","KTP_EL?"]) or "").strip().upper()
+        sumber_data = (getv(["SUMBER"]) or "").strip().upper()
+        alamat_data = (getv(["ALAMAT"]) or "").strip()
+        dpid_val    = (getv(["DPID"]) or "").strip()
+        last_raw    = (getv(["LastUpdate","LASTUPDATE","LAST_UPDATE"]) or "").strip()
+
+        # Name (wildcard)
+        if filters["nama"]:
+            if not self.wildcard_match(filters["nama"], nama_data):
+                return False
+
+        # NIK
+        if filters["nik"] and filters["nik"] not in nik_data:
+            return False
+
+        # NKK
+        if filters["nkk"] and filters["nkk"] not in nkk_data:
+            return False
+
+        # Tanggal lahir (contains)
+        if filters["tgl_lahir"] and filters["tgl_lahir"] not in tgl_lhr:
+            return False
+
+        # Umur
+        if "umur_min" in filters and "umur_max" in filters:
+            umin, umax = filters["umur_min"], filters["umur_max"]
+            if not (umin == 0 and umax == 100) and tgl_lhr:
+                try:
+                    birth_date = None
+                    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d|%m|%Y"):
+                        try:
+                            birth_date = datetime.strptime(tgl_lhr, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                    if birth_date:
+                        today = date.today()
+                        age = today.year - birth_date.year - (
+                            (today.month, today.day) < (birth_date.month, birth_date.day)
+                        )
+                        if age < umin or age > umax:
+                            return False
+                except Exception:
+                    pass
+
+        # Keterangan
+        if filters["keterangan"]:
+            if filters["keterangan"].strip().upper() != ket_data:
+                return False
+
+        # JK
+        if filters["jk"]:
+            if filters["jk"].strip().upper() != jk_data:
+                return False
+
+        # Status kawin
+        if filters["sts"]:
+            if filters["sts"].strip().upper() != sts_data:
+                return False
+
+        # Disabilitas
+        if filters["dis"]:
+            if filters["dis"].strip().upper() != dis_data:
+                return False
+
+        # KTP-el
+        if filters["ktpel"]:
+            if filters["ktpel"].strip().upper() != ktpel_data:
+                return False
+
+        # Sumber
+        if filters["sumber"]:
+            if filters["sumber"].strip().upper() != sumber_data:
+                return False
+
+        # Rank (Aktif / Ubah / Baru / TMS)
+        if filters["rank"]:
+            rank_req = filters["rank"].strip().upper()
+            ket_val = ket_data if ket_data else ("0" if (dpid_val and dpid_val != "0") else "B")
             is_tms = ket_val in {"1","2","3","4","5","6","7","8"}
 
-            def matches_rank():
-                if rank_filter_raw == "AKTIF":
-                    return ket_val == "0"
-                if rank_filter_raw == "UBAH":
-                    return ket_val == "U"
-                if rank_filter_raw == "BARU":
-                    return ket_val == "B"
-                if rank_filter_raw == "TMS":
-                    return is_tms
-                return True
-
-            if not matches_rank():
+            if rank_req == "AKTIF" and ket_val != "0":
+                return False
+            if rank_req == "UBAH" and ket_val != "U":
+                return False
+            if rank_req == "BARU" and ket_val != "B":
+                return False
+            if rank_req == "TMS" and not is_tms:
                 return False
 
-        # Alamat filter
+        # Alamat (wildcard)
         if filters["alamat"]:
-            alamat_item = item.get("ALAMAT", "")
-            if not self.wildcard_match(filters["alamat"], alamat_item):
+            if not self.wildcard_match(filters["alamat"], alamat_data):
                 return False
 
-        # LastUpdate date range filter
+        # Rentang LastUpdate (DD/MM/YYYY)
         if filters.get("last_update_start") and filters.get("last_update_end"):
-            raw_last = item.get("LastUpdate", "").strip()
-            if not raw_last:
+            if not last_raw:
                 return False
             parsed = None
             for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
                 try:
-                    parsed = datetime.strptime(raw_last, fmt).date()
+                    parsed = datetime.strptime(last_raw, fmt).date()
                     break
                 except ValueError:
                     continue
@@ -6497,12 +6641,12 @@ class MainWindow(QMainWindow):
                 return False
             try:
                 start_dt = datetime.strptime(filters["last_update_start"], "%d/%m/%Y").date()
-                end_dt = datetime.strptime(filters["last_update_end"], "%d/%m/%Y").date()
+                end_dt   = datetime.strptime(filters["last_update_end"],   "%d/%m/%Y").date()
             except ValueError:
                 return False
             if parsed < start_dt or parsed > end_dt:
                 return False
-            
+
         return True
     
     # =========================================================
@@ -7660,6 +7804,10 @@ class MainWindow(QMainWindow):
                 func(r)
             conn.commit()
 
+            # ✅ Refresh otomatis setelah batch selesai
+            if is_batch:
+                self.load_data_from_db()
+
         finally:
             # Bersihkan koneksi batch
             self._shared_conn = None
@@ -7829,154 +7977,100 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_pemilih(self, row, conn=None):
-        """Menghapus baris pemilih dari tabel sesuai tahapan aktif (super cepat & aman)."""
-        from db_manager import get_connection
+        """
+        Hapus pemilih berdasarkan DPID, NIK, NKK, dan TGL_LHR.
+        - Non-batch: hapus 1 baris dengan konfirmasi.
+        - Batch: hapus semua baris dicentang (tanpa pop-up per baris).
+        Terintegrasi penuh dengan _context_action_wrapper().
+        """
+        try:
+            batch_mode = getattr(self, "_in_batch_mode", False)
 
-        with self.freeze_ui():  # 🚀 Bekukan GUI sementara agar tidak flicker
-            try:
-                # =====================================================
-                # 🛡️ PROTEKSI & AUTO-RECOVERY UNTUK MODE BATCH
-                # =====================================================
-                if getattr(self, "_in_batch_mode", False):
-                    if not hasattr(self, "_shared_conn"):
-                        self._shared_conn = None
-                    if not hasattr(self, "_shared_cur"):
-                        self._shared_cur = None
-                    if not hasattr(self, "_shared_query_count"):
-                        self._shared_query_count = 0
-                    if not hasattr(self, "_warning_shown_in_batch"):
-                        self._warning_shown_in_batch = {}
+            # --- Gunakan koneksi aktif (batch) atau buat baru
+            if batch_mode:
+                conn = getattr(self, "_shared_conn", None) or get_connection()
+                cur = getattr(self, "_shared_cur", None) or conn.cursor()
+            else:
+                conn = get_connection()
+                conn.row_factory = None
+                conn.execute("PRAGMA busy_timeout = 3000;")
+                cur = conn.cursor()
 
-                    # Reconnect jika perlu
-                    try:
-                        if self._shared_conn is None or self._shared_cur is None:
-                            raise Exception("batch connection reset")
-                        self._shared_cur.execute("SELECT 1;")
-                    except Exception:
-                        conn = get_connection()
-                        conn.execute("PRAGMA busy_timeout = 3000;")
-                        self._shared_conn = conn
-                        self._shared_cur = conn.cursor()
-                        self._shared_query_count = 0
-                        print("[Batch Recovery] Koneksi SQLCipher diperbaiki.")
+            tbl = self._active_table()
+            if not tbl:
+                self._batch_add("skipped", "hapus_pemilih")
+                return
 
-                # =====================================================
-                # 🧩 Ambil data baris
-                # =====================================================
-                dpid_item = self.table.item(row, self.col_index("DPID"))
-                nik_item  = self.table.item(row, self.col_index("NIK"))
-                nkk_item  = self.table.item(row, self.col_index("NKK"))
-                nama_item = self.table.item(row, self.col_index("NAMA"))
+            # --- Ambil data dari UI
+            def _val(col):
+                ci = self.col_index(col)
+                it = self.table.item(row, ci) if ci != -1 else None
+                return it.text().strip() if it else ""
 
-                dpid = dpid_item.text().strip() if dpid_item else ""
-                nik  = nik_item.text().strip() if nik_item else ""
-                nkk  = nkk_item.text().strip() if nkk_item else ""
-                nama = nama_item.text().strip() if nama_item else ""
+            nama = _val("NAMA")
+            nik  = _val("NIK")
+            nkk  = _val("NKK")
+            dpid = _val("DPID")
+            tgl  = _val("TGL_LHR")
 
-                # ⚠️ Hanya boleh hapus jika DPID kosong / 0
-                if dpid and dpid != "0":
-                    if getattr(self, "_in_batch_mode", False):
-                        if not self._warning_shown_in_batch.get("hapus_pemilih", False):
-                            self._warning_shown_in_batch["hapus_pemilih"] = True
-                    else:
-                        show_modern_warning(
-                            self, "Ditolak",
-                            f"{nama} tidak dapat dihapus dari Daftar Pemilih.<br>"
-                            f"Hanya Pemilih Baru di tahap ini yang bisa dihapus!"
-                        )
-                    self._batch_add("rejected", "hapus_pemilih")
-                    return
+            # --- Proteksi: hanya DPID kosong / "0" boleh dihapus
+            if dpid and dpid != "0":
+                if not batch_mode:
+                    show_modern_warning(
+                        self, "Ditolak",
+                        f"{nama} tidak dapat dihapus.<br>"
+                        f"Hanya pemilih baru di tahapan ini yang bisa dihapus!"
+                    )
+                self._batch_add("rejected", "hapus_pemilih")
+                return
 
-                # 🔸 Konfirmasi (non-batch saja)
-                if not getattr(self, "_in_batch_mode", False):
-                    if not show_modern_question(
-                        self, "Konfirmasi Hapus",
-                        f"Apakah Anda yakin ingin menghapus data ini?<br>"
-                        f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
-                    ):
-                        self._batch_add("skipped", "hapus_pemilih")
-                        return
-
-                gi = self._global_index(row)
-                if not (0 <= gi < len(self.all_data)):
+            # --- Non-batch: konfirmasi tunggal
+            if not batch_mode:
+                if not show_modern_question(
+                    self, "Konfirmasi Hapus",
+                    f"Apakah Anda yakin ingin menghapus data ini?<br>"
+                    f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
+                ):
                     self._batch_add("skipped", "hapus_pemilih")
                     return
 
-                sig = self._row_signature_from_ui(row)
-                rowid = self.all_data[gi].get("rowid") or self.all_data[gi].get("_rowid_")
-                if not rowid:
-                    show_modern_error(self, "Error", "ROWID tidak ditemukan — data tidak dapat dihapus.")
-                    self._batch_add("skipped", "hapus_pemilih")
-                    return
+            # --- Jalankan DELETE presisi
+            sql = f"""
+                DELETE FROM {tbl}
+                WHERE IFNULL(DPID,'') = ?
+                AND IFNULL(NIK,'')  = ?
+                AND IFNULL(NKK,'')  = ?
+                AND IFNULL(TGL_LHR,'') = ?
+            """
+            params = (dpid, nik, nkk, tgl)
+            cur.execute(sql, params)
 
-                last_update = sig.get("LastUpdate", "").strip()
-                tbl = self._active_table()
-
-                # =====================================================
-                # ✅ Validasi tabel aktif
-                # =====================================================
-                if not tbl:
-                    show_modern_error(self, "Error", "Tahapan tidak valid — tabel aktif tidak ditemukan.")
-                    self._batch_add("skipped", "hapus_pemilih")
-                    return
-                if tbl.lower() not in ("dphp", "dpshp", "dpshpa"):
-                    show_modern_error(self, "Error", f"Tabel {tbl} bukan tabel aktif yang valid.")
-                    self._batch_add("skipped", "hapus_pemilih")
-                    return
-
-                # =====================================================
-                # ⚙️ Single-query DELETE ultra ringan
-                # =====================================================
-                sql_delete = f"""
-                    DELETE FROM {tbl}
-                    WHERE IFNULL(NIK,'') = ?
-                    AND IFNULL(NKK,'') = ?
-                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL OR DPID='0')
-                """
-                params = (
-                    sig.get("NIK", ""),
-                    sig.get("NKK", ""),
-                    sig.get("DPID", "")
-                )
-
-                # =====================================================
-                # 🧹 Hapus dari memori
-                # =====================================================
-                del self.all_data[gi]
-                if (self.current_page > 1) and ((self.current_page - 1) * self.rows_per_page >= len(self.all_data)):
-                    self.current_page -= 1
-
-                # =====================================================
-                # 💬 Info sukses & catat batch
-                # =====================================================
-                if not getattr(self, "_in_batch_mode", False):
-                    show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari {tbl.upper()}!")
-
+            if cur.rowcount > 0:
                 self._batch_add("ok", "hapus_pemilih")
-
-                # =====================================================
-                # 🔄 Muat ulang data setelah penghapusan
-                # =====================================================
-                if not getattr(self, "_in_batch_mode", False):
-                    try:
-                        if hasattr(self, "load_data_from_db"):
-                            self.load_data_from_db()
-                            print(f"[MainWindow] ✅ Data di-refresh ulang setelah hapus di {tbl.upper()}")
-                    except Exception as e:
-                        print(f"[MainWindow] ⚠️ Gagal memuat ulang data setelah hapus: {e}")
-
-            except Exception as e:
-                show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+            else:
                 self._batch_add("skipped", "hapus_pemilih")
 
-            # =====================================================
-            # 🔚 Tutup koneksi batch di akhir proses massal
-            # =====================================================
-            if not getattr(self, "_in_batch_mode", False) and hasattr(self, "_shared_conn"):
+            # --- Commit & refresh
+            if not batch_mode:
+                conn.commit()
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                conn.commit()
+                self.load_data_from_db()
+                show_modern_info(self, "Selesai", f"{nama} berhasil dihapus.")
+            else:
+                # commit periodik untuk batch
+                self._shared_query_count = getattr(self, "_shared_query_count", 0) + 1
+                if self._shared_query_count % 1000 == 0:
+                    conn.commit()
+
+        except Exception as e:
+            self._batch_add("skipped", "hapus_pemilih")
+            if not getattr(self, "_in_batch_mode", False):
+                show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+        finally:
+            if not getattr(self, "_in_batch_mode", False):
                 try:
-                    self._shared_conn.commit()
-                    self._shared_cur = None
-                    self._shared_conn = None
+                    conn.commit()
                 except Exception:
                     pass
 
@@ -9166,7 +9260,7 @@ class MainWindow(QMainWindow):
                 if not cell:
                     cell = QTableWidgetItem("")
                     self.table.setItem(row, c, cell)
-                cell.setBackground(Qt.GlobalColor.darkGray if checked else Qt.GlobalColor.transparent)
+                cell.setBackground(Qt.GlobalColor.lightGray if checked else Qt.GlobalColor.transparent)
             self.update_statusbar()
 
     # =================================================

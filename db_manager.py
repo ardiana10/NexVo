@@ -212,11 +212,9 @@ def init_schema(conn) -> None:
 # =========================================================
 def get_connection():
     """
-    Mengembalikan koneksi global yang aman, terenkripsi (SQLCipher), 
-    dan dioptimalkan untuk performa tinggi NexVo.
-    - Autocommit aktif → tidak ada transaksi otomatis
-    - PRAGMA lengkap untuk keamanan & kecepatan
-    - Aman dipanggil berulang kali (global singleton)
+    Mengembalikan koneksi global yang aman, terenkripsi (SQLCipher),
+    dan dioptimalkan untuk NexVo Desktop.
+    Mode sinkronisasi: langsung (tanpa WAL) → semua koneksi membaca hasil terbaru.
     """
     global _connection
     with _connection_lock:
@@ -229,40 +227,38 @@ def get_connection():
             # ======================================================
             try:
                 from sqlcipher3 import dbapi2 as sqlcipher
-                _connection = sqlcipher.connect(DB_PATH, isolation_level=None)  # autocommit
+                _connection = sqlcipher.connect(DB_PATH, isolation_level=None)  # autocommit aktif
                 hexkey = load_or_create_key().hex()
                 _connection.execute(f"PRAGMA key = \"x'{hexkey}'\";")
 
-                # ==================================================
-                # 🔒 PRAGMA keamanan tambahan (khusus SQLCipher)
-                # ==================================================
-                _connection.execute("PRAGMA cipher_page_size = 4096;")               # ukuran blok enkripsi (4 KB)
-                _connection.execute("PRAGMA kdf_iter = 64000;")                      # kekuatan derivasi key
-                _connection.execute("PRAGMA cipher_hmac_algorithm = HMAC_SHA512;")   # integritas HMAC kuat
+                # 🔒 PRAGMA keamanan tambahan
+                _connection.execute("PRAGMA cipher_page_size = 4096;")
+                _connection.execute("PRAGMA kdf_iter = 64000;")
+                _connection.execute("PRAGMA cipher_hmac_algorithm = HMAC_SHA512;")
                 _connection.execute("PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;")
-                #print("[INFO] SQLCipher mode aktif dengan keamanan maksimal.")
+                # print("[INFO] SQLCipher mode aktif.")
 
             except ImportError:
                 # ==================================================
-                # 🪶 Fallback ke SQLite biasa (tanpa enkripsi)
+                # 🪶 Fallback ke SQLite biasa (non-enkripsi)
                 # ==================================================
                 import sqlite3
                 _connection = sqlite3.connect(DB_PATH, isolation_level=None)
-                #print("[PERINGATAN] SQLCipher3 tidak tersedia, menggunakan SQLite biasa (non-enkripsi).")
+                # print("[PERINGATAN] SQLCipher3 tidak tersedia, menggunakan SQLite biasa.")
 
             # ======================================================
-            # ⚙️ PRAGMA performa tinggi (aman di autocommit)
+            # ⚙️ PRAGMA — Mode sinkronisasi langsung (tanpa WAL)
             # ======================================================
             cur = _connection.cursor()
-            cur.execute("PRAGMA journal_mode = WAL;")        # tulis-baca cepat & tahan crash
-            cur.execute("PRAGMA synchronous = NORMAL;")      # balance speed vs safety
-            cur.execute("PRAGMA temp_store = MEMORY;")       # operasi sementara di RAM
-            cur.execute("PRAGMA cache_size = 10000;")        # cache besar untuk query masif
-            cur.execute("PRAGMA foreign_keys = ON;")         # aktifkan relasi antar tabel
-            cur.execute("PRAGMA busy_timeout = 8000;")       # tunggu 8 detik jika terkunci
+            cur.execute("PRAGMA journal_mode = DELETE;")   # 💡 langsung tulis ke file utama (tidak ada .wal)
+            cur.execute("PRAGMA synchronous = FULL;")      # jamin data tersimpan 100% aman
+            cur.execute("PRAGMA temp_store = MEMORY;")     # operasi sementara di RAM
+            cur.execute("PRAGMA cache_size = 10000;")      # cache besar untuk performa
+            cur.execute("PRAGMA foreign_keys = ON;")       # aktifkan relasi antar tabel
+            cur.execute("PRAGMA busy_timeout = 8000;")     # hindari error locked
             cur.close()
 
-            #print("[DB] Koneksi database SQLCipher siap (autocommit aktif, performa optimal).")
+            # print("[DB] Koneksi SQLCipher siap (sinkron penuh, tanpa WAL).")
             return _connection
 
         except Exception as e:
