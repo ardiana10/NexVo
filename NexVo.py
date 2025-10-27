@@ -11220,8 +11220,9 @@ class UnggahRegulerWindow(QWidget):
                 background-color:#d94f00;
             }
         """)
-        btn_simpan.clicked.connect(lambda: print("[INFO] Tombol Simpan ditekan (fungsi belum diisi)."))
+        #btn_simpan.clicked.connect(lambda: print("[INFO] Tombol Simpan ditekan (fungsi belum diisi)."))
         btn_layout.addWidget(btn_simpan)
+        btn_simpan.clicked.connect(self.simpan_data_ke_tabel_aktif)
 
         # Tombol Tutup
         btn_tutup = QPushButton("Tutup")
@@ -11272,6 +11273,167 @@ class UnggahRegulerWindow(QWidget):
     def _install_delete_handler(self):
         """Pasang event filter agar tombol Delete bisa menghapus isi sel."""
         self.table.installEventFilter(self)
+
+    def simpan_data_ke_tabel_aktif(self):
+        """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super cepat + aman)."""
+        try:
+            tbl_aktif = self._active_table()
+            if not tbl_aktif:
+                QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            kecamatan = self._kecamatan.upper()
+            desa = self._desa.upper()
+
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.executescript("""
+                PRAGMA synchronous = OFF;
+                PRAGMA journal_mode = MEMORY;
+                PRAGMA cache_size = 500000;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA locking_mode = EXCLUSIVE;
+            """)
+
+            gagal_list = []
+            sukses_list = []
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # === Ambil data dari tabel UI ===
+            for row in range(self.table.rowCount()):
+                data = [self.table.item(row, c).text().strip() if self.table.item(row, c) else "" for c in range(self.table.columnCount())]
+                no, dpid, nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis, ktpel, sumber, ket, tps = data
+
+                # Skip baris kosong total
+                if not any(data[1:]):  # semua kolom kosong kecuali No.
+                    continue
+
+                # ==================== VALIDASI ====================
+                err = []
+
+                # 1. Validasi NKK & NIK
+                if not (nkk.isdigit() and len(nkk) == 16): err.append("NKK Invalid")
+                if not (nik.isdigit() and len(nik) == 16): err.append("NIK Invalid")
+
+                # 2. Validasi JK
+                jk = jk.upper()
+                if jk not in ("L", "P"): err.append("Jenis Kelamin Invalid")
+
+                # 3. Validasi Tanggal Lahir & umur
+                try:
+                    dd, mm, yyyy = map(int, tgl.split("|"))
+                    if not (1 <= dd <= 31 and 1 <= mm <= 12): raise ValueError
+                    umur_ref = datetime(2029, 6, 26)
+                    lahir = datetime(yyyy, mm, dd)
+                    umur = (umur_ref - lahir).days / 365.25
+                    if umur < 17 and sts.upper() == "B":
+                        err.append("Pemilih Dibawah Umur")
+                except Exception:
+                    err.append("Tanggal Lahir Invalid")
+
+                # 4. Validasi STS
+                sts = sts.upper()
+                if sts not in ("B", "S", "P"): err.append("Status Invalid")
+
+                # 5. RT, RW, TPS numerik
+                for val, name in [(rt, "RT"), (rw, "RW"), (tps, "TPS")]:
+                    if val and not val.isdigit():
+                        err.append(f"{name} Invalid")
+
+                # 6. DIS
+                if dis not in ("0", "1", "2", "3", "4", "5", "6"):
+                    err.append("DIS Invalid")
+
+                # 7. KTPel
+                ktpel = ktpel.upper()
+                if ktpel not in ("B", "S"):
+                    err.append("KTPel Invalid")
+
+                # 8. KET
+                ket = ket.upper()
+                if ket not in ("B", "U", "1", "2", "3", "4", "5", "6", "7", "8"):
+                    err.append("Kode Keterangan Invalid")
+
+                # 9. Cek NIK ganda di tabel aktif
+                if not err:
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl_aktif} WHERE NIK=? AND KET NOT IN ('1','2','3','4','5','6','7','8')", (nik,))
+                    if cur.fetchone()[0] > 0:
+                        err.append("Terdaftar sebagai NIK Pemilih Aktif")
+
+                # 10. Validasi kelengkapan isi berdasarkan KET
+                if ket == "B":
+                    if dpid:
+                        err.append("Invalid DPID (harus kosong untuk BARU)")
+                else:
+                    if not all([nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis, ktpel, sumber, ket, tps]):
+                        err.append("Data tidak lengkap")
+
+                # ==================== PENENTUAN TINDAKAN ====================
+                if err:
+                    gagal_list.append(f"{nama}, {nik}, {'; '.join(err)}")
+                    continue
+
+                # === Transformasi kapitalisasi ===
+                nama = ", ".join([nama.split(",")[0].upper(), nama.split(",")[1]]) if "," in nama else nama.upper()
+
+                record = (
+                    nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis,
+                    ktpel, sumber, ket, tps, kecamatan, desa, now
+                )
+
+                # === INSERT BARU ===
+                if not dpid and ket == "B":
+                    cur.execute(f"""
+                        INSERT INTO {tbl_aktif}
+                        (NKK, NIK, NAMA, JK, TMPT_LHR, TGL_LHR, STS, ALAMAT,
+                        RT, RW, DIS, KTPel, SUMBER, KET, TPS, KECAMATAN, DESA, LastUpdate)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, record)
+                    sukses_list.append(row)
+
+                # === UPDATE DATA EXISTING ===
+                elif dpid and ket != "B":
+                    # 🔹 Tambahan: cek apakah DPID benar-benar ada
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl_aktif} WHERE DPID=?", (dpid,))
+                    ada_dpid = cur.fetchone()[0]
+                    if ada_dpid == 0:
+                        gagal_list.append(f"{nama}, {nik}, DPID tidak ditemukan")
+                        continue  # lewati, jangan update
+
+                    cur.execute(f"""
+                        UPDATE {tbl_aktif}
+                        SET NKK=?, NIK=?, NAMA=?, JK=?, TMPT_LHR=?, TGL_LHR=?, STS=?, 
+                            ALAMAT=?, RT=?, RW=?, DIS=?, KTPel=?, SUMBER=?, KET=?, 
+                            TPS=?, KECAMATAN=?, DESA=?, LastUpdate=?
+                        WHERE DPID=?
+                    """, record + (dpid,))
+                    sukses_list.append(row)
+
+                # === Jika kombinasi lain (contoh DPID kosong tapi KET != B) ===
+                else:
+                    gagal_list.append(f"{nama}, {nik}, Kombinasi DPID dan KET tidak valid")
+                    continue
+
+            conn.commit()
+
+            # ==================== HASIL AKHIR ====================
+            if gagal_list:
+                msg = "\n".join(gagal_list[:20])
+                QMessageBox.warning(
+                    self,
+                    "Gagal Unggah",
+                    f"{len(gagal_list)} data gagal diunggah:\n\n{msg}\n\nRendatin KPU Kab. Tasikmalaya"
+                )
+            else:
+                QMessageBox.information(self, "Berhasil", "Semua data berhasil diunggah.")
+
+            # Hapus baris sukses
+            for r in sorted(sukses_list, reverse=True):
+                self.table.removeRow(r)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan data:\n{e}")
+            import traceback; traceback.print_exc()
 
     def eventFilter(self, obj, event):
         """Tangani tombol Delete dari mana pun dalam tabel (termasuk editor)."""
