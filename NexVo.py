@@ -7911,8 +7911,16 @@ class MainWindow(QMainWindow):
 
                 last_update = sig.get("LastUpdate", "").strip()
                 tbl = self._active_table()
+
+                # =====================================================
+                # ✅ Validasi tabel aktif
+                # =====================================================
                 if not tbl:
-                    show_modern_error(self, "Error", "Tahapan tidak valid — tabel tujuan tidak ditemukan.")
+                    show_modern_error(self, "Error", "Tahapan tidak valid — tabel aktif tidak ditemukan.")
+                    self._batch_add("skipped", "hapus_pemilih")
+                    return
+                if tbl.lower() not in ("dphp", "dpshp", "dpshpa"):
+                    show_modern_error(self, "Error", f"Tabel {tbl} bukan tabel aktif yang valid.")
                     self._batch_add("skipped", "hapus_pemilih")
                     return
 
@@ -7921,36 +7929,15 @@ class MainWindow(QMainWindow):
                 # =====================================================
                 sql_delete = f"""
                     DELETE FROM {tbl}
-                    WHERE rowid = ?
-                    AND IFNULL(NIK,'') = ?
+                    WHERE IFNULL(NIK,'') = ?
                     AND IFNULL(NKK,'') = ?
-                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL)
-                    AND IFNULL(TGL_LHR,'') = ?
-                    AND IFNULL(LastUpdate,'') = ?
+                    AND (IFNULL(DPID,'') = ? OR DPID IS NULL OR DPID='0')
                 """
                 params = (
-                    rowid,
                     sig.get("NIK", ""),
                     sig.get("NKK", ""),
-                    sig.get("DPID", ""),
-                    sig.get("TGL_LHR", ""),
-                    last_update
+                    sig.get("DPID", "")
                 )
-
-                if getattr(self, "_in_batch_mode", False):
-                    cur = self._shared_cur
-                    cur.execute(sql_delete, params)
-                    self._shared_query_count += 1
-
-                    # ✅ Commit otomatis setiap 1000 baris
-                    if self._shared_query_count % 1000 == 0:
-                        self._shared_conn.commit()
-                else:
-                    conn = get_connection()
-                    cur = conn.cursor()
-                    conn.execute("PRAGMA busy_timeout = 3000;")
-                    cur.execute(sql_delete, params)
-                    conn.commit()
 
                 # =====================================================
                 # 🧹 Hapus dari memori
@@ -7966,6 +7953,17 @@ class MainWindow(QMainWindow):
                     show_modern_info(self, "Selesai", f"{nama} berhasil dihapus dari {tbl.upper()}!")
 
                 self._batch_add("ok", "hapus_pemilih")
+
+                # =====================================================
+                # 🔄 Muat ulang data setelah penghapusan
+                # =====================================================
+                if not getattr(self, "_in_batch_mode", False):
+                    try:
+                        if hasattr(self, "load_data_from_db"):
+                            self.load_data_from_db()
+                            print(f"[MainWindow] ✅ Data di-refresh ulang setelah hapus di {tbl.upper()}")
+                    except Exception as e:
+                        print(f"[MainWindow] ⚠️ Gagal memuat ulang data setelah hapus: {e}")
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
@@ -11460,18 +11458,70 @@ class UnggahRegulerWindow(QWidget):
                 self._fill_numbers()
                 return True  # hentikan propagasi event
         return super().eventFilter(obj, event)
+    
+    @contextmanager
+    def freeze_ui(self):
+        """Bekukan UI sementara (tanpa overlay) — ringan dan cepat."""
+        try:
+            QApplication.processEvents()
+            self.setUpdatesEnabled(False)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            yield
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.setUpdatesEnabled(True)
+            self.repaint()
+            QApplication.processEvents()
 
     def _close_window(self):
-        """Tutup jendela unggah dan tampilkan kembali MainWindow."""
+        """Tutup jendela unggah, jalankan freeze_ui, panggil semua fungsi refresh di MainWindow, lalu tampilkan kembali."""
         try:
             if self.main_window:
-                # Pastikan main window tampil penuh dan berada di depan
+                # === Bekukan UI sementara ===
+                try:
+                    with self.freeze_ui():
+                        # === 1️⃣ Muat ulang data utama ===
+                        if hasattr(self.main_window, "load_data_from_db"):
+                            self.main_window.load_data_from_db()
+                            #print("[UnggahReguler] ✅ Data utama berhasil dimuat ulang.")
+                        else:
+                            print("[UnggahReguler] ⚠️ MainWindow tidak memiliki load_data_from_db().")
+
+                        # === 2️⃣ Jalankan fungsi lanjutan untuk refresh UI tabel ===
+                        for fn_name in (
+                            "update_pagination",
+                            "show_page",
+                            "connect_header_events",
+                            "sort_data",
+                            "_warnai_baris_berdasarkan_ket",
+                            "_terapkan_warna_ke_tabel_aktif",
+                        ):
+                            if hasattr(self.main_window, fn_name):
+                                fn = getattr(self.main_window, fn_name)
+                                try:
+                                    # show_page butuh argumen page 1
+                                    if fn_name == "show_page":
+                                        fn(1)
+                                    elif fn_name == "sort_data":
+                                        fn(auto=True)
+                                    else:
+                                        fn()
+                                    #print(f"[UnggahReguler] 🔹 Berhasil memanggil {fn_name}()")
+                                except Exception as e:
+                                    print(f"[UnggahReguler] ⚠️ Gagal memanggil {fn_name}(): {e}")
+                            else:
+                                print(f"[UnggahReguler] ⚠️ Fungsi {fn_name}() tidak ditemukan di MainWindow.")
+
+                except Exception as e:
+                    print(f"[UnggahReguler] ⚠️ Gagal menjalankan freeze_ui atau fungsi refresh: {e}")
+
+                # === 3️⃣ Kembalikan jendela utama ke depan ===
                 self.main_window.showNormal()
                 self.main_window.showMaximized()
                 self.main_window.raise_()
                 self.main_window.activateWindow()
 
-            # Tutup jendela ini
+            # === 4️⃣ Tutup jendela unggah ===
             self.close()
 
         except Exception as e:
