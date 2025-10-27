@@ -5922,6 +5922,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         # === Muat lebar kolom terakhir (jika ada)
         QTimer.singleShot(0, self.load_column_widths)
+        #self.table.horizontalHeader().sectionResized.connect(lambda *_: self.save_column_widths())
         # === Simpan otomatis saat user mengubah lebar kolom
         header = self.table.horizontalHeader()
         header.sectionResized.connect(self._on_column_resized)
@@ -11155,11 +11156,17 @@ class UnggahRegulerWindow(QWidget):
             }
         """)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(20)
 
         col_widths = [50, 70, 130, 130, 200, 30, 130, 100, 40, 235, 40, 40, 40, 45, 110, 40, 50]
         for i, w in enumerate(col_widths):
             self.table.setColumnWidth(i, w)
+
+        QTimer.singleShot(150, self.load_column_widths)
+        #self.table.horizontalHeader().sectionResized.connect(lambda *_: self.save_column_widths())
 
         # === Kolom rata kiri khusus
         self.table.setWordWrap(True)
@@ -11299,6 +11306,46 @@ class UnggahRegulerWindow(QWidget):
 
         except Exception as e:
             print(f"[UI] Gagal menutup jendela UnggahRegulerWindow: {e}")
+
+    # ===========================================================
+    # 🧩 Simpan & muat ukuran kolom tabel (JSON global)
+    # ===========================================================
+    def _settings_path(self):
+        """Path file JSON untuk menyimpan ukuran kolom Unggah Reguler."""
+        base_dir = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "NexVo")
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, "column_widths_unggahreguler.json")
+
+    def save_column_widths(self):
+        """Simpan ukuran kolom ke file JSON global."""
+        try:
+            widths = [self.table.columnWidth(i) for i in range(self.table.columnCount())]
+            data = {"widths": widths}
+            with open(self._settings_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            #print(f"[UnggahReguler] ✅ Ukuran kolom disimpan ke {self._settings_path()}")
+        except Exception as e:
+            print(f"[UnggahReguler] ⚠️ Gagal menyimpan ukuran kolom: {e}")
+
+    def load_column_widths(self):
+        """Muat ukuran kolom dari file JSON global (jika ada)."""
+        try:
+            path = self._settings_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    widths = data.get("widths", [])
+                    for i, w in enumerate(widths):
+                        if i < self.table.columnCount():
+                            self.table.setColumnWidth(i, int(w))
+                #print(f"[UnggahReguler] ✅ Ukuran kolom diterapkan dari {path}")
+        except Exception as e:
+            print(f"[UnggahReguler] ⚠️ Gagal memuat ukuran kolom: {e}")
+
+    def closeEvent(self, event):
+        """Simpan ukuran kolom saat jendela ditutup."""
+        self.save_column_widths()
+        super().closeEvent(event)
 
 # =========================================================
 # 🔹 KELAS TAMPILAN REKAP
@@ -18628,6 +18675,9 @@ class Data_Pantarlih(QMainWindow):
         for i, w in enumerate(col_widths):
             self.table.setColumnWidth(i, w)
 
+        QTimer.singleShot(150, self.load_column_widths)
+        #self.table.horizontalHeader().sectionResized.connect(lambda *_: self.save_column_widths())
+
         # === Hilangkan scrollbar horizontal ===
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -18820,6 +18870,40 @@ class Data_Pantarlih(QMainWindow):
         except Exception as e:
             print(f"[LOAD_TPS ERROR] {e}")
 
+    # ===========================================================
+    # 🧩 Simpan & muat ukuran kolom tabel (JSON global)
+    # ===========================================================
+    def _settings_path(self):
+        """Path file JSON untuk menyimpan ukuran kolom Data Pantarlih."""
+        base_dir = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "NexVo")
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, "column_widths_datapantarlih.json")
+
+    def save_column_widths(self):
+        """Simpan ukuran kolom ke file JSON global."""
+        try:
+            widths = [self.table.columnWidth(i) for i in range(self.table.columnCount())]
+            data = {"widths": widths}
+            with open(self._settings_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            #print(f"[save_column_widths] ✅ Disimpan ke {self._settings_path()}")
+        except Exception as e:
+            print(f"[save_column_widths] ⚠️ Gagal menyimpan: {e}")
+
+    def load_column_widths(self):
+        """Muat ukuran kolom dari file JSON global (jika ada)."""
+        try:
+            path = self._settings_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    widths = data.get("widths", [])
+                    for i, w in enumerate(widths):
+                        if i < self.table.columnCount():
+                            self.table.setColumnWidth(i, int(w))
+                #print(f"[load_column_widths] ✅ Diterapkan dari {path}")
+        except Exception as e:
+            print(f"[load_column_widths] ⚠️ Gagal memuat: {e}")
 
     def _paste_from_clipboard(self):
         """Paste data dari clipboard ke tabel (kolom 2–8) dan hitung otomatis stiker tersisa."""
@@ -19122,6 +19206,11 @@ class Data_Pantarlih(QMainWindow):
 
         # 🚪 Tutup jendela Data Pantarlih (setelah UI dilepas)
         self.close()
+
+    def closeEvent(self, event):
+        """Simpan ukuran kolom tabel saat jendela ditutup."""
+        self.save_column_widths()
+        super().closeEvent(event)
 
 
 #####################################*************########################################
