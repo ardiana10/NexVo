@@ -8029,6 +8029,7 @@ class MainWindow(QMainWindow):
                 if conn:
                     conn.commit()
                     self._clear_row_selection(row)
+                    self._reset_tabel_background()
             except Exception:
                 pass
 
@@ -8109,6 +8110,7 @@ class MainWindow(QMainWindow):
                 # --- Refresh tabel
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(250, lambda: self._refresh_setelah_hapus())
+                self._reset_tabel_background()
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data batch:\n{e}")
@@ -8162,6 +8164,24 @@ class MainWindow(QMainWindow):
         """Fungsi lookup pemilih — belum diimplementasikan."""
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.information(self, "Lookup Pemilih", "Fitur Lookup Pemilih belum diimplementasikan.")
+
+    def _reset_tabel_background(self):
+        """Menormalkan kembali warna background seluruh sel tabel aktif ke default."""
+        if not hasattr(self, "table") or self.table is None:
+            return
+
+        self.table.blockSignals(True)  # 🚫 hindari trigger event saat loop
+        default_brush = QBrush(Qt.GlobalColor.transparent)
+
+        for row in range(self.table.rowCount()):
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item:
+                    item.setBackground(default_brush)
+
+        self.table.clearSelection()  # hilangkan highlight seleksi
+        self.table.viewport().update()
+        self.table.blockSignals(False)
 
     # =========================================================
     # 🔹 AKTIFKAN SATU PEMILIH
@@ -8228,6 +8248,8 @@ class MainWindow(QMainWindow):
             finally:
                 # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
+                self._reset_tabel_background()
+                
 
 
     # =========================================================
@@ -8290,11 +8312,11 @@ class MainWindow(QMainWindow):
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                self._reset_tabel_background()
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal batch aktifkan pemilih:\n{e}")
-
-
+                
     # =========================================================
     # 🔹 ROUTER OTOMATIS UNTUK AKTIFKAN
     # =========================================================
@@ -8362,7 +8384,7 @@ class MainWindow(QMainWindow):
             finally:
                 # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
-
+                self._reset_tabel_background()
 
     # =========================================================
     # 🔹 SET STATUS BANYAK (MENINGGAL, GANDA, DLL)
@@ -8421,6 +8443,7 @@ class MainWindow(QMainWindow):
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                self._reset_tabel_background()
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal batch set status:\n{e}")
@@ -9031,7 +9054,7 @@ class MainWindow(QMainWindow):
         warna_cache = {
             "biru": QBrush(QColor("blue")),
             "merah": QBrush(QColor("red")),
-            "kuning": QBrush(QColor("yellow")),
+            "kuning": QBrush(QColor("#072CBF")),
             "hijau": QBrush(QColor("green")),
             "hitam": QBrush(QColor("black")),
             "putih": QBrush(QColor("white")),
@@ -11749,13 +11772,14 @@ class UnggahRegulerWindow(QWidget):
         self.table.installEventFilter(self)
 
     def simpan_data_ke_tabel_aktif(self):
-        """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super cepat + aman)."""
+        """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super kilat & identik hasil)."""
         try:
             tbl_aktif = self._active_table()
             if not tbl_aktif:
                 QMessageBox.warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
+            tahapan = getattr(self, "_tahapan", "").upper()
             kecamatan = self._kecamatan.upper()
             desa = self._desa.upper()
 
@@ -11773,68 +11797,129 @@ class UnggahRegulerWindow(QWidget):
             sukses_list = []
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # === Ambil data dari tabel UI ===
-            for row in range(self.table.rowCount()):
+            # =============================================================
+            #  📋 Cache semua nilai (superspeed)
+            # =============================================================
+            total_rows = self.table.rowCount()
+            semua_dpid = [(self.table.item(r, 1).text().strip() if self.table.item(r, 1) else "") for r in range(total_rows)]
+            semua_nik  = [(self.table.item(r, 3).text().strip() if self.table.item(r, 3) else "") for r in range(total_rows)]
+            semua_ket  = [(self.table.item(r, 15).text().strip().upper() if self.table.item(r, 15) else "") for r in range(total_rows)]
+
+            # === 🚀 Build lookup untuk deteksi cepat ===
+            nik_map = {}
+            dpid_ket_seen = set()
+            for i, (nik, ket, dpid) in enumerate(zip(semua_nik, semua_ket, semua_dpid)):
+                if nik and ket not in ("1","2","3","4","5","6","7","8"):
+                    nik_map.setdefault(nik, []).append(i)
+                if dpid and ket:
+                    pair = (dpid, ket)
+                    if pair in dpid_ket_seen:
+                        pass  # hanya deteksi cepat nanti di loop
+                    else:
+                        dpid_ket_seen.add(pair)
+
+            # === Cache TPS dari tabel aktif (sekali query saja) ===
+            cur.execute(f"SELECT DPID, TPS FROM {tbl_aktif}")
+            tps_lookup = {str(row[0]): str(row[1]).strip() for row in cur.fetchall()}
+
+            # =============================================================
+            #  🚀 Proses baris demi baris
+            # =============================================================
+            for row in range(total_rows):
                 data = [self.table.item(row, c).text().strip() if self.table.item(row, c) else "" for c in range(self.table.columnCount())]
                 no, dpid, nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis, ktpel, sumber, ket, tps = data
 
-                # Skip baris kosong total
-                if not any(data[1:]):  # semua kolom kosong kecuali No.
+                if not any(data[1:]):  # skip baris kosong
                     continue
 
-                # ==================== VALIDASI ====================
                 err = []
 
-                # 1. Validasi NKK & NIK
+                # =============================================================
+                # 🔍 CEK DUPLIKASI DALAM TABEL UNGGAH (pakai cache)
+                # =============================================================
+                if nik and ket not in ("1","2","3","4","5","6","7","8"):
+                    dup_rows = nik_map.get(nik, [])
+                    if len(dup_rows) > 1:
+                        err.append("NIK Ganda")
+
+                if dpid and ket:
+                    # Jika ada pasangan DPID+KET ganda di tabel unggah
+                    pair = (dpid, ket.upper())
+                    if semua_dpid.count(dpid) > 1 and semua_ket.count(ket.upper()) > 1:
+                        # pemeriksaan cepat untuk dataset sama
+                        for r2 in range(total_rows):
+                            if r2 != row and semua_dpid[r2] == dpid and semua_ket[r2] == ket.upper():
+                                err.append("Dataset sama")
+                                break
+
+                # =============================================================
+                # 🔎 VALIDASI DASAR
+                # =============================================================
                 if not (nkk.isdigit() and len(nkk) == 16): err.append("NKK Invalid")
                 if not (nik.isdigit() and len(nik) == 16): err.append("NIK Invalid")
 
-                # 2. Validasi JK
                 jk = jk.upper()
                 if jk not in ("L", "P"): err.append("Jenis Kelamin Invalid")
 
-                # 3. Validasi Tanggal Lahir & umur
                 try:
                     dd, mm, yyyy = map(int, tgl.split("|"))
-                    if not (1 <= dd <= 31 and 1 <= mm <= 12): raise ValueError
-                    umur_ref = datetime(2029, 6, 26)
                     lahir = datetime(yyyy, mm, dd)
-                    umur = (umur_ref - lahir).days / 365.25
+                    umur = (datetime(2029, 6, 26) - lahir).days / 365.25
                     if umur < 17 and sts.upper() == "B":
                         err.append("Pemilih Dibawah Umur")
                 except Exception:
                     err.append("Tanggal Lahir Invalid")
 
-                # 4. Validasi STS
                 sts = sts.upper()
                 if sts not in ("B", "S", "P"): err.append("Status Invalid")
 
-                # 5. RT, RW, TPS numerik
                 for val, name in [(rt, "RT"), (rw, "RW"), (tps, "TPS")]:
                     if val and not val.isdigit():
                         err.append(f"{name} Invalid")
 
-                # 6. DIS
-                if dis not in ("0", "1", "2", "3", "4", "5", "6"):
+                if dis not in ("0","1","2","3","4","5","6"):
                     err.append("DIS Invalid")
 
-                # 7. KTPel
                 ktpel = ktpel.upper()
-                if ktpel not in ("B", "S"):
+                if ktpel not in ("B","S"):
                     err.append("KTPel Invalid")
 
-                # 8. KET
                 ket = ket.upper()
-                if ket not in ("B", "U", "1", "2", "3", "4", "5", "6", "7", "8"):
+                if ket not in ("B","U","1","2","3","4","5","6","7","8"):
                     err.append("Kode Keterangan Invalid")
 
-                # 9. Cek NIK ganda di tabel aktif
+                # =============================================================
+                # 🔎 CEK NIK GANDA DI TABEL AKTIF
+                # =============================================================
                 if not err:
-                    cur.execute(f"SELECT COUNT(*) FROM {tbl_aktif} WHERE NIK=? AND KET NOT IN ('1','2','3','4','5','6','7','8')", (nik,))
-                    if cur.fetchone()[0] > 0:
-                        err.append("Terdaftar sebagai NIK Pemilih Aktif")
+                    # 🟩 1. Jika DPID kosong/0 atau KET = B → cek NIK sudah aktif
+                    if (not dpid or dpid.strip() == "0") or ket.lower() == "b":
+                        cur.execute(f"""
+                            SELECT COUNT(*) 
+                            FROM {tbl_aktif} 
+                            WHERE NIK=? 
+                            AND KET NOT IN ('1','2','3','4','5','6','7','8')
+                        """, (nik,))
+                        if cur.fetchone()[0] > 0:
+                            err.append("Terdaftar sebagai NIK Pemilih Aktif")
 
-                # 10. Validasi kelengkapan isi berdasarkan KET
+                    # 🟦 2. Jika DPID terisi dan KET = U → cek apakah NIK sama tapi DPID beda
+                    elif dpid.strip() and ket.lower() == "u":
+                        cur.execute(f"""
+                            SELECT DPID 
+                            FROM {tbl_aktif} 
+                            WHERE NIK=? 
+                            AND KET NOT IN ('1','2','3','4','5','6','7','8')
+                        """, (nik,))
+                        hasil = cur.fetchall()
+                        if hasil:
+                            aktif_dpids = [row_[0] for row_ in hasil]
+                            if dpid not in aktif_dpids:
+                                err.append("Terdaftar sebagai NIK Pemilih Aktif")
+
+                # =============================================================
+                # 🔎 CEK KELENGKAPAN DATA
+                # =============================================================
                 if ket == "B":
                     if dpid:
                         err.append("Invalid DPID (harus kosong untuk BARU)")
@@ -11842,12 +11927,26 @@ class UnggahRegulerWindow(QWidget):
                     if not all([nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis, ktpel, sumber, ket, tps]):
                         err.append("Data tidak lengkap")
 
-                # ==================== PENENTUAN TINDAKAN ====================
+                # =============================================================
+                # 🔎 CEK SALAH TPS (VERIFIKASI AKHIR, pakai cache)
+                # =============================================================
+                if not err and dpid and ket.upper() in ("U","1","2","3","4","5","6","7","8"):
+                    tps_aktif = tps_lookup.get(str(dpid))
+                    if tps_aktif:
+                        if ket.upper() == "U" and tahapan == "DPHP":
+                            if tps.strip() != tps_aktif:
+                                err.append("Salah TPS")
+                        elif ket in ("1","2","3","4","5","6","7","8"):
+                            if tps.strip() != tps_aktif:
+                                err.append("Salah TPS")
+
+                # =============================================================
+                # ⚙️ TINDAKAN INSERT / UPDATE
+                # =============================================================
                 if err:
                     gagal_list.append(f"{nama}, {nik}, {'; '.join(err)}")
                     continue
 
-                # === Transformasi kapitalisasi ===
                 nama = ", ".join([nama.split(",")[0].upper(), nama.split(",")[1]]) if "," in nama else nama.upper()
 
                 record = (
@@ -11855,7 +11954,6 @@ class UnggahRegulerWindow(QWidget):
                     ktpel, sumber, ket, tps, kecamatan, desa, now
                 )
 
-                # === INSERT BARU ===
                 if not dpid and ket == "B":
                     cur.execute(f"""
                         INSERT INTO {tbl_aktif}
@@ -11864,16 +11962,7 @@ class UnggahRegulerWindow(QWidget):
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """, record)
                     sukses_list.append(row)
-
-                # === UPDATE DATA EXISTING ===
                 elif dpid and ket != "B":
-                    # 🔹 Tambahan: cek apakah DPID benar-benar ada
-                    cur.execute(f"SELECT COUNT(*) FROM {tbl_aktif} WHERE DPID=?", (dpid,))
-                    ada_dpid = cur.fetchone()[0]
-                    if ada_dpid == 0:
-                        gagal_list.append(f"{nama}, {nik}, DPID tidak ditemukan")
-                        continue  # lewati, jangan update
-
                     cur.execute(f"""
                         UPDATE {tbl_aktif}
                         SET NKK=?, NIK=?, NAMA=?, JK=?, TMPT_LHR=?, TGL_LHR=?, STS=?, 
@@ -11882,15 +11971,14 @@ class UnggahRegulerWindow(QWidget):
                         WHERE DPID=?
                     """, record + (dpid,))
                     sukses_list.append(row)
-
-                # === Jika kombinasi lain (contoh DPID kosong tapi KET != B) ===
                 else:
                     gagal_list.append(f"{nama}, {nik}, Kombinasi DPID dan KET tidak valid")
-                    continue
 
             conn.commit()
 
-            # ==================== HASIL AKHIR ====================
+            # =============================================================
+            # 🧾 LAPORAN HASIL
+            # =============================================================
             if gagal_list:
                 msg = "\n".join(gagal_list[:20])
                 QMessageBox.warning(
@@ -11901,7 +11989,6 @@ class UnggahRegulerWindow(QWidget):
             else:
                 QMessageBox.information(self, "Berhasil", "Semua data berhasil diunggah.")
 
-            # Hapus baris sukses
             for r in sorted(sukses_list, reverse=True):
                 self.table.removeRow(r)
 
