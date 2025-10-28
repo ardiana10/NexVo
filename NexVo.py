@@ -5627,6 +5627,12 @@ class MainWindow(QMainWindow):
         menu_rekap.addAction(QAction("Saring TMS", self, triggered=self.cek_rekaptms))
         menu_rekap.addAction(QAction("Pemilih Non KTPel", self, triggered=self.cek_rekapktp))
         menu_rekap.addAction(QAction("Disabilitas", self, triggered=self.cek_rekapdifabel))
+        menu_rekap.addAction(QAction("Perubahan Jenis Kelamin", self, triggered=self.cek_rekapubah_jeniskelamin))
+
+        # ⬇️ Hanya tampil di DPSHP & DPSHPA
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPSHP", "DPSHPA"):
+            menu_rekap.addAction(QAction("Ubah TPS", self, triggered=self.cek_perubahan_tps))
+
         btn_rekap.setMenu(menu_rekap)
         toolbar.addWidget(btn_rekap)
         add_spacer()
@@ -5720,6 +5726,12 @@ class MainWindow(QMainWindow):
         menu_cekdata.addAction(QAction("Pemilih Tidak Padan", self, triggered=self.cek_tidak_padan))
         menu_cekdata.addAction(QAction("Ganda NIK", self, triggered=self.cek_ganda_nik))
         menu_cekdata.addAction(QAction("Pemilih Pemula", self, triggered=self.cek_pemilih_pemula))
+        menu_cekdata.addAction(QAction("Perubahan Jenis Kelamin", self, triggered=self.cek_pemilih_ubah_jeniskelamin))
+
+        # ⬇️ Hanya tampil di DPSHP & DPSHPA
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPSHP", "DPSHPA"):
+            menu_cekdata.addAction(QAction("Ubah TPS", self, triggered=self.cek_ubah_tps))
+
         btn_cekdata.setMenu(menu_cekdata)
         toolbar.addWidget(btn_cekdata)
         add_spacer()
@@ -9047,6 +9059,151 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Pemula:\n{e}")
 
+    def cek_pemilih_ubah_jeniskelamin(self):
+        """
+        🔍 Pemeriksaan Perubahan Jenis Kelamin di seluruh data (full DB)
+        - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
+        """
+        from collections import defaultdict
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
+
+        try:
+            tahap = getattr(self, "_tahapan", "").strip().upper()
+            tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
+
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(f"SELECT * FROM {tbl_name}")
+            col_names = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+            # === Jika tabel kosong ===
+            if not rows:
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
+                return
+
+            # === Muat seluruh data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
+
+            # === Deteksi langsung: JK ≠ JK_ASAL dan KET = 'U' atau 'u' ===
+            hasil_data = [
+                d for d in all_data
+                if (d.get("KET", "").strip().lower() == "u")
+                and (d.get("JK", "").strip().upper() in ("L", "P"))
+                and (d.get("JK_ASAL", "").strip().upper() in ("L", "P"))
+                and (d.get("JK", "").strip().upper() != d.get("JK_ASAL", "").strip().upper())
+            ]
+
+            # === Urutkan hasil (tetap aman meski kosong) ===
+            hasil_data.sort(key=lambda d: (
+                d.get("TPS", ""),
+                d.get("RW", ""),
+                d.get("RT", ""),
+                d.get("NKK", ""),
+                d.get("NAMA", "")
+            ))
+
+            # === Tampilkan hasil ke tabel ===
+            with self.freeze_ui():
+                self._refresh_table_with_new_data(hasil_data)
+                self._warnai_baris_berdasarkan_ket()
+                QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            # === Popup hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f" Ditemukan {len(hasil_data)} Data Perubahan Jenis Kelamin."
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Perubahan Jenis Kelamin."
+                )
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa data Perubahan Jenis Kelamin:\n{e}")
+
+
+    def cek_ubah_tps(self):
+        """
+        🔍 Pemeriksaan Perubahan TPS di tahap DPSHP dan DPSHPA (full DB)
+        - Menampilkan hasil ke tabel tanpa menghapus kolom apa pun
+        """
+        from collections import defaultdict
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
+
+        try:
+            tahap = getattr(self, "_tahapan", "").strip().upper()
+            tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
+
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(f"SELECT * FROM {tbl_name}")
+            col_names = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+            # === Jika tabel kosong ===
+            if not rows:
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
+                return
+
+            # === Muat seluruh data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
+
+            # === Deteksi langsung: TPS ≠ TPS_ASAL ===
+            hasil_data = [
+                d for d in all_data
+                if (d.get("KET", "").strip().lower() == "u")
+                and (d.get("TPS", "").strip() != d.get("TPS_ASAL", "").strip())
+            ]
+
+            # === Urutkan hasil (tetap aman meski kosong) ===
+            hasil_data.sort(key=lambda d: (
+                d.get("TPS", ""),
+                d.get("RW", ""),
+                d.get("RT", ""),
+                d.get("NKK", ""),
+                d.get("NAMA", "")
+            ))
+
+            # === Tampilkan hasil ke tabel ===
+            with self.freeze_ui():
+                self._refresh_table_with_new_data(hasil_data)
+                self._warnai_baris_berdasarkan_ket()
+                QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            # === Popup hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f" Ditemukan {len(hasil_data)} Data Ubah TPS."
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Ubah TPS."
+                )
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa data Ubah TPS:\n{e}")
+
 
     def _warnai_baris_berdasarkan_ket(self):
         from PyQt6.QtGui import QColor, QBrush
@@ -10363,6 +10520,133 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Disabilitas:\n{e}")
+
+    def cek_rekapubah_jeniskelamin(self):
+        """Menampilkan rekap pemilih ubah jenis per TPS (termasuk TPS tanpa data)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel 'ubah' ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ubah_kelamin (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM ubah_kelamin")
+
+            # 🔹 Ambil semua TPS
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # Hanya data KET='U' dan JK ≠ JK_ASAL
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND COALESCE(KET,'')='U' AND JK<>JK_ASAL
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'')='U' AND JK<>JK_ASAL
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'')='U' AND JK<>JK_ASAL
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+
+                cur.execute("INSERT INTO ubah_kelamin VALUES (?, ?, ?, ?, ?)",
+                            (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+            self.ubah_window = self.show_window_with_transition(UbahKelaminWindow)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Ubah Jenis Kelamin:\n{e}")
+
+    def cek_perubahan_tps(self):
+        """Menampilkan rekap pemilih ubah TPS masuk dan ubah TPS keluar (hasil identik 1000%)."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Helper: membuat tabel rekap baru (reset isi)
+            def init_tabel(nama):
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {nama} (
+                        "NAMA TPS" TEXT,
+                        "JUMLAH KK" INTEGER,
+                        "LAKI-LAKI" INTEGER,
+                        "PEREMPUAN" INTEGER,
+                        "JUMLAH" INTEGER
+                    )
+                """)
+                cur.execute(f"DELETE FROM {nama}")
+
+            # Inisialisasi tabel masuk dan keluar
+            init_tabel("ubah_tps_masuk")
+            init_tabel("ubah_tps_keluar")
+
+            # === Fungsi bantu isi rekap (digunakan dua kali)
+            def isi_rekap(tabel_sumber, kolom_tps, tabel_tujuan):
+                cur.execute(f"""
+                    SELECT DISTINCT {kolom_tps}
+                    FROM {tbl_name}
+                    WHERE TRIM({kolom_tps}) <> ''
+                    ORDER BY CAST({kolom_tps} AS INTEGER)
+                """)
+                daftar_tps = [r[0] for r in cur.fetchall()]
+
+                for tps in daftar_tps:
+                    nama_tps = f"TPS {int(tps):03d}"
+
+                    base_where = f"{kolom_tps}=? AND LOWER(COALESCE(KET,''))='u' AND TPS<>TPS_ASAL"
+
+                    cur.execute(f"SELECT COUNT(DISTINCT NKK) FROM {tbl_name} WHERE {base_where}", (tps,))
+                    nkk = cur.fetchone()[0] or 0
+
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE {base_where} AND JK='L'", (tps,))
+                    jml_L = cur.fetchone()[0] or 0
+
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE {base_where} AND JK='P'", (tps,))
+                    jml_P = cur.fetchone()[0] or 0
+
+                    total = jml_L + jml_P
+
+                    cur.execute(f"INSERT INTO {tabel_tujuan} VALUES (?, ?, ?, ?, ?)",
+                                (nama_tps, nkk, jml_L, jml_P, total))
+
+            # 🔹 Isi data rekap masuk dan keluar
+            isi_rekap(tbl_name, "TPS", "ubah_tps_masuk")
+            isi_rekap(tbl_name, "TPS_ASAL", "ubah_tps_keluar")
+
+            conn.commit()
+            self.ubah_window = self.show_window_with_transition(UbahTPSWindow)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Ubah TPS:\n{e}")
 
 
     def show_window_with_transition(self, window_class, delay_hide=150):
@@ -11695,7 +11979,8 @@ class UnggahRegulerWindow(QWidget):
         self.table.installEventFilter(self)
 
     def simpan_data_ke_tabel_aktif(self):
-        """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super kilat & identik hasil)."""
+        """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super kilat & identik hasil).
+        Khusus KET 1..8: kolom JK dan TPS SELALU diisi dari JK_ASAL/TPS_ASAL pada tabel aktif (tanpa fallback)."""
         try:
             tbl_aktif = self._active_table()
             if not tbl_aktif:
@@ -11719,6 +12004,7 @@ class UnggahRegulerWindow(QWidget):
             gagal_list = []
             sukses_list = []
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ket_codes_1_8 = {"1","2","3","4","5","6","7","8"}
 
             # =============================================================
             #  📋 Cache semua nilai (superspeed)
@@ -11737,7 +12023,7 @@ class UnggahRegulerWindow(QWidget):
                 if dpid and ket:
                     pair = (dpid, ket)
                     if pair in dpid_ket_seen:
-                        pass  # hanya deteksi cepat nanti di loop
+                        pass
                     else:
                         dpid_ket_seen.add(pair)
 
@@ -11769,7 +12055,6 @@ class UnggahRegulerWindow(QWidget):
                     # Jika ada pasangan DPID+KET ganda di tabel unggah
                     pair = (dpid, ket.upper())
                     if semua_dpid.count(dpid) > 1 and semua_ket.count(ket.upper()) > 1:
-                        # pemeriksaan cepat untuk dataset sama
                         for r2 in range(total_rows):
                             if r2 != row and semua_dpid[r2] == dpid and semua_ket[r2] == ket.upper():
                                 err.append("Dataset sama")
@@ -11815,7 +12100,6 @@ class UnggahRegulerWindow(QWidget):
                 # 🔎 CEK NIK GANDA DI TABEL AKTIF
                 # =============================================================
                 if not err:
-                    # 🟩 1. Jika DPID kosong/0 atau KET = B → cek NIK sudah aktif
                     if (not dpid or dpid.strip() == "0") or ket.lower() == "b":
                         cur.execute(f"""
                             SELECT COUNT(*) 
@@ -11825,8 +12109,6 @@ class UnggahRegulerWindow(QWidget):
                         """, (nik,))
                         if cur.fetchone()[0] > 0:
                             err.append("Terdaftar sebagai NIK Pemilih Aktif")
-
-                    # 🟦 2. Jika DPID terisi dan KET = U → cek apakah NIK sama tapi DPID beda
                     elif dpid.strip() and ket.lower() == "u":
                         cur.execute(f"""
                             SELECT DPID 
@@ -11872,9 +12154,26 @@ class UnggahRegulerWindow(QWidget):
 
                 nama = ", ".join([nama.split(",")[0].upper(), nama.split(",")[1]]) if "," in nama else nama.upper()
 
+                # 🔒 Default pakai nilai dari unggah
+                jk_use  = jk
+                tps_use = tps
+
+                # ✅ KHUSUS KET 1..8 → SELALU ambil dari JK_ASAL/TPS_ASAL di tabel aktif, DPID sama
+                if dpid and ket in ket_codes_1_8:
+                    cur.execute(f"""
+                        SELECT JK_ASAL, TPS_ASAL
+                        FROM {tbl_aktif}
+                        WHERE DPID=? LIMIT 1
+                    """, (dpid,))
+                    r = cur.fetchone()
+                    if r:
+                        # TANPA fallback: tulis persis dari kolom *_ASAL
+                        jk_use  = (r[0] or "").strip().upper()
+                        tps_use = (str(r[1]) if r[1] is not None else "").strip()
+
                 record = (
-                    nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis,
-                    ktpel, sumber, ket, tps, kecamatan, desa, now
+                    nkk, nik, nama, jk_use, tmpt, tgl, sts, alamat, rt, rw, dis,
+                    ktpel, sumber, ket, tps_use, kecamatan, desa, now
                 )
 
                 if not dpid and ket == "B":
@@ -11918,6 +12217,7 @@ class UnggahRegulerWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Gagal menyimpan data:\n{e}")
             import traceback; traceback.print_exc()
+
 
     def eventFilter(self, obj, event):
         """Tangani tombol Delete dari mana pun dalam tabel (termasuk editor)."""
@@ -13531,6 +13831,521 @@ class DifabelWindow(QMainWindow):
 
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+class UbahKelaminWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih ubah jenis kelamin per TPS."""
+
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowTitle("Rekap Perubahan Data Jenis Kelamin")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PERUBAHAN DATA JENIS KELAMIN")
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #000000;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #000000;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel UBAH
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel ubah_kelamin ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM ubah_kelamin ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nama_tps, nkk, L, P, total = row
+
+            # 💡 Gunakan angka murni untuk penjumlahan
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            # 💡 Tampilan: ganti 0 menjadi "-"
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append("\t".join(headers))
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows))
+
+        #print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
+
+class UbahTPSWindow(QMainWindow):
+    """Jendela maximize untuk rekap pemilih ubah TPS masuk dan ubah TPS keluar."""
+
+    def __init__(self, parent_window):
+        super().__init__()
+        self.parent_window = parent_window
+
+        self.setWindowTitle("Rekap Ubah TPS Masuk dan Ubah TPS Keluar")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)
+        lbl_user.setFont(font)
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP UBAH TPS MASUK DAN UBAH TPS KELUAR")
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+        layout.addLayout(judul_layout)
+        
+        # =========================================================
+        # 📋 Tabel UBAH
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #999999;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;
+                selection-color: #000000;
+                border: 1px solid #999999;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""SELECT * FROM ubah_tps_masuk ORDER BY CAST(substr("NAMA TPS", 5) AS INTEGER)""")
+        data_masuk = cur.fetchall()
+        cur.execute("""SELECT * FROM ubah_tps_keluar ORDER BY CAST(substr("NAMA TPS", 5) AS INTEGER)""")
+        data_keluar = cur.fetchall()
+
+        row_count = max(len(data_masuk), len(data_keluar))
+        self.table.setRowCount(row_count + 3)  # 2 header + total
+
+        font_header = QFont("Segoe UI", 11, QFont.Weight.Bold)
+
+        # =========================================================
+        # 🧾 HEADER DUA BARIS
+        # =========================================================
+        # Baris 0 → header grup
+        labels_grup = ["NAMA TPS", "UBAH TPS MASUK", "", "", "UBAH TPS KELUAR", "", ""]
+        for c in range(7):
+            item = QTableWidgetItem(labels_grup[c])
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setFont(font_header)
+            item.setBackground(QColor("#d9d9d9"))
+            self.table.setItem(0, c, item)
+
+        # merge header grup
+        self.table.setSpan(0, 0, 2, 1)  # NAMA TPS vertikal
+        self.table.setSpan(0, 1, 1, 3)  # UBAH TPS MASUK
+        self.table.setSpan(0, 4, 1, 3)  # UBAH TPS KELUAR
+
+        # Baris 1 → subheader
+        subheaders = ["", "LAKI-LAKI", "PEREMPUAN", "JUMLAH",
+                      "LAKI-LAKI", "PEREMPUAN", "JUMLAH"]
+        for c in range(7):
+            item = QTableWidgetItem(subheaders[c])
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            item.setBackground(QColor("#eeeeee"))
+            self.table.setItem(1, c, item)
+
+        # =========================================================
+        # 🧾 ISI DATA
+        # =========================================================
+        total_masuk = [0, 0, 0]
+        total_keluar = [0, 0, 0]
+
+        for i in range(row_count):
+            row_index = i + 2
+            if i < len(data_masuk):
+                nama_tps, _, L, P, total = data_masuk[i]
+                total_masuk[0] += L
+                total_masuk[1] += P
+                total_masuk[2] += total
+                masuk_values = [L, P, total]
+            else:
+                masuk_values = ["-", "-", "-"]
+
+            if i < len(data_keluar):
+                _, _, L, P, total = data_keluar[i]
+                total_keluar[0] += L
+                total_keluar[1] += P
+                total_keluar[2] += total
+                keluar_values = [L, P, total]
+            else:
+                keluar_values = ["-", "-", "-"]
+
+            all_values = [f"TPS {i+1:03d}"] + [str(v) if v != 0 else "-" for v in masuk_values + keluar_values]
+            for j, val in enumerate(all_values):
+                item = QTableWidgetItem(val)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(row_index, j, item)
+
+        # =========================================================
+        # 🔹 TOTAL
+        # =========================================================
+        total_row_index = row_count + 2
+        total_labels = ["TOTAL", *[str(x) for x in total_masuk], *[str(x) for x in total_keluar]]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+            item.setFont(font)
+            item.setBackground(QColor("#B0AEAD"))
+            self.table.setItem(total_row_index, j, item)
+
+        layout.addWidget(self.table)
+        self.table.installEventFilter(self)  # aktifkan Ctrl + C
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi tabel (termasuk header dua baris) ke clipboard agar bisa dipaste ke Excel."""
+        sel = self.table.selectedRanges()
+        if not sel:
+            return
+
+        top = sel[0].topRow()
+        bottom = sel[0].bottomRow()
+        left = sel[0].leftColumn()
+        right = sel[0].rightColumn()
+
+        # --- Header custom dua baris ---
+        header1 = ["NAMA TPS", "UBAH TPS MASUK", "", "", "UBAH TPS KELUAR", "", ""]
+        header2 = ["", "LAKI-LAKI", "PEREMPUAN", "JUMLAH",
+                   "LAKI-LAKI", "PEREMPUAN", "JUMLAH"]
+
+        rows = []
+        rows.append("\t".join(header1[left:right + 1]))
+        rows.append("\t".join(header2[left:right + 1]))
+
+        # --- Isi tabel yang terseleksi ---
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                cols.append(item.text() if item else "")
+            rows.append("\t".join(cols))
+
+        # --- Salin ke clipboard (format TSV untuk Excel) ---
+        clipboard = QApplication.clipboard()
+        clipboard.setText("\n".join(rows), mode=clipboard.Mode.Clipboard)
+        # print("[INFO] Data tabel berhasil disalin ke clipboard")
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
         if self.parent_window:
             self.parent_window.showNormal()
             self.parent_window.showMaximized()
@@ -20783,7 +21598,7 @@ if __name__ == "__main__":
                 dev_nama = "ARI ARDIANA"
                 dev_kecamatan = "TANJUNGJAYA"
                 dev_desa = "SUKASENANG"
-                dev_tahapan = "DPHP"
+                dev_tahapan = "DPSHPA"
 
                 mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
                 mw.show()
