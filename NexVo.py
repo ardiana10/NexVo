@@ -10004,7 +10004,7 @@ class MainWindow(QMainWindow):
     # 🔹 CEK REKAP PEMILIH AKTIF (MENU → Rekap → Pemilih Aktif)
     # =========================================================
     def cek_rekapaktif(self):
-        """Menampilkan rekap pemilih aktif per TPS (maximize window)."""
+        """Menampilkan rekap pemilih aktif per TPS (termasuk TPS tanpa data, 0 → '-')."""
         try:
             from db_manager import get_connection
 
@@ -10024,13 +10024,9 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM rekap")
 
-            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            # 🔹 Ambil semua TPS (termasuk yang tidak punya data aktif)
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
             # 🔹 Isi data rekap per TPS
             for tps in tps_list:
@@ -10056,18 +10052,20 @@ class MainWindow(QMainWindow):
                 jml_P = cur.fetchone()[0] or 0
 
                 total = jml_L + jml_P
+
+                # Simpan ke tabel rekap
                 cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
 
             conn.commit()
 
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
+            # 🔹 Tampilkan jendela RekapWindow
             self.rekap_window = self.show_window_with_transition(RekapWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Aktif:\n{e}")
 
     def cek_rekapbaru(self):
-        """Menampilkan rekap pemilih baru per TPS (maximize window)."""
+        """Menampilkan rekap pemilih baru per TPS (termasuk TPS tanpa data)."""
         try:
             from db_manager import get_connection
 
@@ -10075,7 +10073,7 @@ class MainWindow(QMainWindow):
             conn = get_connection()
             cur = conn.cursor()
 
-            # 🔹 Pastikan tabel baru ada
+            # 🔹 Pastikan tabel 'baru' ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS baru (
                     "NAMA TPS" TEXT,
@@ -10087,43 +10085,28 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM baru")
 
-            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') IN ('b')
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            # 🔹 Ambil semua TPS
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
             # 🔹 Isi data rekap per TPS
             for tps in tps_list:
                 nama_tps = f"TPS {int(tps):03d}"
 
-                cur.execute(f"""
-                    SELECT COUNT(DISTINCT NKK)
-                    FROM {tbl_name}
-                    WHERE TPS=? AND COALESCE(KET,'') IN ('b')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(DISTINCT NKK) FROM {tbl_name} WHERE TPS=? AND COALESCE(KET,'') IN ('B')", (tps,))
                 nkk = cur.fetchone()[0] or 0
 
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {tbl_name}
-                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('b')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('B')", (tps,))
                 jml_L = cur.fetchone()[0] or 0
 
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {tbl_name}
-                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('b')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('B')", (tps,))
                 jml_P = cur.fetchone()[0] or 0
 
                 total = jml_L + jml_P
-                cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+                cur.execute("INSERT INTO baru VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
 
             conn.commit()
-
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
             self.baru_window = self.show_window_with_transition(BaruWindow)
 
         except Exception as e:
@@ -10131,7 +10114,7 @@ class MainWindow(QMainWindow):
 
 
     def cek_rekapubah(self):
-        """Menampilkan rekap pemilih ubah per TPS (maximize window)."""
+        """Menampilkan rekap pemilih ubah per TPS (termasuk TPS tanpa data)."""
         try:
             from db_manager import get_connection
 
@@ -10139,7 +10122,7 @@ class MainWindow(QMainWindow):
             conn = get_connection()
             cur = conn.cursor()
 
-            # 🔹 Pastikan tabel ubah ada
+            # 🔹 Pastikan tabel 'ubah' ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ubah (
                     "NAMA TPS" TEXT,
@@ -10151,50 +10134,36 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM ubah")
 
-            # 🔹 Ambil distinct TPS (abaikan KET 1–8)
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') IN ('b')
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            # 🔹 Ambil semua TPS
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
-            # 🔹 Isi data rekap ubah per TPS
+            # 🔹 Isi data rekap per TPS
             for tps in tps_list:
                 nama_tps = f"TPS {int(tps):03d}"
 
-                cur.execute(f"""
-                    SELECT COUNT(DISTINCT NKK)
-                    FROM {tbl_name}
-                    WHERE TPS=? AND COALESCE(KET,'') IN ('u')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(DISTINCT NKK) FROM {tbl_name} WHERE TPS=? AND COALESCE(KET,'') IN ('U')", (tps,))
                 nkk = cur.fetchone()[0] or 0
 
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {tbl_name}
-                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('u')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('U')", (tps,))
                 jml_L = cur.fetchone()[0] or 0
 
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {tbl_name}
-                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('u')
-                """, (tps,))
+                cur.execute(f"SELECT COUNT(*) FROM {tbl_name} WHERE TPS=? AND JK='P' AND COALESCE(KET,'') IN ('U')", (tps,))
                 jml_P = cur.fetchone()[0] or 0
 
                 total = jml_L + jml_P
-                cur.execute("INSERT INTO rekap VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+                cur.execute("INSERT INTO ubah VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
 
             conn.commit()
-
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela rekap
             self.ubah_window = self.show_window_with_transition(UbahWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Ubah Data:\n{e}")
 
+
     def cek_rekaptms(self):
-        """Menampilkan rekap pemilih TMS per TPS (maximize window)."""
+        """Menampilkan rekap pemilih TMS per TPS (termasuk TPS tanpa data, 0 → '-')."""
         try:
             from db_manager import get_connection
 
@@ -10202,7 +10171,6 @@ class MainWindow(QMainWindow):
             conn = get_connection()
             cur = conn.cursor()
 
-            # 🔹 Pastikan tabel TMS ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS saring (
                     "NAMA TPS" TEXT,
@@ -10220,20 +10188,14 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM saring")
 
-            # 🔹 Ambil distinct TPS
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') IN ('1','2','3','4','5','6','7','8')
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            # Ambil semua TPS dari tabel utama
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
-            # 🔹 Isi data rekap per TPS
             for tps in tps_list:
                 nama_tps = f"TPS {int(tps):03d}"
-
-                # Hitung masing-masing kategori (1–8)
                 counts = {}
+
                 for ket in range(1, 9):
                     for jk in ('L', 'P'):
                         cur.execute(f"""
@@ -10242,7 +10204,6 @@ class MainWindow(QMainWindow):
                         """, (tps, jk, str(ket)))
                         counts[f"{ket}{jk}"] = cur.fetchone()[0] or 0
 
-                # Hitung total TMS per jenis kelamin
                 cur.execute(f"""
                     SELECT COUNT(*) FROM {tbl_name}
                     WHERE TPS=? AND JK='L' AND COALESCE(KET,'') IN ('1','2','3','4','5','6','7','8')
@@ -10257,34 +10218,27 @@ class MainWindow(QMainWindow):
 
                 total = TMS_L + TMS_P
 
-                # Simpan ke tabel saring (20 kolom)
                 cur.execute("""
                     INSERT INTO saring VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                 """, (
                     nama_tps,
-                    counts["1L"], counts["1P"],
-                    counts["2L"], counts["2P"],
-                    counts["3L"], counts["3P"],
-                    counts["4L"], counts["4P"],
-                    counts["5L"], counts["5P"],
-                    counts["6L"], counts["6P"],
-                    counts["7L"], counts["7P"],
-                    counts["8L"], counts["8P"],
+                    counts["1L"], counts["1P"], counts["2L"], counts["2P"], counts["3L"], counts["3P"],
+                    counts["4L"], counts["4P"], counts["5L"], counts["5P"], counts["6L"], counts["6P"],
+                    counts["7L"], counts["7P"], counts["8L"], counts["8P"],
                     TMS_L, TMS_P, total
                 ))
 
             conn.commit()
-
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela SARING
             self.saring_window = self.show_window_with_transition(SaringWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap TMS:\n{e}")
 
+
     def cek_rekapktp(self):
-        """Menampilkan rekap pemilih KTPel per TPS (maximize window)."""
+        """Menampilkan rekap pemilih KTP-el per TPS (termasuk TPS tanpa data, 0 → '-')."""
         try:
             from db_manager import get_connection
 
@@ -10292,7 +10246,6 @@ class MainWindow(QMainWindow):
             conn = get_connection()
             cur = conn.cursor()
 
-            # 🔹 Pastikan tabel ktpel ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ktpel (
                     "NAMA TPS" TEXT,
@@ -10304,20 +10257,12 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM ktpel")
 
-            # 🔹 Ambil distinct TPS (abaikan KET 1–8, hanya KTPel='b')
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
-                AND LOWER(COALESCE(KTPel,'')) = 'b'
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
-            # 🔹 Isi data rekap per TPS
             for tps in tps_list:
                 nama_tps = f"TPS {int(tps):03d}"
 
-                # Hitung jumlah KK unik
                 cur.execute(f"""
                     SELECT COUNT(DISTINCT NKK)
                     FROM {tbl_name}
@@ -10327,20 +10272,16 @@ class MainWindow(QMainWindow):
                 """, (tps,))
                 nkk = cur.fetchone()[0] or 0
 
-                # Laki-laki
                 cur.execute(f"""
-                    SELECT COUNT(*)
-                    FROM {tbl_name}
+                    SELECT COUNT(*) FROM {tbl_name}
                     WHERE TPS=? AND JK='L'
                     AND LOWER(COALESCE(KTPel,''))='b'
                     AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
                 """, (tps,))
                 jml_L = cur.fetchone()[0] or 0
 
-                # Perempuan
                 cur.execute(f"""
-                    SELECT COUNT(*)
-                    FROM {tbl_name}
+                    SELECT COUNT(*) FROM {tbl_name}
                     WHERE TPS=? AND JK='P'
                     AND LOWER(COALESCE(KTPel,''))='b'
                     AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
@@ -10348,21 +10289,17 @@ class MainWindow(QMainWindow):
                 jml_P = cur.fetchone()[0] or 0
 
                 total = jml_L + jml_P
-
-                # Simpan ke tabel hasil
-                cur.execute("INSERT INTO ktpel VALUES (?, ?, ?, ?, ?)",
-                            (nama_tps, nkk, jml_L, jml_P, total))
+                cur.execute("INSERT INTO ktpel VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
 
             conn.commit()
-
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela KTPel
             self.ktp_window = self.show_window_with_transition(KtpWindow)
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih KTPel:\n{e}")
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih KTP-el:\n{e}")
+
 
     def cek_rekapdifabel(self):
-        """Menampilkan rekap pemilih Disabilitas per TPS (maximize window)."""
+        """Menampilkan rekap pemilih Disabilitas per TPS (termasuk TPS tanpa data, 0 → '-')."""
         try:
             from db_manager import get_connection
 
@@ -10370,7 +10307,6 @@ class MainWindow(QMainWindow):
             conn = get_connection()
             cur = conn.cursor()
 
-            # 🔹 Pastikan tabel difabel ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS difabel (
                     "NAMA TPS" TEXT,
@@ -10386,20 +10322,12 @@ class MainWindow(QMainWindow):
             """)
             cur.execute("DELETE FROM difabel")
 
-            # 🔹 Ambil distinct TPS (hanya DIS = 1–6, abaikan KET 1–8)
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl_name}
-                WHERE COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
-                AND COALESCE(DIS,'') IN ('1','2','3','4','5','6')
-                ORDER BY CAST(TPS AS INTEGER)
-            """)
-            tps_list = [r[0] for r in cur.fetchall() if r[0]]
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
 
-            # 🔹 Isi data rekap difabel per TPS
             for tps in tps_list:
                 nama_tps = f"TPS {int(tps):03d}"
 
-                # Jumlah KK unik
                 cur.execute(f"""
                     SELECT COUNT(DISTINCT NKK)
                     FROM {tbl_name}
@@ -10409,13 +10337,10 @@ class MainWindow(QMainWindow):
                 """, (tps,))
                 nkk = cur.fetchone()[0] or 0
 
-                # Disabilitas kategori
                 def hitung_dis(kode):
                     cur.execute(f"""
-                        SELECT COUNT(*)
-                        FROM {tbl_name}
-                        WHERE TPS=? 
-                        AND COALESCE(DIS,'') = ?
+                        SELECT COUNT(*) FROM {tbl_name}
+                        WHERE TPS=? AND COALESCE(DIS,'')=? 
                         AND COALESCE(KET,'') NOT IN ('1','2','3','4','5','6','7','8')
                     """, (tps, kode))
                     return cur.fetchone()[0] or 0
@@ -10429,18 +10354,16 @@ class MainWindow(QMainWindow):
 
                 total = DIS_FIS + DIS_INT + DIS_MEN + DIS_WIC + DIS_RUN + DIS_NET
 
-                # Simpan hasil
                 cur.execute("""
                     INSERT INTO difabel VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (nama_tps, nkk, DIS_FIS, DIS_INT, DIS_MEN, DIS_WIC, DIS_RUN, DIS_NET, total))
 
             conn.commit()
-
-            # 🔹 Sembunyikan MainWindow dan tampilkan jendela difabel
             self.difabel_window = self.show_window_with_transition(DifabelWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Disabilitas:\n{e}")
+
 
     def show_window_with_transition(self, window_class, delay_hide=150):
         """
@@ -12344,19 +12267,29 @@ class RekapWindow(QMainWindow):
         total_nkk = total_L = total_P = total_all = 0
 
         for i, row in enumerate(rows):
-            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            nama_tps, nkk, L, P, total = row
+
+            # Gunakan angka asli untuk penjumlahan
             total_nkk += nkk
             total_L += L
             total_P += P
             total_all += total
 
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
+            # Tampilan: ganti 0 menjadi "-"
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
-                if j in (0, 1, 2, 3, 4):
-                    font.setBold(True)
+                font.setBold(True)
                 item.setFont(font)
                 self.table.setItem(i, j, item)
 
@@ -12372,7 +12305,6 @@ class RekapWindow(QMainWindow):
             item.setFont(font)
             item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
             self.table.setItem(len(rows), j, item)
-
 
         # === Aktifkan Copy ke Excel (Ctrl + C) ===
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -12583,14 +12515,23 @@ class BaruWindow(QMainWindow):
         total_nkk = total_L = total_P = total_all = 0
 
         for i, row in enumerate(rows):
-            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            nama_tps, nkk, L, P, total = row
             total_nkk += nkk
             total_L += L
             total_P += P
             total_all += total
 
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
+            # Tampilkan '-' untuk nilai nol
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
@@ -12821,19 +12762,29 @@ class UbahWindow(QMainWindow):
         total_nkk = total_L = total_P = total_all = 0
 
         for i, row in enumerate(rows):
-            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            nama_tps, nkk, L, P, total = row
+
+            # 💡 Gunakan angka murni untuk penjumlahan
             total_nkk += nkk
             total_L += L
             total_P += P
             total_all += total
 
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
+            # 💡 Tampilan: ganti 0 menjadi "-"
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
-                if j in (0, 1, 2, 3, 4):
-                    font.setBold(True)
+                font.setBold(True)
                 item.setFont(font)
                 self.table.setItem(i, j, item)
 
@@ -13045,19 +12996,23 @@ class SaringWindow(QMainWindow):
         col_totals = [0] * num_cols
 
         for i, row in enumerate(rows):
-            for j, val in enumerate(row):
-                if j > 0:
-                    try:
-                        col_totals[j] += int(val or 0)
-                    except ValueError:
-                        pass
-                item = QTableWidgetItem(str(val))
+            display_values = [row[0]] + [("-" if (val or 0) == 0 else str(val)) for val in row[1:]]
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
                 self.table.setItem(i, j, item)
+
+            # Tambahkan total angka sebenarnya
+            for j, val in enumerate(row[1:], start=1):
+                try:
+                    col_totals[j] += int(val or 0)
+                except ValueError:
+                    pass
+
 
         # === Baris total ===
         total_labels = ["TOTAL"] + [str(col_totals[j]) for j in range(1, num_cols)]
@@ -13253,20 +13208,28 @@ class KtpWindow(QMainWindow):
 
         total_nkk = total_L = total_P = total_all = 0
         for i, row in enumerate(rows):
-            nkk, L, P, total = row[1], row[2], row[3], row[4]
+            nama_tps, nkk, L, P, total = row
             total_nkk += nkk
             total_L += L
             total_P += P
             total_all += total
 
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total)
+            ]
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
                 self.table.setItem(i, j, item)
+
 
         # === Baris total ===
         total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
@@ -13467,19 +13430,22 @@ class DifabelWindow(QMainWindow):
         # === Hitung total kolom ===
         col_totals = [0] * len(headers)
         for i, row in enumerate(rows):
-            for j, val in enumerate(row):
-                if j > 0:
-                    try:
-                        col_totals[j] += int(val or 0)
-                    except ValueError:
-                        pass
-                item = QTableWidgetItem(str(val))
+            display_values = [row[0]] + [("-" if (val or 0) == 0 else str(val)) for val in row[1:]]
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
                 self.table.setItem(i, j, item)
+
+            # tetap gunakan angka asli untuk total
+            for j, val in enumerate(row[1:], start=1):
+                try:
+                    col_totals[j] += int(val or 0)
+                except ValueError:
+                    pass
 
         # === Baris total otomatis ===
         total_labels = ["TOTAL"] + [str(col_totals[j]) for j in range(1, len(headers))]
