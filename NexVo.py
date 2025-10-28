@@ -13,7 +13,7 @@ Catatan:
 - Jalankan: python nexvo.py
 """
 
-import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib, base64, zipfile, shutil, json
+import os, sys, subprocess, csv, hashlib, random, string, re, locale, atexit, traceback, io, contextlib, base64, zipfile, shutil, json, gc
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from pathlib import Path
@@ -6066,6 +6066,85 @@ class MainWindow(QMainWindow):
             else:
                 print(f"[Silent Reset Warning] {e}")
 
+    def reset_tampilan_setelah_hapus(self, silent=False):
+        """
+        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF tanpa mengubah halaman aktif.
+        Jika halaman aktif > total halaman baru, otomatis disesuaikan ke halaman terakhir.
+        """
+        from db_manager import get_connection
+        from PyQt6.QtCore import QTimer
+        try:
+            # Tutup sidebar filter jika ada
+            try:
+                if hasattr(self, "filter_dock") and self.filter_dock and self.filter_dock.isVisible():
+                    self.filter_dock.hide()
+            except Exception as e:
+                print("[UI WARNING] Gagal menutup sidebar filter:", e)
+
+            tbl_name = self._active_table()
+            if not tbl_name:
+                show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            conn = get_connection()
+            conn.row_factory = sqlcipher.Row
+
+            # Pastikan sinkronisasi dari koneksi lain
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            conn.commit()
+
+            cur = conn.cursor()
+            cur.execute(f"SELECT rowid, * FROM {tbl_name}")
+            rows = cur.fetchall()
+
+            if not rows:
+                if not silent:
+                    show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
+                self.all_data = []
+                self.total_pages = 1
+                self.show_page(1)
+                return
+
+            # === Bangun ulang data dengan rowid
+            headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
+            all_data = []
+            for r in rows:
+                d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+                d["rowid"] = r["rowid"]
+                all_data.append(d)
+            self.all_data = all_data
+
+            # === Hitung ulang total halaman berdasarkan jumlah data
+            total_rows = len(self.all_data)
+            self.total_pages = max(1, (total_rows + self.rows_per_page - 1) // self.rows_per_page)
+
+            # Simpan halaman saat ini agar tidak kembali ke 1
+            current_page = getattr(self, "current_page", 1)
+            if current_page > self.total_pages:
+                current_page = self.total_pages
+
+            # === Render ulang tabel tanpa flicker
+            with self.freeze_ui():
+                self._refresh_table_with_new_data(self.all_data)
+
+            # === Jalankan fungsi pasca-reset tanpa ubah halaman
+            self.update_pagination()
+            self.show_page(current_page)  # 🔹 tetap di halaman aktif
+            self.connect_header_events()
+            self.sort_data(auto=True)
+            self._warnai_baris_berdasarkan_ket()
+
+            # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
+            QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            #print(f"[RESET] Data tabel berhasil dimuat ulang dan tetap di halaman {current_page} ✅")
+
+        except Exception as e:
+            if not silent:
+                show_modern_error(self, "Error", f"Gagal menampilkan ulang data:\n{e}")
+            else:
+                print(f"[Silent Reset Warning] {e}")
+
 
     def reset_tampilan_filter(self, silent=False):
         """
@@ -7712,7 +7791,7 @@ class MainWindow(QMainWindow):
         actions = [
             #("✏️ Lookup", lambda: self._context_action_wrapper(checked_rows, self.lookup_pemilih)),
             ("🔁 Aktifkan Pemilih", lambda: self._context_action_wrapper(checked_rows, self.aktifkan_pemilih)),
-            ("🔥 Hapus", lambda: self._context_action_wrapper(checked_rows, self.hapus_pemilih)),
+            ("🔥 Hapus", lambda: self._hapus_pemilih_auto(checked_rows)),
             ("🚫 1. Meninggal", lambda: self._context_action_wrapper(checked_rows, self.meninggal_pemilih)),
             ("⚠️ 2. Ganda", lambda: self._context_action_wrapper(checked_rows, self.ganda_pemilih)),
             ("🧒 3. Di Bawah Umur", lambda: self._context_action_wrapper(checked_rows, self.bawah_umur_pemilih)),
@@ -7740,73 +7819,71 @@ class MainWindow(QMainWindow):
     # 🔧 Batch Stats Helpers
     # =============================
     def _batch_reset_stats(self):
+        """Reset statistik batch (dipanggil di awal batch)."""
         self._batch_stats = {"ok": 0, "rejected": 0, "skipped": 0}
 
-    def _batch_add(self, key, func_name=None):
-        # Tetap dipertahankan agar kompatibel dengan fungsi lain
+    def _batch_add(self, status, action):
+        """Tambah statistik hasil batch (ok, rejected, skipped, dsb)."""
         if not hasattr(self, "_batch_stats"):
-            self._batch_reset_stats()
-        self._batch_stats[key] = self._batch_stats.get(key, 0) + 1
+            self._batch_stats = {}
+        self._batch_stats[status] = self._batch_stats.get(status, 0) + 1
+
 
     @with_safe_db
     def _context_action_wrapper(self, rows, func, conn=None):
         """
         Menjalankan fungsi context untuk 1 atau banyak baris (versi super kilat penuh, SQLCipher-ready).
-        Hanya menampilkan notifikasi sederhana bahwa data telah diproses.
+        Menampilkan notifikasi hasil batch + refresh tabel penuh.
         """
-
         if isinstance(rows, int):
             rows = [rows]
+
+        # --- Mode batch hanya jika > 1 baris
+        is_batch = len(rows) > 1
+        self._in_batch_mode = is_batch
 
         # --- Inisialisasi atribut batch
         if not hasattr(self, "_batch_stats"):
             self._batch_reset_stats()
         if not hasattr(self, "_warning_shown_in_batch"):
             self._warning_shown_in_batch = {}
-        if not hasattr(self, "_in_batch_mode"):
-            self._in_batch_mode = False
 
-        is_batch = len(rows) > 1
-
-        # --- Konfirmasi batch (jika lebih dari satu data)
+        # --- Konfirmasi batch
         if is_batch:
             label_action = func.__name__.replace("_pemilih", "").replace("_", " ").title()
             if not show_modern_question(
-                self, "Konfirmasi Batch",
+                self,
+                "Konfirmasi Batch",
                 f"Anda yakin ingin memproses <b>{len(rows)}</b> data sebagai <b>{label_action}</b>?"
             ):
                 self._clear_row_selection(rows)
                 return
 
-            self._in_batch_mode = True
-            self._warning_shown_in_batch.clear()
-            self._batch_reset_stats()
-
-        # --- Nonaktifkan update GUI sementara
+        # --- Nonaktifkan GUI sementara
         self.table.blockSignals(True)
         self.table.setUpdatesEnabled(False)
 
-        # --- Gunakan koneksi aman dari db_manager (SQLCipher)
-        from db_manager import get_connection
+        # --- Gunakan koneksi aman
         conn = get_connection()
         cur = conn.cursor()
         conn.execute("PRAGMA busy_timeout = 3000;")
-
         if is_batch:
             conn.execute("PRAGMA synchronous = OFF;")
             conn.execute("PRAGMA journal_mode = WAL;")
-
         self._shared_conn = conn
         self._shared_cur = cur
 
         try:
+            # Jalankan aksi (hapus, ubah, dsb.)
             for r in rows:
                 func(r)
             conn.commit()
 
-            # ✅ Refresh otomatis setelah batch selesai
-            if is_batch:
-                self.load_data_from_db()
+            # ✅ Refresh data tabel setelah semua operasi
+            self.load_data_setelah_hapus()
+
+            # 🔁 Jalankan semua fungsi UI penting (dengan sedikit delay agar tabel stabil)
+            QTimer.singleShot(200, lambda: self._refresh_setelah_hapus())
 
         finally:
             # Bersihkan koneksi batch
@@ -7818,11 +7895,248 @@ class MainWindow(QMainWindow):
             self.table.setUpdatesEnabled(True)
             self.table.viewport().update()
 
-            # --- Pop-up sederhana (tanpa statistik)
-            if is_batch:
-                show_modern_info(self, "Selesai", f"✅ {len(rows)} data telah diproses.")
+        # --- Pop-up hasil batch
+        if is_batch:
+            stats = getattr(self, "_batch_stats", {})
+            ok = stats.get("ok", 0)
+            rejected = stats.get("rejected", 0)
+            skipped = stats.get("skipped", 0)
+            total = ok + rejected + skipped
+            msg = f"✅ {ok} dihapus"
+            if rejected:
+                msg += f", ❌ {rejected} ditolak"
+            if skipped:
+                msg += f", ⏸️ {skipped} dilewati"
+            msg += f" (Total: {total})"
 
+            show_modern_info(self, "Selesai", msg)
             QTimer.singleShot(100, lambda: self._clear_row_selection(rows))
+
+    # =========================================================
+    # 🔹 Utilitas internal untuk hapus 1 baris di database
+    # =========================================================
+    def _hapus_dari_database(self, conn, tbl, dpid, nik, nkk, tgl):
+        sql = f"""
+            DELETE FROM {tbl}
+            WHERE IFNULL(DPID,'') = ? AND IFNULL(NIK,'') = ?
+                AND IFNULL(NKK,'') = ? AND IFNULL(TGL_LHR,'') = ?
+        """
+        cur = conn.cursor()
+        cur.execute(sql, (dpid, nik, nkk, tgl))
+        return cur.rowcount
+
+
+    # =========================================================
+    # 🔹 Context Manager untuk membekukan UI
+    # =========================================================
+    @contextmanager
+    def freeze_ui(self):
+        """
+        Bekukan event & tampilan GUI sementara (setara EnableEvents=False + ScreenUpdating=False di Excel).
+        Digunakan untuk mencegah flicker saat update tabel besar.
+        """
+        try:
+            # 🔹 Nonaktifkan repaint & sinyal tabel
+            self.setUpdatesEnabled(False)
+            if hasattr(self, "table"):
+                self.table.blockSignals(True)
+            yield
+        finally:
+            # 🔹 Aktifkan kembali semua
+            if hasattr(self, "table"):
+                self.table.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.repaint()
+
+
+    # =========================================================
+    # 🔹 Fungsi utilitas untuk hapus data presisi
+    # =========================================================
+    def _hapus_dari_database(self, conn, tbl, dpid, nik, nkk, tgl):
+        sql = f"""
+            DELETE FROM {tbl}
+            WHERE IFNULL(DPID,'') = ? AND IFNULL(NIK,'') = ?
+                AND IFNULL(NKK,'') = ? AND IFNULL(TGL_LHR,'') = ?
+        """
+        cur = conn.cursor()
+        cur.execute(sql, (dpid, nik, nkk, tgl))
+        return cur.rowcount
+
+
+    # =========================================================
+    # 🔹 HAPUS SATU PEMILIH (NON-BATCH)
+    # =========================================================
+    @with_safe_db
+    def hapus_satu_pemilih(self, row, conn=None):
+        """Hapus satu baris data pemilih dengan konfirmasi dan freeze UI."""
+        try:
+            tbl = self._active_table()
+            if not tbl:
+                show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            # --- Ambil data dari tabel UI
+            def _val(col):
+                ci = self.col_index(col)
+                it = self.table.item(row, ci) if ci != -1 else None
+                return it.text().strip() if it else ""
+
+            nama = _val("NAMA")
+            nik = _val("NIK")
+            nkk = _val("NKK")
+            dpid = _val("DPID")
+            tgl = _val("TGL_LHR")
+
+            # --- Proteksi: hanya DPID kosong / "0" yang bisa dihapus
+            if dpid and dpid != "0":
+                show_modern_warning(
+                    self, "Ditolak",
+                    f"{nama} tidak dapat dihapus.<br>Hanya pemilih baru di tahapan ini yang bisa dihapus!",
+                )
+                return
+
+            # --- Konfirmasi
+            if not show_modern_question(
+                self,
+                "Konfirmasi Hapus",
+                f"Apakah Anda yakin ingin menghapus data ini?<br>"
+                f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>",
+            ):
+                return
+
+            # --- Eksekusi delete dengan UI freeze
+            with self.freeze_ui():
+                conn = get_connection()
+                conn.execute("PRAGMA busy_timeout = 3000;")
+                conn.execute("PRAGMA journal_mode = WAL;")
+
+                deleted = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl)
+                conn.commit()
+
+                if deleted:
+                    show_modern_info(self, "Selesai", f"{nama} berhasil dihapus.")
+                else:
+                    show_modern_warning(self, "Info", f"Data {nama} tidak ditemukan di database.")
+
+                # --- Refresh tabel
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+        finally:
+            try:
+                if conn:
+                    conn.commit()
+            except Exception:
+                pass
+
+
+    # =========================================================
+    # 🔹 HAPUS BANYAK PEMILIH (BATCH)
+    # =========================================================
+    @with_safe_db
+    def hapus_banyak_pemilih(self, rows, conn=None):
+        """Menghapus banyak baris data sekaligus dengan freeze UI."""
+        try:
+            if not rows:
+                show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
+                return
+
+            tbl = self._active_table()
+            if not tbl:
+                show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
+                return
+
+            # --- Konfirmasi awal
+            if not show_modern_question(
+                self,
+                "Konfirmasi Batch",
+                f"Anda yakin ingin menghapus <b>{len(rows)}</b> data pemilih?",
+            ):
+                return
+
+            # --- Jalankan batch dengan UI freeze
+            with self.freeze_ui():
+                conn = get_connection()
+                cur = conn.cursor()
+                conn.executescript("""
+                    PRAGMA synchronous = OFF;
+                    PRAGMA journal_mode = WAL;
+                    PRAGMA temp_store = MEMORY;
+                    PRAGMA cache_size = 100000;
+                """)
+
+                ok = skipped = rejected = 0
+
+                for row in rows:
+                    def _val(col):
+                        ci = self.col_index(col)
+                        it = self.table.item(row, ci) if ci != -1 else None
+                        return it.text().strip() if it else ""
+
+                    nama = _val("NAMA")
+                    nik = _val("NIK")
+                    nkk = _val("NKK")
+                    dpid = _val("DPID")
+                    tgl = _val("TGL_LHR")
+
+                    if dpid and dpid != "0":
+                        rejected += 1
+                        continue
+
+                    try:
+                        affected = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl)
+                        if affected > 0:
+                            ok += 1
+                        else:
+                            skipped += 1
+                    except Exception:
+                        skipped += 1
+
+                conn.commit()
+
+                # --- Tampilkan ringkasan
+                total = ok + skipped + rejected
+                msg = f"✅ {ok} dihapus"
+                if rejected:
+                    msg += f", ❌ {rejected} ditolak"
+                if skipped:
+                    msg += f", ⏸️ {skipped} dilewati"
+                msg += f" (Total: {total})"
+                show_modern_info(self, "Selesai", msg)
+
+                # --- Refresh tabel
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(250, lambda: self._refresh_setelah_hapus())
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal menghapus data batch:\n{e}")
+        finally:
+            try:
+                if conn:
+                    conn.commit()
+            except Exception:
+                pass
+
+
+    # =========================================================
+    # 🔹 ROUTER: otomatis pilih hapus satu / banyak
+    # =========================================================
+    def _hapus_pemilih_auto(self, rows):
+        """
+        Router pintar untuk hapus data:
+        - 1 baris → hapus_satu_pemilih
+        - >1 baris → hapus_banyak_pemilih
+        """
+        if not rows:
+            show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih untuk dihapus.")
+            return
+
+        if len(rows) == 1:
+            self.hapus_satu_pemilih(rows[0])
+        else:
+            self.hapus_banyak_pemilih(rows)
 
 
     def _clear_row_selection(self, rows):
@@ -7970,109 +8284,6 @@ class MainWindow(QMainWindow):
 
             except Exception as e:
                 print(f"[DB ERROR] aktifkan_pemilih (fast): {e}")
-
-
-    # =========================================================
-    # 🔹 2. HAPUS PEMILIH (versi batch-optimized)
-    # =========================================================
-    @with_safe_db
-    def hapus_pemilih(self, row, conn=None):
-        """
-        Hapus pemilih berdasarkan DPID, NIK, NKK, dan TGL_LHR.
-        - Non-batch: hapus 1 baris dengan konfirmasi.
-        - Batch: hapus semua baris dicentang (tanpa pop-up per baris).
-        Terintegrasi penuh dengan _context_action_wrapper().
-        """
-        try:
-            batch_mode = getattr(self, "_in_batch_mode", False)
-
-            # --- Gunakan koneksi aktif (batch) atau buat baru
-            if batch_mode:
-                conn = getattr(self, "_shared_conn", None) or get_connection()
-                cur = getattr(self, "_shared_cur", None) or conn.cursor()
-            else:
-                conn = get_connection()
-                conn.row_factory = None
-                conn.execute("PRAGMA busy_timeout = 3000;")
-                cur = conn.cursor()
-
-            tbl = self._active_table()
-            if not tbl:
-                self._batch_add("skipped", "hapus_pemilih")
-                return
-
-            # --- Ambil data dari UI
-            def _val(col):
-                ci = self.col_index(col)
-                it = self.table.item(row, ci) if ci != -1 else None
-                return it.text().strip() if it else ""
-
-            nama = _val("NAMA")
-            nik  = _val("NIK")
-            nkk  = _val("NKK")
-            dpid = _val("DPID")
-            tgl  = _val("TGL_LHR")
-
-            # --- Proteksi: hanya DPID kosong / "0" boleh dihapus
-            if dpid and dpid != "0":
-                if not batch_mode:
-                    show_modern_warning(
-                        self, "Ditolak",
-                        f"{nama} tidak dapat dihapus.<br>"
-                        f"Hanya pemilih baru di tahapan ini yang bisa dihapus!"
-                    )
-                self._batch_add("rejected", "hapus_pemilih")
-                return
-
-            # --- Non-batch: konfirmasi tunggal
-            if not batch_mode:
-                if not show_modern_question(
-                    self, "Konfirmasi Hapus",
-                    f"Apakah Anda yakin ingin menghapus data ini?<br>"
-                    f"<b>{nama}</b><br>NIK: <b>{nik}</b><br>NKK: <b>{nkk}</b>"
-                ):
-                    self._batch_add("skipped", "hapus_pemilih")
-                    return
-
-            # --- Jalankan DELETE presisi
-            sql = f"""
-                DELETE FROM {tbl}
-                WHERE IFNULL(DPID,'') = ?
-                AND IFNULL(NIK,'')  = ?
-                AND IFNULL(NKK,'')  = ?
-                AND IFNULL(TGL_LHR,'') = ?
-            """
-            params = (dpid, nik, nkk, tgl)
-            cur.execute(sql, params)
-
-            if cur.rowcount > 0:
-                self._batch_add("ok", "hapus_pemilih")
-            else:
-                self._batch_add("skipped", "hapus_pemilih")
-
-            # --- Commit & refresh
-            if not batch_mode:
-                conn.commit()
-                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                conn.commit()
-                self.load_data_from_db()
-                show_modern_info(self, "Selesai", f"{nama} berhasil dihapus.")
-            else:
-                # commit periodik untuk batch
-                self._shared_query_count = getattr(self, "_shared_query_count", 0) + 1
-                if self._shared_query_count % 1000 == 0:
-                    conn.commit()
-
-        except Exception as e:
-            self._batch_add("skipped", "hapus_pemilih")
-            if not getattr(self, "_in_batch_mode", False):
-                show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
-        finally:
-            if not getattr(self, "_in_batch_mode", False):
-                try:
-                    conn.commit()
-                except Exception:
-                    pass
 
     # =========================================================
     # 🔹 3. STATUS PEMILIH (versi batch optimized)
@@ -9168,6 +9379,111 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, apply_colors_safely)
 
+    # =========================================================
+    # 🔹 REFRESH UI SETELAH HAPUS
+    # =========================================================
+    def _refresh_setelah_hapus(self):
+        """Sinkronkan ulang UI setelah penghapusan data."""
+        try:
+            self.update_pagination()
+            self.show_page(self.current_page)
+            self.connect_header_events()
+            if hasattr(self, "sort_data_after_hapus"):
+                self.sort_data_after_hapus()
+            if hasattr(self, "_warnai_baris_berdasarkan_ket"):
+                self._warnai_baris_berdasarkan_ket()
+            if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
+                self._terapkan_warna_ke_tabel_aktif()
+        except Exception as e:
+            print(f"[REFRESH] Gagal refresh setelah hapus: {e}")
+
+    @with_safe_db
+    def load_data_setelah_hapus(self, conn=None):
+        """Memuat seluruh data dari tabel aktif ke self.all_data tanpa reset ke halaman 1 (SQLCipher-safe)."""
+        self._ensure_schema_and_migrate()
+        conn = get_connection()
+        conn.row_factory = sqlcipher.Row
+        cur = conn.cursor()
+        tbl_name = self._active_table()
+
+        # Optimasi baca
+        cur.executescript("""
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = 100000;
+        """)
+
+        try:
+            cur.execute(f"SELECT rowid, * FROM {tbl_name}")
+            rows = cur.fetchall()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memuat data dari tabel {tbl_name}:\n{e}")
+            self.all_data = []
+            self.total_pages = 1
+            self.show_page(1)
+            return
+
+        if not rows:
+            self.all_data = []
+            self.total_pages = 1
+            self.show_page(1)
+            return
+
+        # --- Formatter tanggal
+        _tgl_cache = {}
+
+        def format_tgl(val):
+            if not val:
+                return ""
+            if val in _tgl_cache:
+                return _tgl_cache[val]
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    v = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
+                    _tgl_cache[val] = v
+                    return v
+                except Exception:
+                    continue
+            _tgl_cache[val] = val
+            return val
+
+        # --- Build list of dict
+        headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
+        all_data = []
+        for r in rows:
+            d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+            d["rowid"] = r["rowid"]
+            if "LastUpdate" in r.keys() and r["LastUpdate"]:
+                d["LastUpdate"] = format_tgl(str(r["LastUpdate"]))
+            all_data.append(d)
+
+        self.all_data = all_data
+        gc.collect()
+
+        # --- Hitung ulang total halaman
+        total = len(all_data)
+        self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
+
+        # --- Tetap di halaman aktif
+        current_page = getattr(self, "current_page", 1)
+        if current_page > self.total_pages:
+            current_page = self.total_pages
+
+        self.show_page(current_page)
+
+        # --- Terapkan warna otomatis
+        def apply_colors_safely():
+            try:
+                if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
+                    self._warnai_baris_berdasarkan_ket()
+                    self._warna_sudah_dihitung = True
+                self._terapkan_warna_ke_tabel_aktif()
+            except Exception as e:
+                print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
+
+        QTimer.singleShot(100, apply_colors_safely)
+
     @contextmanager
     def freeze_ui(self):
         """Bekukan event & tampilan GUI sementara (seperti EnableEvents=False + ScreenUpdating=False)."""
@@ -9301,6 +9617,45 @@ class MainWindow(QMainWindow):
 
         # 🔹 Refresh tampilan tabel ke halaman pertama
         self.show_page(1)
+
+        # 🔹 Terapkan ulang warna tabel (non-blocking)
+        QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+    def sort_data_after_hapus(self, auto=False):
+        """
+        Urutkan data seluruh halaman:
+        🔹 Berdasarkan TPS, RW, RT, NKK, NAMA
+        🔹 Angka di depan dianggap numerik (1,2,...,10,11)
+        tapi tetap bisa menangani nilai seperti '1A', '1B'
+        """
+
+        def num_text_key(val):
+            """
+            Pisahkan angka dan huruf.
+            Contoh: '10B' -> (10, 'B'), '3' -> (3, '')
+            """
+            s = str(val).strip()
+            match = re.match(r"(\d+)([A-Za-z]*)", s)
+            if match:
+                num = int(match.group(1))
+                suf = match.group(2).upper()
+                return (num, suf)
+            return (0, s.upper())
+
+        def kunci_sortir(d):
+            return (
+                num_text_key(d.get("TPS", "")),
+                num_text_key(d.get("RW", "")),
+                num_text_key(d.get("RT", "")),
+                str(d.get("NKK", "")).strip(),
+                str(d.get("NAMA", "")).strip().upper(),
+            )
+
+        # 🔹 Jalankan pengurutan
+        self.all_data.sort(key=kunci_sortir)
+
+        # 🔹 Refresh tampilan tabel ke halaman saat ini
+        self.show_page(self.current_page)
 
         # 🔹 Terapkan ulang warna tabel (non-blocking)
         QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
