@@ -21866,8 +21866,6 @@ class RegisterWindow(QMainWindow):
         qr_dialog.exec()
 
 # =========================== COPY FILTER ===========================
-import win32clipboard
-import win32con
 from PyQt6.QtCore import QObject, QEvent, Qt
 from PyQt6.QtWidgets import QApplication
 
