@@ -9227,7 +9227,7 @@ class MainWindow(QMainWindow):
                             self.filter_sidebar = FilterSidebar(self)
                             self.filter_dock = FixedDockWidget("Filter", self, fixed_width=320)
                             self.filter_dock.setWidget(self.filter_sidebar)
-                            self.filter_sidebar.apply_theme(self.load_theme())
+                            self.filter_sidebar.apply_theme()
                             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
                             self.filter_dock.hide()
 
@@ -9693,9 +9693,9 @@ class MainWindow(QMainWindow):
         # 🔹 Langkah awal: pastikan semua data tampil (jangan dalam keadaan terfilter)
         try:
             with self.freeze_ui():  # 🧊 sama seperti Application.EnableEvents = False
-                self.reset_tampilkan_semua_data(silent=True)
+                pass  # tidak melakukan reset tampilan apa pun
         except Exception as e:
-            print(f"[Warning] Gagal reset tampilan sebelum hapus: {e}")
+            print(f"[Warning] Gagal freeze sebelum hapus: {e}")
 
         try:
             # 🔸 Koneksi aman ke database terenkripsi
@@ -21361,6 +21361,63 @@ class Data_Pantarlih(QMainWindow):
         self.save_column_widths()
         super().closeEvent(event)
 
+# =========================== COPY FILTER ===========================
+from PyQt6.QtCore import QObject, QEvent, Qt
+from PyQt6.QtWidgets import QApplication
+
+class CopyEventFilter(QObject):
+    """Ctrl+C agar QTableWidget bisa di-paste ke Excel & aplikasi lain (multi kolom, NIK/NKK aman)."""
+    def __init__(self, table):
+        super().__init__(table)
+        self.table = table
+
+    def eventFilter(self, obj, event):
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                selected_ranges = self.table.selectedRanges()
+                if not selected_ranges:
+                    return True
+
+                html_parts = ["<table border='0' cellspacing='0' cellpadding='2'>"]
+                text_lines = []
+
+                for sel in selected_ranges:
+                    for row in range(sel.topRow(), sel.bottomRow() + 1):
+                        html_parts.append("<tr>")
+                        row_text = []
+                        for col in range(sel.leftColumn(), sel.rightColumn() + 1):
+                            item = self.table.item(row, col)
+                            val = item.text() if item else ""
+
+                            # 🔸 Tangani angka panjang agar Excel tidak ubah format
+                            if val.isdigit() and len(val) >= 6:
+                                safe_html = f"<td style='mso-number-format:\"\\@\";white-space:nowrap;'>{val}</td>"
+                            else:
+                                safe_val = (
+                                    val.replace("&", "&amp;")
+                                    .replace("<", "&lt;")
+                                    .replace(">", "&gt;")
+                                )
+                                safe_html = f"<td style='white-space:nowrap;'>{safe_val}</td>"
+
+                            html_parts.append(safe_html)
+                            row_text.append(val)
+                        html_parts.append("</tr>")
+                        text_lines.append("\t".join(row_text))
+
+                html_parts.append("</table>")
+                html_data = "".join(html_parts)
+                text_data = "\n".join(text_lines)
+
+                # === Simpan format ke clipboard (Qt handles both formats safely) ===
+                mime = QMimeData()
+                mime.setData("text/html", html_data.encode("utf-8"))
+                mime.setText(text_data)
+                QApplication.clipboard().setMimeData(mime)
+
+                return True
+
+        return super().eventFilter(obj, event)
 
 #####################################*************########################################
 #####################################*************########################################
@@ -21835,7 +21892,7 @@ class RegisterWindow(QMainWindow):
         title.setStyleSheet("font-size:15pt; color:#ffcc66;")
         vbox.addWidget(title)
 
-        desc = QLabel("Scan kode berikut menggunakan <b>Google Authenticator</b> atau <b>Authy</b>.")
+        desc = QLabel("Scan kode berikut menggunakan aplikasi Authenticator anda.")
         desc.setWordWrap(True)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc.setStyleSheet("font-size:11pt; color:#ddd;")
@@ -21864,64 +21921,6 @@ class RegisterWindow(QMainWindow):
         btn.clicked.connect(lanjut_verifikasi)
 
         qr_dialog.exec()
-
-# =========================== COPY FILTER ===========================
-from PyQt6.QtCore import QObject, QEvent, Qt
-from PyQt6.QtWidgets import QApplication
-
-class CopyEventFilter(QObject):
-    """Ctrl+C agar QTableWidget bisa di-paste ke Excel & aplikasi lain (multi kolom, NIK/NKK aman)."""
-    def __init__(self, table):
-        super().__init__(table)
-        self.table = table
-
-    def eventFilter(self, obj, event):
-        if obj == self.table and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-                selected_ranges = self.table.selectedRanges()
-                if not selected_ranges:
-                    return True
-
-                html_parts = ["<table border='0' cellspacing='0' cellpadding='2'>"]
-                text_lines = []
-
-                for sel in selected_ranges:
-                    for row in range(sel.topRow(), sel.bottomRow() + 1):
-                        html_parts.append("<tr>")
-                        row_text = []
-                        for col in range(sel.leftColumn(), sel.rightColumn() + 1):
-                            item = self.table.item(row, col)
-                            val = item.text() if item else ""
-
-                            # 🔸 Tangani angka panjang agar Excel tidak ubah format
-                            if val.isdigit() and len(val) >= 6:
-                                safe_html = f"<td style='mso-number-format:\"\\@\";white-space:nowrap;'>{val}</td>"
-                            else:
-                                safe_val = (
-                                    val.replace("&", "&amp;")
-                                    .replace("<", "&lt;")
-                                    .replace(">", "&gt;")
-                                )
-                                safe_html = f"<td style='white-space:nowrap;'>{safe_val}</td>"
-
-                            html_parts.append(safe_html)
-                            row_text.append(val)
-                        html_parts.append("</tr>")
-                        text_lines.append("\t".join(row_text))
-
-                html_parts.append("</table>")
-                html_data = "".join(html_parts)
-                text_data = "\n".join(text_lines)
-
-                # === Simpan format ke clipboard (Qt handles both formats safely) ===
-                mime = QMimeData()
-                mime.setData("text/html", html_data.encode("utf-8"))
-                mime.setText(text_data)
-                QApplication.clipboard().setMimeData(mime)
-
-                return True
-
-        return super().eventFilter(obj, event)
 
     # =========================================================
     # 🔢 Alur Verifikasi OTP (tanpa popup ganda, UX halus)
