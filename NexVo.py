@@ -500,6 +500,16 @@ def _apply_modern_style(msg, accent="#d71d1d"):
         }}
     """)
 
+def get_system_delimiter():
+    """Deteksi delimiter berdasarkan locale Windows (Excel Indonesia pakai ';')."""
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+        conv = locale.localeconv()
+        if conv.get("decimal_point", ".") == ",":
+            return ";"
+    except Exception:
+        pass
+    return ","  # default untuk en_US
 
 def _lighten_color(hex_color):
     """Buat warna tombol lebih terang (untuk efek hover)."""
@@ -5622,6 +5632,7 @@ class MainWindow(QMainWindow):
         # === Menu di dalam tombol ===
         menu_rekap = QMenu(btn_rekap)
         menu_rekap.addAction(QAction("Pemilih Aktif", self, triggered=self.cek_rekapaktif))
+        menu_rekap.addAction(QAction("Pemilih Sesuai", self, triggered=self.cek_rekapsesuai))
         menu_rekap.addAction(QAction("Pemilih Baru", self, triggered=self.cek_rekapbaru))
         menu_rekap.addAction(QAction("Pemilih Baru (non-DP4)", self, triggered=self.cek_rekappemula))
         menu_rekap.addAction(QAction("Ubah Data", self, triggered=self.cek_rekapubah))
@@ -5823,7 +5834,7 @@ class MainWindow(QMainWindow):
         self.sort_lastupdate_asc = True
 
         self.current_page = 1
-        self.rows_per_page = 100
+        self.rows_per_page = 250
         self.total_pages = 1
 
         # ============== TABEL ==============
@@ -7801,8 +7812,11 @@ class MainWindow(QMainWindow):
             }
         """)
 
+        # --- Ambil tahap aktif (DPHP, DPSHP, DPSHPA, dst)
+        tahap_aktif = getattr(self, "_tahapan", "").strip().upper()
+
+        # --- Daftar aksi dasar (selalu muncul)
         actions = [
-            #("✏️ Lookup", lambda: self._context_action_wrapper(checked_rows, self.lookup_pemilih)),
             ("🔁 Aktifkan Pemilih", lambda: self._aktifkan_pemilih_auto(checked_rows)),
             ("🔥 Hapus", lambda: self._hapus_pemilih_auto(checked_rows)),
             ("🚫 1. Meninggal", lambda: self._set_status_auto(checked_rows, "1", "Meninggal")),
@@ -7812,8 +7826,11 @@ class MainWindow(QMainWindow):
             ("🌍 5. WNA", lambda: self._set_status_auto(checked_rows, "5", "WNA")),
             ("🪖 6. TNI", lambda: self._set_status_auto(checked_rows, "6", "TNI")),
             ("👮‍♂️ 7. Polri", lambda: self._set_status_auto(checked_rows, "7", "Polri")),
-            ("📍 8. Salah TPS", lambda: self._set_status_auto(checked_rows, "8", "Salah TPS")),
         ]
+
+        # --- Hanya tambahkan "Salah TPS" kalau tahap = DPHP
+        if tahap_aktif == "DPHP":
+            actions.append(("📍 8. Salah TPS", lambda: self._set_status_auto(checked_rows, "8", "Salah TPS")))
 
         for text, func in actions:
             act = QAction(text, self)
@@ -8179,22 +8196,24 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Lookup Pemilih", "Fitur Lookup Pemilih belum diimplementasikan.")
 
     def _reset_tabel_background(self):
-        """Menormalkan kembali warna background seluruh sel tabel aktif ke default."""
+        """Menormalkan kembali warna background seluruh sel tabel aktif ke default (dibungkus freeze_ui)."""
         if not hasattr(self, "table") or self.table is None:
             return
 
-        self.table.blockSignals(True)  # 🚫 hindari trigger event saat loop
-        default_brush = QBrush(Qt.GlobalColor.transparent)
+        with self.freeze_ui():  # 🚀 Bekukan UI selama proses reset agar tidak flicker
+            self.table.blockSignals(True)  # 🚫 hindari trigger event saat loop
+            default_brush = QBrush(Qt.GlobalColor.transparent)
 
-        for row in range(self.table.rowCount()):
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                if item:
-                    item.setBackground(default_brush)
+            for row in range(self.table.rowCount()):
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    if item:
+                        item.setBackground(default_brush)
 
-        self.table.clearSelection()  # hilangkan highlight seleksi
-        self.table.viewport().update()
-        self.table.blockSignals(False)
+            # 🔹 Bersihkan seleksi dan refresh tampilan
+            self.table.clearSelection()
+            self.table.viewport().update()
+            self.table.blockSignals(False)
 
     # =========================================================
     # 🔹 AKTIFKAN SATU PEMILIH
@@ -8274,7 +8293,7 @@ class MainWindow(QMainWindow):
     # 🔹 AKTIFKAN BANYAK PEMILIH (BATCH)
     # =========================================================
     def aktifkan_banyak_pemilih(self, rows):
-        """Aktifkan banyak pemilih (KET → 0) sekaligus."""
+        """Aktifkan banyak pemilih (KET → 0) sekaligus, TANPA mengubah JK/TPS."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -8291,6 +8310,36 @@ class MainWindow(QMainWindow):
                     f"Aktifkan kembali <b>{len(rows)}</b> pemilih yang dipilih?"):
                     return
 
+                # Index kolom (sekali)
+                ci_dpid = self.col_index("DPID")
+                ci_ket  = self.col_index("KET")
+                ci_nama = self.col_index("NAMA")
+
+                today_str = datetime.now().strftime("%d/%m/%Y")
+                batch_data = []
+                ok = rejected = 0
+
+                for row in rows:
+                    dpid_item = self.table.item(row, ci_dpid)
+                    ket_item  = self.table.item(row, ci_ket)
+
+                    dpid = dpid_item.text().strip() if dpid_item else ""
+                    ket  = ket_item.text().strip() if ket_item else ""
+
+                    # Hanya proses yang KET-nya 1–8 (sesuai aturan kamu)
+                    if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
+                        rejected += 1
+                        continue
+
+                    # ⛔ Tidak menyentuh JK/TPS sama sekali
+                    batch_data.append((today_str, dpid))
+                    ok += 1
+
+                if not batch_data:
+                    show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
+                    return
+
+                # Eksekusi batch cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8300,27 +8349,11 @@ class MainWindow(QMainWindow):
                     PRAGMA cache_size = 100000;
                 """)
 
-                today_str = datetime.now().strftime("%d/%m/%Y")
-                ok = rejected = 0
-
-                for row in rows:
-                    ci_dpid = self.col_index("DPID")
-                    ci_ket = self.col_index("KET")
-                    ci_nama = self.col_index("NAMA")
-                    dpid = self.table.item(row, ci_dpid).text().strip() if ci_dpid != -1 and self.table.item(row, ci_dpid) else ""
-                    ket = self.table.item(row, ci_ket).text().strip() if ci_ket != -1 and self.table.item(row, ci_ket) else ""
-                    nama = self.table.item(row, ci_nama).text().strip() if ci_nama != -1 and self.table.item(row, ci_nama) else ""
-
-                    if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
-                        rejected += 1
-                        continue
-
-                    try:
-                        cur.execute(f"UPDATE {tbl} SET KET = 0, LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
-                        ok += 1
-                    except Exception:
-                        rejected += 1
-
+                cur.executemany(f"""
+                    UPDATE {tbl}
+                    SET KET = 0, LastUpdate = ?
+                    WHERE DPID = ?
+                """, batch_data)
                 conn.commit()
 
                 msg = f"✅ {ok} diaktifkan"
@@ -8363,28 +8396,58 @@ class MainWindow(QMainWindow):
 
                 dpid = self.table.item(row, self.col_index("DPID")).text().strip()
                 nama = self.table.item(row, self.col_index("NAMA")).text().strip()
-                if not dpid or dpid == "0":
-                    show_modern_warning(self, "Ditolak", f"{nama} adalah Pemilih Baru dan tidak bisa di-TMS-kan.")
+                ket = self.table.item(row, self.col_index("KET")).text().strip() if self.col_index("KET") != -1 else ""
+
+                # --- Validasi dasar
+                if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
+                    show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
                     return
 
+                # 🔹 Tambahan logika: isi JK dan TPS dari *_ASAL
+                jk_asal_idx = self.col_index("JK_ASAL")
+                tps_asal_idx = self.col_index("TPS_ASAL")
+                jk_idx = self.col_index("JK")
+                tps_idx = self.col_index("TPS")
+
+                if jk_asal_idx != -1 and jk_idx != -1:
+                    jk_asal = self.table.item(row, jk_asal_idx)
+                    if jk_asal:
+                        jk_value = jk_asal.text().strip()
+                        self.table.item(row, jk_idx).setText(jk_value)
+                if tps_asal_idx != -1 and tps_idx != -1:
+                    tps_asal = self.table.item(row, tps_asal_idx)
+                    if tps_asal:
+                        tps_value = tps_asal.text().strip()
+                        self.table.item(row, tps_idx).setText(tps_value)
+
+                # 🔹 Update juga ke database
+                conn = get_connection()
+                cur = conn.cursor()
+                if jk_asal_idx != -1 and tps_asal_idx != -1:
+                    cur.execute(
+                        f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?",
+                        (dpid,)
+                    )
+                    conn.commit()
+
+                # 🔹 Konfirmasi user
                 if not show_modern_question(
                     self, f"Tandai {label}",
                     f"Apakah Anda yakin ingin menandai <b>{nama}</b> sebagai Pemilih {label}?"):
                     return
 
+                # --- Update status dan waktu
                 today_str = datetime.now().strftime("%d/%m/%Y")
-                conn = get_connection()
-                cur = conn.cursor()
-                conn.execute("PRAGMA busy_timeout = 3000;")
                 cur.execute(f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?", (new_value, today_str, dpid))
                 conn.commit()
 
-                # Update di memori dan tabel
+                # --- Update di memori
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = new_value
                     self.all_data[gi]["LastUpdate"] = today_str
 
+                # --- Update tampilan tabel
                 last_col = self.col_index("LastUpdate")
                 if last_col != -1:
                     lu_item = self.table.item(row, last_col)
@@ -8413,7 +8476,7 @@ class MainWindow(QMainWindow):
     # 🔹 SET STATUS BANYAK (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_banyak(self, rows, new_value, label):
-        """Set status KET untuk banyak baris sekaligus (batch)."""
+        """Set status KET untuk banyak baris sekaligus (batch super kilat)."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -8430,6 +8493,57 @@ class MainWindow(QMainWindow):
                     f"Tandai <b>{len(rows)}</b> pemilih sebagai {label}?"):
                     return
 
+                # --- Ambil indeks kolom (efisien)
+                ci_dpid = self.col_index("DPID")
+                ci_nama = self.col_index("NAMA")
+                ci_ket = self.col_index("KET")
+                ci_jk = self.col_index("JK")
+                ci_tps = self.col_index("TPS")
+                ci_jk_asal = self.col_index("JK_ASAL")
+                ci_tps_asal = self.col_index("TPS_ASAL")
+
+                today_str = datetime.now().strftime("%d/%m/%Y")
+                batch_data = []
+                ok = rejected = 0
+
+                # --- Loop logika pemilihan data valid
+                for row in rows:
+                    # Pastikan semua index valid
+                    if ci_dpid == -1 or ci_nama == -1:
+                        continue
+
+                    dpid_item = self.table.item(row, ci_dpid)
+                    ket_item = self.table.item(row, ci_ket)
+                    nama_item = self.table.item(row, ci_nama)
+
+                    dpid = dpid_item.text().strip() if dpid_item else ""
+                    ket = ket_item.text().strip() if ket_item else ""
+                    nama = nama_item.text().strip() if nama_item else ""
+
+                    # --- Validasi (hanya KET 1–8)
+                    if not dpid or dpid == "0" or ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                        rejected += 1
+                        continue
+
+                    # --- Ambil nilai JK_ASAL dan TPS_ASAL
+                    jk_asal = self.table.item(row, ci_jk_asal).text().strip() if ci_jk_asal != -1 and self.table.item(row, ci_jk_asal) else ""
+                    tps_asal = self.table.item(row, ci_tps_asal).text().strip() if ci_tps_asal != -1 and self.table.item(row, ci_tps_asal) else ""
+
+                    # --- Update langsung di tabel (UI)
+                    if ci_jk != -1 and self.table.item(row, ci_jk):
+                        self.table.item(row, ci_jk).setText(jk_asal)
+                    if ci_tps != -1 and self.table.item(row, ci_tps):
+                        self.table.item(row, ci_tps).setText(tps_asal)
+
+                    # --- Masukkan ke batch DB
+                    batch_data.append((new_value, today_str, jk_asal, tps_asal, dpid))
+                    ok += 1
+
+                if not batch_data:
+                    show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
+                    return
+
+                # --- Eksekusi batch ultra cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8439,38 +8553,29 @@ class MainWindow(QMainWindow):
                     PRAGMA cache_size = 100000;
                 """)
 
-                today_str = datetime.now().strftime("%d/%m/%Y")
-                ok = rejected = 0
-
-                for row in rows:
-                    ci_dpid = self.col_index("DPID")
-                    ci_nama = self.col_index("NAMA")
-                    dpid = self.table.item(row, ci_dpid).text().strip() if ci_dpid != -1 and self.table.item(row, ci_dpid) else ""
-                    nama = self.table.item(row, ci_nama).text().strip() if ci_nama != -1 and self.table.item(row, ci_nama) else ""
-
-                    if not dpid or dpid == "0":
-                        rejected += 1
-                        continue
-
-                    try:
-                        cur.execute(f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?", (new_value, today_str, dpid))
-                        ok += 1
-                    except Exception:
-                        rejected += 1
-
+                cur.executemany(f"""
+                    UPDATE {tbl}
+                    SET 
+                        KET = ?, 
+                        LastUpdate = ?, 
+                        JK = ?, 
+                        TPS = ?
+                    WHERE DPID = ?
+                """, batch_data)
                 conn.commit()
+
                 msg = f"✅ {ok} ditandai {label}"
                 if rejected:
                     msg += f", ❌ {rejected} dilewati"
                 show_modern_info(self, "Selesai", msg)
 
+                # --- Refresh tampilan tabel
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
                 self._reset_tabel_background()
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal batch set status:\n{e}")
-
 
     # =========================================================
     # 🔹 ROUTER OTOMATIS UNTUK STATUS
@@ -9288,12 +9393,6 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with self.freeze_ui():
-                self.reset_tampilkan_semua_data(silent=True)
-        except Exception as e:
-            print(f"[Warning] Gagal reset tampilan sebelum import: {e}")
-
-        try:
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
                 if len(reader) < 15:
@@ -9418,8 +9517,19 @@ class MainWindow(QMainWindow):
                     for csv_col, app_col in mapping.items():
                         if csv_col in header_idx:
                             val = row[header_idx[csv_col]].strip()
+
+                            # 🔹 Normalisasi khusus kolom RT, RW, TPS → hilangkan nol di depan
+                            if app_col in ("RT", "RW", "TPS"):
+                                if val.isdigit():  # hanya ubah kalau memang angka
+                                    val = str(int(val))
+                                elif val == "":
+                                    val = ""  # biarkan kosong jika memang kosong
+
+                            # 🔹 Set default KET = "0"
                             if app_col == "KET":
                                 val = "0"
+
+                            # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
                                 for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                                     try:
@@ -9427,6 +9537,7 @@ class MainWindow(QMainWindow):
                                         break
                                     except Exception:
                                         pass
+
                             data[app_col] = val
 
                     # 🔹 Kolom tambahan
@@ -9601,106 +9712,112 @@ class MainWindow(QMainWindow):
     # 🔹 REFRESH UI SETELAH HAPUS
     # =========================================================
     def _refresh_setelah_hapus(self):
-        """Sinkronkan ulang UI setelah penghapusan data."""
-        try:
-            self.update_pagination()
-            self.show_page(self.current_page)
-            self.connect_header_events()
-            if hasattr(self, "sort_data_after_hapus"):
-                self.sort_data_after_hapus()
-            if hasattr(self, "_warnai_baris_berdasarkan_ket"):
-                self._warnai_baris_berdasarkan_ket()
-            if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
-                self._terapkan_warna_ke_tabel_aktif()
-        except Exception as e:
-            print(f"[REFRESH] Gagal refresh setelah hapus: {e}")
+        """Sinkronkan ulang UI setelah penghapusan data (dibungkus freeze_ui agar bebas flicker)."""
+        with self.freeze_ui():  # 🚀 Bekukan UI sementara selama proses refresh
+            try:
+                self.update_pagination()
+                self.show_page(self.current_page)
+                self.connect_header_events()
+
+                # 🔹 Jalankan fungsi tambahan bila ada
+                if hasattr(self, "sort_data_after_hapus"):
+                    self.sort_data_after_hapus()
+                if hasattr(self, "_warnai_baris_berdasarkan_ket"):
+                    self._warnai_baris_berdasarkan_ket()
+                if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
+                    self._terapkan_warna_ke_tabel_aktif()
+
+            except Exception as e:
+                print(f"[REFRESH] Gagal refresh setelah hapus: {e}")
+                
 
     @with_safe_db
     def load_data_setelah_hapus(self, conn=None):
         """Memuat seluruh data dari tabel aktif ke self.all_data tanpa reset ke halaman 1 (SQLCipher-safe)."""
-        self._ensure_schema_and_migrate()
-        conn = get_connection()
-        conn.row_factory = sqlcipher.Row
-        cur = conn.cursor()
-        tbl_name = self._active_table()
+        with self.freeze_ui():  # 🚀 Bekukan UI agar tidak flicker selama proses
+            self._ensure_schema_and_migrate()
+            conn = get_connection()
+            conn.row_factory = sqlcipher.Row
+            cur = conn.cursor()
+            tbl_name = self._active_table()
 
-        # Optimasi baca
-        cur.executescript("""
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-            PRAGMA temp_store = MEMORY;
-            PRAGMA cache_size = 100000;
-        """)
+            # Optimasi baca
+            cur.executescript("""
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA cache_size = 100000;
+            """)
 
-        try:
-            cur.execute(f"SELECT rowid, * FROM {tbl_name}")
-            rows = cur.fetchall()
-        except Exception as e:
-            show_modern_error(self, "Error", f"Gagal memuat data dari tabel {tbl_name}:\n{e}")
-            self.all_data = []
-            self.total_pages = 1
-            self.show_page(1)
-            return
-
-        if not rows:
-            self.all_data = []
-            self.total_pages = 1
-            self.show_page(1)
-            return
-
-        # --- Formatter tanggal
-        _tgl_cache = {}
-
-        def format_tgl(val):
-            if not val:
-                return ""
-            if val in _tgl_cache:
-                return _tgl_cache[val]
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
-                try:
-                    v = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
-                    _tgl_cache[val] = v
-                    return v
-                except Exception:
-                    continue
-            _tgl_cache[val] = val
-            return val
-
-        # --- Build list of dict
-        headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
-        all_data = []
-        for r in rows:
-            d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
-            d["rowid"] = r["rowid"]
-            if "LastUpdate" in r.keys() and r["LastUpdate"]:
-                d["LastUpdate"] = format_tgl(str(r["LastUpdate"]))
-            all_data.append(d)
-
-        self.all_data = all_data
-        gc.collect()
-
-        # --- Hitung ulang total halaman
-        total = len(all_data)
-        self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
-
-        # --- Tetap di halaman aktif
-        current_page = getattr(self, "current_page", 1)
-        if current_page > self.total_pages:
-            current_page = self.total_pages
-
-        self.show_page(current_page)
-
-        # --- Terapkan warna otomatis
-        def apply_colors_safely():
             try:
-                if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
-                    self._warnai_baris_berdasarkan_ket()
-                    self._warna_sudah_dihitung = True
-                self._terapkan_warna_ke_tabel_aktif()
+                cur.execute(f"SELECT rowid, * FROM {tbl_name}")
+                rows = cur.fetchall()
             except Exception as e:
-                print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
+                show_modern_error(self, "Error", f"Gagal memuat data dari tabel {tbl_name}:\n{e}")
+                self.all_data = []
+                self.total_pages = 1
+                self.show_page(1)
+                return
 
-        QTimer.singleShot(100, apply_colors_safely)
+            if not rows:
+                self.all_data = []
+                self.total_pages = 1
+                self.show_page(1)
+                return
+
+            # --- Formatter tanggal
+            _tgl_cache = {}
+
+            def format_tgl(val):
+                if not val:
+                    return ""
+                if val in _tgl_cache:
+                    return _tgl_cache[val]
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                    try:
+                        v = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
+                        _tgl_cache[val] = v
+                        return v
+                    except Exception:
+                        continue
+                _tgl_cache[val] = val
+                return val
+
+            # --- Build list of dict
+            headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
+            all_data = []
+            for r in rows:
+                d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
+                d["rowid"] = r["rowid"]
+                if "LastUpdate" in r.keys() and r["LastUpdate"]:
+                    d["LastUpdate"] = format_tgl(str(r["LastUpdate"]))
+                all_data.append(d)
+
+            self.all_data = all_data
+            gc.collect()
+
+            # --- Hitung ulang total halaman
+            total = len(all_data)
+            self.total_pages = max(1, (total + self.rows_per_page - 1) // self.rows_per_page)
+
+            # --- Tetap di halaman aktif
+            current_page = getattr(self, "current_page", 1)
+            if current_page > self.total_pages:
+                current_page = self.total_pages
+
+            self.show_page(current_page)
+
+            # --- Terapkan warna otomatis
+            def apply_colors_safely():
+                try:
+                    if not hasattr(self, "_warna_sudah_dihitung") or not self._warna_sudah_dihitung:
+                        self._warnai_baris_berdasarkan_ket()
+                        self._warna_sudah_dihitung = True
+                    self._terapkan_warna_ke_tabel_aktif()
+                except Exception as e:
+                    print(f"[WARN] Gagal menerapkan warna otomatis: {e}")
+
+            QTimer.singleShot(100, apply_colors_safely)
 
     @contextmanager
     def freeze_ui(self):
@@ -10171,6 +10288,72 @@ class MainWindow(QMainWindow):
     # =========================================================
     # 🔹 CEK REKAP PEMILIH AKTIF (MENU → Rekap → Pemilih Aktif)
     # =========================================================
+    def cek_rekapsesuai(self):
+        """Menampilkan rekap pemilih sesuai per TPS (termasuk TPS tanpa data, 0 → '-')."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel rekap ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS rekap_sesuai (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM rekap_sesuai")
+
+            # 🔹 Ambil semua TPS (termasuk yang tidak punya data aktif)
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
+
+            # 🔹 Isi data rekap per TPS
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # Jumlah KK dengan KET = 0
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND COALESCE(KET,'') = '0'
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                # Jumlah laki-laki dengan KET = 0
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='L' AND COALESCE(KET,'') = '0'
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                # Jumlah perempuan dengan KET = 0
+                cur.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {tbl_name}
+                    WHERE TPS=? AND JK='P' AND COALESCE(KET,'') = '0'
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+
+                # Simpan ke tabel rekap
+                cur.execute("INSERT INTO rekap_sesuai VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+
+            # 🔹 Tampilkan jendela RekapWindow
+            self.rekap_window = self.show_window_with_transition(SesuaiWindow)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Sesuai:\n{e}")
+
     def cek_rekapaktif(self):
         """Menampilkan rekap pemilih aktif per TPS (termasuk TPS tanpa data, 0 → '-')."""
         try:
@@ -12289,11 +12472,11 @@ class UnggahRegulerWindow(QWidget):
             # 🧾 LAPORAN HASIL
             # =============================================================
             if gagal_list:
-                msg = "\n".join(gagal_list[:20])
+                msg = "\n- ".join(gagal_list[:20])
                 QMessageBox.warning(
                     self,
                     "Gagal Unggah",
-                    f"{len(gagal_list)} data gagal diunggah:\n\n{msg}\n\nRendatin KPU Kab. Tasikmalaya"
+                    f"{len(gagal_list)} data gagal diunggah:\n\n- {msg}\n\nRendatin KPU Kab. Tasikmalaya"
                 )
             else:
                 QMessageBox.information(self, "Berhasil", "Semua data berhasil diunggah.")
@@ -12533,6 +12716,263 @@ class UnggahRegulerWindow(QWidget):
 # =========================================================
 # 🔹 KELAS TAMPILAN REKAP
 # =========================================================
+class SesuaiWindow(QMainWindow):
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowTitle("Rekap Pemilih Sesuai")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PEMILIH SESUAI")
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #000000;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #000000;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel rekap
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel rekap ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM rekap_sesuai ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nama_tps, nkk, L, P, total = row
+
+            # Gunakan angka asli untuk penjumlahan
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            # Tampilan: ganti 0 menjadi "-"
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append(headers)
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                val = item.text() if item else ""
+                if val.strip() in ("-", ""):
+                    val = "0"
+                cols.append(val)
+            rows.append(cols)
+
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
+
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
+
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
 class RekapWindow(QMainWindow):
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
@@ -12734,7 +13174,7 @@ class RekapWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -12751,7 +13191,7 @@ class RekapWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -12759,18 +13199,24 @@ class RekapWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
+
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -12986,8 +13432,9 @@ class BaruWindow(QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
+ 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -13004,7 +13451,7 @@ class BaruWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -13012,18 +13459,23 @@ class BaruWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -13240,7 +13692,7 @@ class PemulaWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -13257,7 +13709,7 @@ class PemulaWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -13265,18 +13717,23 @@ class PemulaWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -13494,7 +13951,7 @@ class UbahWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -13511,7 +13968,7 @@ class UbahWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -13519,18 +13976,23 @@ class UbahWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -13722,7 +14184,7 @@ class SaringWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -13739,7 +14201,7 @@ class SaringWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -13747,19 +14209,23 @@ class SaringWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
 
+        QApplication.clipboard().setMimeData(mime)
     def kembali_ke_main(self):
         """Kembalikan ke jendela utama."""
         if self.parent_window:
@@ -13945,7 +14411,7 @@ class KtpWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -13962,7 +14428,7 @@ class KtpWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -13970,18 +14436,23 @@ class KtpWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow."""
@@ -14167,7 +14638,7 @@ class DifabelWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -14184,7 +14655,7 @@ class DifabelWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -14192,18 +14663,23 @@ class DifabelWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow."""
@@ -14420,7 +14896,7 @@ class UbahKelaminWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_table_to_clipboard(self):
-        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, format TSV untuk Excel)."""
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
         selected = self.table.selectedRanges()
         if not selected:
             return
@@ -14437,7 +14913,7 @@ class UbahKelaminWindow(QMainWindow):
         for c in range(left, right + 1):
             header_item = self.table.horizontalHeaderItem(c)
             headers.append(header_item.text() if header_item else "")
-        rows.append("\t".join(headers))
+        rows.append(headers)
 
         # === Isi tabel yang terseleksi ===
         for r in range(top, bottom + 1):
@@ -14445,18 +14921,23 @@ class UbahKelaminWindow(QMainWindow):
             for c in range(left, right + 1):
                 item = self.table.item(r, c)
                 val = item.text() if item else ""
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' untuk Excel
                 if val.strip() in ("-", ""):
                     val = "0"
-
                 cols.append(val)
-            rows.append("\t".join(cols))
+            rows.append(cols)
 
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(rows))
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
 
-        # print("[Rekap] 📋 Data + header kolom berhasil disalin ke clipboard (Ctrl+C)")
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
 
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
@@ -14698,43 +15179,41 @@ class UbahTPSWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def copy_selection_to_clipboard(self):
-        """Salin area yang terseleksi ke clipboard agar bisa dipaste ke Excel."""
+        """Salin area yang terseleksi ke clipboard agar bisa dipaste ke Excel (universal delimiter)."""
         selected_ranges = self.table.selectedRanges()
         if not selected_ranges:
-            # Jika belum ada seleksi, otomatis pilih seluruh tabel
             self.table.selectAll()
             selected_ranges = self.table.selectedRanges()
             if not selected_ranges:
-                return  # kalau tetap tidak ada (tabel kosong), batal
+                return
 
-        # Ambil hanya area pertama (seperti di Excel)
         r = selected_ranges[0]
-        rows = []
+        data_matrix = []
         for row in range(r.topRow(), r.bottomRow() + 1):
-            cols = []
+            row_values = []
             for col in range(r.leftColumn(), r.rightColumn() + 1):
                 item = self.table.item(row, col)
                 text = item.text() if item else ""
-
-                # 🔹 Hilangkan karakter tak diinginkan
                 text = str(text).replace("\n", " ").replace("\t", " ").strip()
-
-                # 🔹 Ubah '-' atau kosong menjadi '0' agar Excel mengenali sebagai angka
                 if text in ("-", ""):
                     text = "0"
+                row_values.append(text)
+            data_matrix.append(row_values)
 
-                cols.append(text)
-            rows.append("\t".join(cols))
-        clipboard_text = "\n".join(rows)
+        # 🔹 Buat 3 format data: TSV (tab), CSV (koma), dan CSV (locale)
+        system_delim = get_system_delimiter()
+        tsv_text = "\n".join(["\t".join(row) for row in data_matrix])
+        csv_text = "\n".join([",".join(row) for row in data_matrix])
+        csv_local = "\n".join([system_delim.join(row) for row in data_matrix])
+
+        # 🔹 Simpan ke clipboard dengan 3 MIME type berbeda
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_local.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback untuk Notepad, Sheets, dll
 
         clipboard = QApplication.clipboard()
-        mime_data = QMimeData()
-        mime_data.setText(clipboard_text)
-        clipboard.setMimeData(mime_data)
-
-        # print(f"[INFO] {len(rows)} baris disalin ke clipboard (format Excel).")
-
-
+        clipboard.setMimeData(mime)
     # === Fungsi kembali ke main window ===
     def kembali_ke_main(self):
         """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
@@ -14746,7 +15225,6 @@ class UbahTPSWindow(QMainWindow):
             self.parent_window.repaint()
             QTimer.singleShot(150, self.parent_window.repaint)
         self.close()
-
 
 class BeritaAcara(QMainWindow):
     """Jendela Berita Acara lengkap sesuai template resmi (2 halaman, dengan logo, input, navigasi, dan viewer)."""
@@ -21990,7 +22468,7 @@ if __name__ == "__main__":
                 dev_nama = "ARI ARDIANA"
                 dev_kecamatan = "TANJUNGJAYA"
                 dev_desa = "SUKASENANG"
-                dev_tahapan = "DPHP"
+                dev_tahapan = "DPSHP"
 
                 mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
                 mw.show()
