@@ -3643,7 +3643,7 @@ class DetailInformasiPemilihDialog(QDialog):
     def _populate_dropdowns(self):
         """Mengisi dropdown dari database atau sumber data lain"""
         if not self.main_window:
-            print("[DetailDialog] Referensi MainWindow tidak ditemukan. Dropdown tidak diisi.")
+            #print("[DetailDialog] Referensi MainWindow tidak ditemukan. Dropdown tidak diisi.")
             self.sumber_widget.combo.addItems(["Sumber Data"])
             return
 
@@ -3677,7 +3677,7 @@ class DetailInformasiPemilihDialog(QDialog):
                 self.sumber_widget.combo.setCurrentIndex(-1) 
 
         except Exception as e:
-            print(f"[DetailDialog._populate_dropdowns SUMBER Error] {e}")
+            #print(f"[DetailDialog._populate_dropdowns SUMBER Error] {e}")
             self.sumber_widget.combo.clear()
             self.sumber_widget.combo.setPlaceholderText("Sumber Data")
 
@@ -3705,7 +3705,7 @@ class DetailInformasiPemilihDialog(QDialog):
 
     def toggle_edit_mode(self):
         """Simpan perubahan data ke database (langsung tanpa toggle mode)"""
-        print("[DEBUG] Tombol Sunting diklik - menyimpan data")
+        #print("[DEBUG] Tombol Sunting diklik - menyimpan data")
 
         try:
             # === Ambil data dari form ===
@@ -3713,9 +3713,9 @@ class DetailInformasiPemilihDialog(QDialog):
             dis_value = self.dis_widget.combo.currentText().strip()
             ktp_value = self.ktp_widget.combo.currentText().strip()
 
-            print(f"[DEBUG] KET value: {ket_value}")
-            print(f"[DEBUG] DIS value: {dis_value}")
-            print(f"[DEBUG] KTP value: {ktp_value}")
+            #print(f"[DEBUG] KET value: {ket_value}")
+            #print(f"[DEBUG] DIS value: {dis_value}")
+            #print(f"[DEBUG] KTP value: {ktp_value}")
 
             # === Bersihkan / beri default untuk nilai kosong ===
             if ket_value == "" or ket_value == "Keterangan Ubah (0-8 atau U)":
@@ -3755,7 +3755,7 @@ class DetailInformasiPemilihDialog(QDialog):
 
             # === Validasi data ===
             validation_errors = self._validate_data(updated_data)
-            print(f"[DEBUG] Validation errors: {validation_errors}")
+            #print(f"[DEBUG] Validation errors: {validation_errors}")
 
             if validation_errors:
                 QMessageBox.warning(
@@ -3765,12 +3765,19 @@ class DetailInformasiPemilihDialog(QDialog):
                 )
                 return
 
-            print("[DEBUG] Validasi berhasil, akan simpan ke database...")
+            #print("[DEBUG] Validasi berhasil, akan simpan ke database...")
 
             # === Simpan ke database ===
             if self._save_to_database(updated_data):
                 # Update data internal di memori
                 self._data.update(updated_data)
+
+                # ✅ Panggil fungsi refresh data dari MainWindow
+                if self.main_window:
+                    if hasattr(self.main_window, "load_data_setelah_hapus"):
+                        self.main_window.load_data_setelah_hapus()
+                    if hasattr(self.main_window, "_refresh_setelah_hapus"):
+                        QTimer.singleShot(150, lambda: self.main_window._refresh_setelah_hapus())
 
                 QMessageBox.information(
                     self,
@@ -3779,7 +3786,6 @@ class DetailInformasiPemilihDialog(QDialog):
                 )
 
                 # Refresh tabel di MainWindow jika ada
-                print("[DEBUG] Update data di memori (tanpa refresh database)")
                 self._update_main_window_data(updated_data)
 
         except Exception as e:
@@ -3794,13 +3800,13 @@ class DetailInformasiPemilihDialog(QDialog):
 
     def _save_to_database(self, updated_data):
         """Simpan data ke database menggunakan db_manager"""
-        print("[DEBUG] Masuk ke _save_to_database")
-        print(f"[DEBUG] Updated data: {updated_data}")
+        #print("[DEBUG] Masuk ke _save_to_database")
+        #print(f"[DEBUG] Updated data: {updated_data}")
         
         try:
             # Gunakan koneksi dari db_manager
             conn = get_connection()
-            print("[DEBUG] Koneksi database berhasil")
+            #print("[DEBUG] Koneksi database berhasil")
             
             if conn is None:
                 raise Exception("Koneksi database tidak tersedia")
@@ -3813,14 +3819,14 @@ class DetailInformasiPemilihDialog(QDialog):
             else:
                 table_name = "pemilih"  # Default fallback
 
-            print(f"[DEBUG] Table name: {table_name}")
+            #print(f"[DEBUG] Table name: {table_name}")
 
             # Ambil DPID sebagai identifier
             dpid = self.get_value("DPID")
             if not dpid:
                 raise Exception("DPID tidak ditemukan")
 
-            print(f"[DEBUG] DPID: {dpid}")
+            #print(f"[DEBUG] DPID: {dpid}")
 
             # Buat query UPDATE
             set_clauses = []
@@ -3834,20 +3840,20 @@ class DetailInformasiPemilihDialog(QDialog):
             
             query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE DPID = ?"
             
-            print(f"[DEBUG] Executing query: {query}")
-            print(f"[DEBUG] Values: {values}")
+            #print(f"[DEBUG] Executing query: {query}")
+            #print(f"[DEBUG] Values: {values}")
             
             cursor.execute(query, values)
             # TAMBAHKAN INI - Cek rowcount sebelum dan sesudah commit
             rows_affected = cursor.rowcount
-            print(f"[DEBUG] Rows affected: {rows_affected}")
+            #print(f"[DEBUG] Rows affected: {rows_affected}")
 
             # PENTING: Ternyata perlu commit manual!
             conn.commit()
-            print(f"[DEBUG] Database di-commit")
+            #print(f"[DEBUG] Database di-commit")
 
             if rows_affected == 0:
-                print(f"[WARNING] Tidak ada baris yang diupdate! DPID mungkin tidak ditemukan")
+                #print(f"[WARNING] Tidak ada baris yang diupdate! DPID mungkin tidak ditemukan")
                 QMessageBox.warning(self, "Peringatan", f"Data dengan DPID {dpid} tidak ditemukan di database")
                 return False
             
@@ -3882,22 +3888,22 @@ class DetailInformasiPemilihDialog(QDialog):
         if file_name:
             self.selected_file = file_name
             self.lbl_file.setText(os.path.basename(file_name))
-            print(f"[DetailDialog] File selected: {file_name}")
+            #print(f"[DetailDialog] File selected: {file_name}")
     
     def _update_main_window_data(self, updated_data):
         """Update data di MainWindow tanpa reload database (update langsung di memori)"""
         try:
             if not self.main_window:
-                print("[WARNING] main_window reference tidak ada")
+                #print("[WARNING] main_window reference tidak ada")
                 return
             
             if not hasattr(self.main_window, 'all_data'):
-                print("[WARNING] main_window tidak punya all_data")
+                #print("[WARNING] main_window tidak punya all_data")
                 return
             
             dpid = self.get_value("DPID")
             if not dpid:
-                print("[WARNING] DPID tidak ditemukan")
+                #print("[WARNING] DPID tidak ditemukan")
                 return
             
             # Cari data di all_data berdasarkan DPID dan update
@@ -3906,12 +3912,12 @@ class DetailInformasiPemilihDialog(QDialog):
                 if row_data.get("DPID") == dpid:
                     # Update data di memori
                     self.main_window.all_data[i].update(updated_data)
-                    print(f"[DEBUG] Data index {i} berhasil diupdate di memori")
+                    #print(f"[DEBUG] Data index {i} berhasil diupdate di memori")
                     updated = True
                     break
             
             if not updated:
-                print(f"[WARNING] Data dengan DPID {dpid} tidak ditemukan di all_data")
+                #print(f"[WARNING] Data dengan DPID {dpid} tidak ditemukan di all_data")
                 return
             
             # Update tampilan tabel yang sedang aktif tanpa reload
@@ -3948,7 +3954,7 @@ class DetailInformasiPemilihDialog(QDialog):
                                     # Beri highlight sementara untuk menunjukkan perubahan
                                     item.setBackground(QColor("#FFEB3B"))  # Kuning
                                     
-                                    print(f"[DEBUG] Update cell [{row},{col}] {col_name} = {new_value}")
+                                    #print(f"[DEBUG] Update cell [{row},{col}] {col_name} = {new_value}")
                         
                         # Hilangkan highlight setelah 2 detik
                         def remove_highlight():
@@ -3963,10 +3969,10 @@ class DetailInformasiPemilihDialog(QDialog):
                         from PyQt6.QtCore import QTimer
                         QTimer.singleShot(2000, remove_highlight)
                         
-                        print(f"[DEBUG] Baris {row} berhasil diupdate di tabel")
+                        #print(f"[DEBUG] Baris {row} berhasil diupdate di tabel")
                         break
                 
-                print("[DEBUG] Update selesai tanpa reload database")
+                #print("[DEBUG] Update selesai tanpa reload database")
             
         except Exception as e:
             print(f"[ERROR] Gagal update data di memori: {e}")
