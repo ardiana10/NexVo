@@ -1885,7 +1885,7 @@ class RangeSlider(QWidget):
         else:
             super().keyPressEvent(e)
 
-# (Asumsi import Anda sudah ada di sini: QWidget, QVBoxLayout, QScrollArea, dll.)
+
 
 # =====================================================
 # Panel Filter Samping (dock kanan)
@@ -3150,8 +3150,8 @@ class FloatingLabelLineEdit(QWidget):
         layout.addWidget(self.line_edit)
 
 
-# --- REVISI LENGKAP CustomComboBox ---
-class CustomComboBox(QComboBox):
+# --- REVISI LENGKAP ComboBoxSunting ---
+class ComboBoxSunting(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -3383,7 +3383,7 @@ class FloatingLabelComboBox(QWidget):
         """
         self.label.setStyleSheet(self.label_stylesheet_light)
 
-        self.combo = CustomComboBox() # Menggunakan CustomComboBox Anda
+        self.combo = ComboBoxSunting() # Menggunakan ComboBoxSunting Anda
         self.combo.addItems(options)
         if current_value in options:
             self.combo.setCurrentText(current_value)
@@ -3393,7 +3393,7 @@ class FloatingLabelComboBox(QWidget):
         layout.addWidget(self.combo)
 
     def setTheme(self, mode: str):
-        """Meneruskan panggilan setTheme ke CustomComboBox dan label."""
+        """Meneruskan panggilan setTheme ke ComboBoxSunting dan label."""
         self.combo.setTheme(mode)
         if mode.lower() == 'dark':
             self.label.setStyleSheet(self.label_stylesheet_dark)
