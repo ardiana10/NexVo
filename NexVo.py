@@ -1212,7 +1212,6 @@ class CustomComboBox(QComboBox):
 # =====================================================
 # RangeSlider: Komponen Slider Ganda untuk Rentang Umur
 # =====================================================
-#class baru
 class AgeCalculator:
     """
     Utility class untuk menghitung usia dari tanggal lahir format DD|MM|YYYY
@@ -21873,67 +21872,57 @@ from PyQt6.QtCore import QObject, QEvent, Qt
 from PyQt6.QtWidgets import QApplication
 
 class CopyEventFilter(QObject):
-    """Ctrl+C agar QTableWidget bisa di-paste ke Excel, multi kolom, dan NIK/NKK tidak rusak."""
+    """Ctrl+C agar QTableWidget bisa di-paste ke Excel & aplikasi lain (multi kolom, NIK/NKK aman)."""
     def __init__(self, table):
         super().__init__(table)
         self.table = table
 
     def eventFilter(self, obj, event):
         if obj == self.table and event.type() == QEvent.Type.KeyPress:
-            # Tangkap kombinasi Ctrl + C
             if event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
                 selected_ranges = self.table.selectedRanges()
                 if not selected_ranges:
-                    return True  # tidak ada seleksi
+                    return True
 
+                html_parts = ["<table border='0' cellspacing='0' cellpadding='2'>"]
                 text_lines = []
-                # Hilangkan border agar Excel tidak menggambar garis tabel
-                html = ["<table border='0' cellspacing='0' cellpadding='2'>"]
 
                 for sel in selected_ranges:
                     for row in range(sel.topRow(), sel.bottomRow() + 1):
-                        html.append("<tr>")
+                        html_parts.append("<tr>")
                         row_text = []
                         for col in range(sel.leftColumn(), sel.rightColumn() + 1):
                             item = self.table.item(row, col)
                             val = item.text() if item else ""
 
-                            # 💡 Jika kolom berisi angka panjang (mis. NIK/NKK), anggap teks agar tidak rusak di Excel
+                            # 🔸 Tangani angka panjang agar Excel tidak ubah format
                             if val.isdigit() and len(val) >= 6:
-                                html.append(
-                                    f"<td style='mso-number-format:\"\\@\";white-space:nowrap;'>{val}</td>"
-                                )
-                                val = f"'{val}"  # agar Ctrl+Shift+V tetap text
+                                safe_html = f"<td style='mso-number-format:\"\\@\";white-space:nowrap;'>{val}</td>"
                             else:
-                                safe = (
+                                safe_val = (
                                     val.replace("&", "&amp;")
                                     .replace("<", "&lt;")
                                     .replace(">", "&gt;")
                                 )
-                                html.append(f"<td style='white-space:nowrap;'>{safe}</td>")
+                                safe_html = f"<td style='white-space:nowrap;'>{safe_val}</td>"
+
+                            html_parts.append(safe_html)
                             row_text.append(val)
-                        html.append("</tr>")
+                        html_parts.append("</tr>")
                         text_lines.append("\t".join(row_text))
 
-                html.append("</table>")
-                html_data = "".join(html)
+                html_parts.append("</table>")
+                html_data = "".join(html_parts)
                 text_data = "\n".join(text_lines)
 
-                # Simpan teks biasa untuk kompatibilitas
-                QApplication.clipboard().setText(text_data)
-
-                # Simpan format HTML ke clipboard Windows (agar Excel paham kolom dan tidak wrap)
-                try:
-                    import win32clipboard
-                    import win32con
-                    win32clipboard.OpenClipboard()
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, html_data)
-                    win32clipboard.CloseClipboard()
-                except Exception:
-                    pass  # fallback aman jika bukan Windows / pywin32 tidak tersedia
+                # === Simpan format ke clipboard (Qt handles both formats safely) ===
+                mime = QMimeData()
+                mime.setData("text/html", html_data.encode("utf-8"))
+                mime.setText(text_data)
+                QApplication.clipboard().setMimeData(mime)
 
                 return True
+
         return super().eventFilter(obj, event)
 
     # =========================================================
@@ -22094,7 +22083,7 @@ if __name__ == "__main__":
                 dev_nama = "ARI ARDIANA"
                 dev_kecamatan = "TANJUNGJAYA"
                 dev_desa = "SUKASENANG"
-                dev_tahapan = "DPSHP"
+                dev_tahapan = "DPHP"
 
                 mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
                 mw.show()
