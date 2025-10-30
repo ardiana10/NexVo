@@ -45,7 +45,7 @@ except Exception as e:
 # =========================
 from PyQt6.QtCore import (
     Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData,
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QEventLoop
 )
 
 from PyQt6.QtGui import (
@@ -60,7 +60,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QStatusBar, QToolBar, QToolButton, QHeaderView, QTableWidget,
     QTableWidgetItem, QStyledItemDelegate, QAbstractItemView, QStyle, QStyleOptionViewItem,
     QFileDialog, QScrollArea, QFormLayout, QInputDialog, QSlider, QGridLayout, QProgressBar,
-    QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox,
+    QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox, QGraphicsBlurEffect,
     QCheckBox, QRadioButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialogButtonBox,
     QGraphicsSimpleTextItem, QSizePolicy, QSpacerItem, QStyleOptionButton, QDateEdit, QTextEdit, QStyleFactory, QCalendarWidget
 )
@@ -361,19 +361,8 @@ def cleanup_badan_adhoc():
 atexit.register(cleanup_badan_adhoc)
 
 
-def show_modern_warning(parent, title, text):
-    msg = QMessageBox(parent)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setIcon(QMessageBox.Icon.Warning)
-    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-    _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
-
-    # (opsional) fade-in
+def _fade_in_dialog(msg):
+    """Efek fade-in halus khas NexVo (non-blocking tapi aman)."""
     anim = QPropertyAnimation(msg, b"windowOpacity")
     anim.setDuration(150)
     anim.setStartValue(0.0)
@@ -382,6 +371,9 @@ def show_modern_warning(parent, title, text):
     anim.start()
     msg.anim = anim
 
+# ============================================================
+# 🔹 INFO
+# ============================================================
 def show_modern_info(parent, title, text):
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
@@ -389,19 +381,33 @@ def show_modern_info(parent, title, text):
     msg.setIcon(QMessageBox.Icon.Information)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ ganti NonModal → ApplicationModal
     msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
 
-    anim = QPropertyAnimation(msg, b"windowOpacity")
-    anim.setDuration(150)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-    anim.start()
-    msg.anim = anim
+    _fade_in_dialog(msg)
+    msg.exec()  # ✅ sinkron – tunggu klik OK
 
+# ============================================================
+# 🔹 WARNING
+# ============================================================
+def show_modern_warning(parent, title, text):
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#ff6600")
+
+    _fade_in_dialog(msg)
+    msg.exec()
+
+# ============================================================
+# 🔹 ERROR
+# ============================================================
 def show_modern_error(parent, title, text):
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
@@ -409,18 +415,12 @@ def show_modern_error(parent, title, text):
     msg.setIcon(QMessageBox.Icon.Critical)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)
     msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
 
-    anim = QPropertyAnimation(msg, b"windowOpacity")
-    anim.setDuration(150)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-    anim.start()
-    msg.anim = anim
+    _fade_in_dialog(msg)
+    msg.exec()
 
 def show_modern_question(parent, title, text):
     msg = QMessageBox(parent)
@@ -430,38 +430,18 @@ def show_modern_question(parent, title, text):
     msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     msg.setDefaultButton(QMessageBox.StandardButton.No)
 
-    msg.setStyleSheet("""
-        QMessageBox {
-            background-color: #EFEFEF;
-            color: black;
-            font-family: 'Segoe UI';
-            font-size: 11pt;
-            border-radius: 12px;
-        }
-        QLabel {
-            background: transparent;     /* ✅ Hilangkan background hitam */
-            color: black;
-            font-size: 11pt;
-            padding: 4px 2px;
-        }
-        QPushButton {
-            background-color: #ff6600;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 8px 20px;
-            font-weight: bold;
-            font-size: 10.5pt;
-            min-width: 120px;
-        }
-        QPushButton:hover {
-            background-color: #d71d1d;
-        }
-    """)
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ modal sinkron
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#ff6600")
 
-    msg.button(QMessageBox.StandardButton.Yes).setText("Ya")
-    msg.button(QMessageBox.StandardButton.No).setText("Tidak")
+    # 🔹 Ganti teks tombol ke Bahasa Indonesia
+    yes_btn = msg.button(QMessageBox.StandardButton.Yes)
+    no_btn = msg.button(QMessageBox.StandardButton.No)
+    if yes_btn and no_btn:
+        yes_btn.setText("Ya")
+        no_btn.setText("Tidak")
 
+    _fade_in_dialog(msg)
     result = msg.exec()
     return result == QMessageBox.StandardButton.Yes
 
@@ -2659,21 +2639,66 @@ class FilterSidebar(QWidget):
             layout.addWidget(radio_button)
     
     def _setup_action_buttons(self, layout):
-        # ... (Metode ini tetap sama) ...
+        """Setup tombol aksi Filter dan Reset dengan gaya khas NexVo."""
+        # === Tombol Reset ===
         self.btn_reset = QPushButton("Reset")
         self.btn_reset.setObjectName("resetBtn")
         self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reset.clicked.connect(self.reset_filters)
-        
+
+        # === Tombol Filter ===
         self.btn_filter = QPushButton("Filter")
         self.btn_filter.setObjectName("filterBtn")
         self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_filter.clicked.connect(self._apply_filters)
-        
+
+        # === Tambahkan ke layout ===
         layout.addStretch()
         layout.addWidget(self.btn_reset)
         layout.addWidget(self.btn_filter)
         layout.addStretch()
+
+        # === Gaya khas NexVo ===
+        self.btn_reset.setStyleSheet("""
+            QPushButton#resetBtn {
+                background-color: #d71d1d;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-family: 'Segoe UI';
+                font-size: 8pt;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+            }
+            QPushButton#resetBtn:hover {
+                background-color: #b01515;    /* lebih gelap saat hover */
+            }
+            QPushButton#resetBtn:pressed {
+                background-color: #8c1010;    /* warna tekan */
+            }
+        """)
+
+        self.btn_filter.setStyleSheet("""
+            QPushButton#filterBtn {
+                background-color: #ff6600;     /* oranye khas NexVo */
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-family: 'Segoe UI';
+                font-size: 8pt;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+            }
+            QPushButton#filterBtn:hover {
+                background-color: #e65c00;    /* oranye gelap hover */
+            }
+            QPushButton#filterBtn:pressed {
+                background-color: #cc5200;    /* oranye pekat tekan */
+            }
+        """)
+
     
     def _apply_consistent_sizing(self):
         # ... (Metode ini tetap sama) ...
@@ -4333,17 +4358,45 @@ class LoginWindow(QMainWindow):
         pw = self.pass_input.text().strip()
         tahapan = self.tahapan_combo.currentText()
 
+        # ============================================================
+        # 🌫️ Helper overlay blur khas NexVo
+        # ============================================================
+        def buat_overlay(blur_radius=16, color="rgba(255,255,255,180)"):
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet(f"background-color: {color};")
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur)
+            return overlay
+
+        def hapus_overlay(overlay):
+            if overlay:
+                overlay.hide()
+                overlay.deleteLater()
+            self.setGraphicsEffect(None)
+
+        # ============================================================
+        # 🧱 Validasi awal
+        # ============================================================
         if not email or not pw or tahapan == "-- Pilih Tahapan --":
+            overlay = buat_overlay(20)
             show_modern_warning(self, "Login Gagal", "Semua field harus diisi!")
+            hapus_overlay(overlay)
             return
 
+        # ============================================================
+        # 🔐 Login ke database terenkripsi
+        # ============================================================
         try:
-            # 🔒 Gunakan koneksi SQLCipher terenkripsi dari db_manager
             from db_manager import connect_encrypted
             conn = connect_encrypted()
             cur = conn.cursor()
 
-            # Pastikan tabel users ada (jika belum)
+            # Pastikan tabel users ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4356,7 +4409,6 @@ class LoginWindow(QMainWindow):
                 )
             """)
 
-            # 🔹 Hitung hash dengan salt (email)
             salted_input = (pw + email).encode("utf-8")
             hashed_pw = hashlib.sha256(salted_input).hexdigest()
 
@@ -4367,7 +4419,9 @@ class LoginWindow(QMainWindow):
             row = cur.fetchone()
 
             if not row:
+                overlay = buat_overlay(20)
                 show_modern_warning(self, "Login Gagal", "Email atau password salah!")
+                hapus_overlay(overlay)
                 conn.commit()
                 return
 
@@ -4375,34 +4429,28 @@ class LoginWindow(QMainWindow):
             conn.commit()
 
         except Exception as e:
+            overlay = buat_overlay(20)
             show_modern_error(self, "Error", f"Terjadi kesalahan saat login:\n{e}")
+            hapus_overlay(overlay)
             return
 
-
-
         # ============================================================
-        # 1️⃣ Jika OTP belum dibuat (login pertama)
+        # 1️⃣ Login pertama (belum ada OTP)
         # ============================================================
         if not otp_secret:
-            import pyotp, qrcode  # type: ignore
+            import pyotp, qrcode
             from io import BytesIO
 
             otp_secret = pyotp.random_base32()
-
-            # 🔹 Simpan secret baru tanpa menutup koneksi
             cur.execute("UPDATE users SET otp_secret=? WHERE id=?", (otp_secret, user_id))
             conn.commit()
 
-            # 🔹 Buat QR Code OTP dengan label NexVo: email
             totp = pyotp.TOTP(otp_secret)
             account_label = f"NexVo: {email}"
-
-            # Gunakan parameter 'name' yang sudah diformat penuh, dan issuer_name terpisah
             totp_uri = totp.provisioning_uri(
                 name=account_label,
                 issuer_name="NexVo KPU Kab. Tasikmalaya"
             )
-
 
             qr = qrcode.make(totp_uri)
             buffer = BytesIO()
@@ -4410,10 +4458,12 @@ class LoginWindow(QMainWindow):
             pixmap = QPixmap()
             pixmap.loadFromData(buffer.getvalue())
 
-            # 🔹 Tampilkan QR code untuk aktivasi OTP
+            overlay = buat_overlay(20)
+
             qr_dialog = QDialog(self)
             qr_dialog.setWindowTitle("Aktivasi OTP Pertama")
             qr_dialog.setFixedSize(340, 420)
+            qr_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
             qr_dialog.setStyleSheet("""
                 QDialog {
                     background-color: #1e1e1e;
@@ -4451,19 +4501,21 @@ class LoginWindow(QMainWindow):
             ok_btn.clicked.connect(qr_dialog.accept)
             vbox.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+            qr_dialog.finished.connect(lambda: hapus_overlay(overlay))
             qr_dialog.exec()
 
         else:
-            # ❌ Jangan tutup koneksi manual di sini
             conn.commit()
 
+        # ============================================================
+        # 2️⃣ Verifikasi OTP Modern (dengan blur)
+        # ============================================================
+        overlay = buat_overlay(18)
 
-        # ============================================================
-        # 2️⃣ Verifikasi OTP Modern
-        # ============================================================
         otp_dialog = QDialog(self)
         otp_dialog.setWindowTitle("Verifikasi OTP")
         otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         otp_dialog.setStyleSheet("""
             QDialog {
                 background-color: #dddddd;
@@ -4512,53 +4564,129 @@ class LoginWindow(QMainWindow):
         layout.addWidget(btn_verify)
 
         def do_verify():
-            import pyotp # type: ignore
+            import pyotp
             code = otp_input.text().strip()
             if not code:
+                overlay_warn = buat_overlay(16)
                 show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                hapus_overlay(overlay_warn)
+                otp_input.setFocus()
                 return
+
             totp = pyotp.TOTP(otp_secret)
             if not totp.verify(code):
+                overlay_err = buat_overlay(16)
                 show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                hapus_overlay(overlay_err)
+                otp_input.setFocus()
+                otp_input.selectAll()
                 return
+
             otp_dialog.accept()
 
         btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+
+        otp_dialog.finished.connect(lambda: hapus_overlay(overlay))
 
         if otp_dialog.exec() == QDialog.DialogCode.Accepted:
             self.accept_login(nama, kecamatan, desa, tahapan)
+
             
     # Konfirmasi Pembuatan akun
     def konfirmasi_buat_akun(self):
-        # 🔹 Dialog konfirmasi modern
-        if not show_modern_question(
-            self,
-            "Konfirmasi",
-            "Apakah Anda yakin ingin membuat akun baru?<br>"
-            "Seluruh data lama akan <b>dihapus permanen</b>!"
-        ):
+        """Konfirmasi pembuatan akun baru dengan efek blur khas NexVo."""
+
+        def buat_overlay(blur_radius=15):
+            """Buat overlay putih lembut dengan efek blur nyata (tanpa CSS error)."""
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet("""
+                QWidget {
+                    background-color: rgba(255, 255, 255, 180);
+                }
+            """)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur_effect = QGraphicsBlurEffect()
+            blur_effect.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur_effect)   # << efek blur nempel di self
+            return overlay
+
+        # ==========================================================
+        # 🌫️ Overlay pertama
+        # ==========================================================
+        overlay = buat_overlay(15)
+
+        try:
+            ok = show_modern_question(
+                self,
+                "Konfirmasi",
+                "Apakah Anda yakin ingin membuat akun baru?<br>"
+                "Seluruh data lama akan <b>dihapus permanen</b>!"
+            )
+        finally:
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ bersihkan blur window utama
+
+        if not ok:
+            overlay = buat_overlay(20)
             show_modern_info(self, "Dibatalkan", "Proses pembuatan akun dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ bersihkan blur
             return
 
-        # 🔹 Input kode konfirmasi (password style)
+        # ==========================================================
+        # 🌫️ Overlay untuk input kode konfirmasi
+        # ==========================================================
+        overlay = buat_overlay(18)
+
         dlg = ModernInputDialog("Kode Konfirmasi", "Masukkan kode konfirmasi:", self, is_password=True)
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        dlg.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                border: 2px solid #d71d1d;
+                border-radius: 10px;
+            }
+        """)
+
         kode, ok = dlg.getText()
+
+        overlay.hide()
+        overlay.deleteLater()
+        self.setGraphicsEffect(None)   # ✅ hapus blur setelah dialog
+
         if not ok:
+            overlay = buat_overlay(20)
+            show_modern_info(self, "Dibatalkan", "Proses pembuatan akun dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ hapus blur
             return
 
         if kode.strip() != "KabTasik3206":
+            overlay = buat_overlay(12)
             show_modern_warning(self, "Salah", "Kode konfirmasi salah. Proses dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ hapus blur
             return
 
         # ✅ Kode benar → hapus semua data lama
         hapus_semua_data(self.conn)
 
-        # ✅ Tampilkan form RegisterWindow sebagai window utama
+        # ✅ Buka form RegisterWindow
         self.register_window = RegisterWindow(None)
         self.register_window.show()
 
-        # ✅ Tutup login window setelah register window muncul
+        # ✅ Tutup login window
         self.close()
+
 
     # === Masuk ke MainWindow ===
     def accept_login(self, nama, kecamatan, desa, tahapan):
@@ -4618,20 +4746,80 @@ class LoginWindow(QMainWindow):
             )
             self.main_window.show()
 
-            #self.main_window.create_filter_sidebar()
-
-            # ✅ Tunda sedikit agar fullscreen bekerja sempurna di Windows
+            # ✅ Tunda sedikit agar fullscreen dan tabel stabil
             QTimer.singleShot(100, self.main_window.showMaximized)
 
+            # ✅ Jalankan setup load/fit kolom
+            QTimer.singleShot(600, self._setup_column_widths_after_login)
+
+            # ✅ Tutup login window
             self.close()
+
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka halaman utama:\n{e}")
+
+
+
+    def _setup_column_widths_after_login(self):
+        """Jalankan load_column_widths(), dan jika belum ada → auto_fit_visible_columns()."""
+        try:
+            if not hasattr(self, "main_window") or not self.main_window:
+                return
+
+            mw = self.main_window
+
+            # Pastikan dua fungsi itu ada di class MainWindow
+            if hasattr(mw, "load_column_widths") and hasattr(mw, "auto_fit_visible_columns"):
+                path = mw._get_column_config_path()
+                profile_key = f"{mw._nama}_{mw._desa}_{mw._tahapan}".lower().replace(" ", "_")
+
+                has_existing_config = False
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            has_existing_config = profile_key in data and bool(data[profile_key])
+                    except Exception as e:
+                        print(f"[ColumnConfig] ⚠️ Tidak bisa baca konfigurasi kolom: {e}")
+
+                # 1️⃣ Muat dulu kalau sudah ada
+                mw.load_column_widths()
+
+                # 2️⃣ Kalau belum ada → auto-fit otomatis
+                if not has_existing_config:
+                    #print(f"[ColumnConfig] ℹ️ Belum ada konfigurasi kolom untuk {profile_key}, auto-fit...")
+                    QTimer.singleShot(300, mw.auto_fit_visible_columns)
+                else:
+                    print(f"[ColumnConfig] ✅ Konfigurasi kolom ditemukan untuk {profile_key}, skip auto-fit.")
+        except Exception as e:
+            print(f"[ColumnConfig] ❌ Gagal setup lebar kolom: {e}")
+
 
 class ResetPasswordDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # ============================================================
+        # 🌫️ Overlay blur khas NexVo — aktif otomatis saat dialog dibuka
+        # ============================================================
+        self.overlay = QWidget(parent)
+        self.overlay.setGeometry(parent.rect())
+        self.overlay.setStyleSheet("background-color: rgba(255,255,255,180);")
+        self.overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.overlay.show()
+        self.overlay.raise_()
+
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        parent.setGraphicsEffect(blur)
+        self._parent_blur = blur
+
+        # ============================================================
+        # 🪟 Setup UI
+        # ============================================================
         self.setWindowTitle("Reset Password")
-        self.setFixedSize(420, 520)
+        self.setFixedSize(420, 560)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setStyleSheet("""
             QDialog { background-color: #f2f2f2; color: black; border-radius: 10px; }
             QLabel { font-size: 11pt; }
@@ -4662,28 +4850,52 @@ class ResetPasswordDialog(QDialog):
         self.email_input.setPlaceholderText("Masukkan email Anda")
         layout.addWidget(self.email_input)
 
-        # === Password baru ===
+        # === Password Baru (dengan ikon mata) ===
         layout.addWidget(QLabel("Password Baru:"))
+        pw_layout = QHBoxLayout()
         self.new_pw = QLineEdit()
         self.new_pw.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self.new_pw)
+        self.new_pw.setPlaceholderText("Masukkan password baru")
+        self.btn_toggle_pw = QPushButton("👁️")
+        self.btn_toggle_pw.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_pw.setFixedWidth(36)
+        self.btn_toggle_pw.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 13pt;
+            }
+            QPushButton:hover { color: #ff6600; }
+        """)
+        self.btn_toggle_pw.clicked.connect(lambda: self.toggle_password_visibility(self.new_pw))
+        pw_layout.addWidget(self.new_pw)
+        pw_layout.addWidget(self.btn_toggle_pw)
+        layout.addLayout(pw_layout)
 
-        # === Ulangi Password ===
+        # === Ulangi Password Baru (dengan ikon mata) ===
         layout.addWidget(QLabel("Ulangi Password Baru:"))
+        re_layout = QHBoxLayout()
         self.re_pw = QLineEdit()
         self.re_pw.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self.re_pw)
+        self.re_pw.setPlaceholderText("Ulangi password baru")
+        self.btn_toggle_re_pw = QPushButton("👁️")
+        self.btn_toggle_re_pw.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_re_pw.setFixedWidth(36)
+        self.btn_toggle_re_pw.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 13pt;
+            }
+            QPushButton:hover { color: #ff6600; }
+        """)
+        self.btn_toggle_re_pw.clicked.connect(lambda: self.toggle_password_visibility(self.re_pw))
+        re_layout.addWidget(self.re_pw)
+        re_layout.addWidget(self.btn_toggle_re_pw)
+        layout.addLayout(re_layout)
 
-        # === OTP ===
-        layout.addWidget(QLabel("Kode OTP (6 digit dari aplikasi Authenticator):"))
-        self.otp_input = QLineEdit()
-        self.otp_input.setMaxLength(6)
-        self.otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.otp_input)
-
-        # === Captcha (bergaya seperti RegisterWindow, dengan jarak rapi) ===
+        # === Captcha ===
         layout.addWidget(QLabel("Captcha Keamanan:"))
-
         self.captcha_code = self.generate_captcha()
         self.captcha_label = QLabel()
         self.captcha_label.setFixedHeight(60)
@@ -4714,22 +4926,53 @@ class ResetPasswordDialog(QDialog):
         captcha_layout.addWidget(self.refresh_btn)
         layout.addLayout(captcha_layout)
 
-        # 🔹 Tambahkan jarak bawah agar tidak menempel ke field input
-        spacer = QWidget()
-        spacer.setFixedHeight(10)
-        layout.addWidget(spacer)
+        #spacer = QWidget()
+        #spacer.setFixedHeight(10)
+        #layout.addWidget(spacer)
 
         self.captcha_input = QLineEdit()
         self.captcha_input.setPlaceholderText("Tulis ulang captcha di atas")
         layout.addWidget(self.captcha_input)
+        self.captcha_input.textChanged.connect(
+            lambda t: self.captcha_input.setText(t.upper())
+        )
+
+        # === OTP (pindah ke paling bawah) ===
+        layout.addWidget(QLabel("Kode OTP (6 digit dari aplikasi Authenticator):"))
+        self.otp_input = QLineEdit()
+        self.otp_input.setMaxLength(6)
+        self.otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.otp_input)
 
         # === Tombol Reset ===
         btn_reset = QPushButton("Reset Password")
         btn_reset.clicked.connect(self.reset_password)
         layout.addWidget(btn_reset, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Bersihkan overlay saat keluar
+        self.finished.connect(self._hapus_overlay)
+
     # ===================================================
-    # 🔹 Captcha generator bergaya RegisterWindow
+    # 🌫️ Hapus efek blur dari parent
+    # ===================================================
+    def _hapus_overlay(self):
+        if hasattr(self, "overlay") and self.overlay:
+            self.overlay.hide()
+            self.overlay.deleteLater()
+        if hasattr(self, "_parent_blur") and self._parent_blur:
+            self.parent().setGraphicsEffect(None)
+
+    # ===================================================
+    # 👁️ Toggle visibility password field
+    # ===================================================
+    def toggle_password_visibility(self, field):
+        if field.echoMode() == QLineEdit.EchoMode.Password:
+            field.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+
+    # ===================================================
+    # 🔹 Captcha generator
     # ===================================================
     def generate_captcha(self, length=5):
         import random, string
@@ -4758,7 +5001,6 @@ class ResetPasswordDialog(QDialog):
             painter.drawText(0, 0, ch)
             painter.restore()
 
-        # Noise garis acak
         for _ in range(6):
             pen = QColor(random.randint(120, 200), random.randint(120, 200), random.randint(120, 200))
             painter.setPen(pen)
@@ -4774,7 +5016,7 @@ class ResetPasswordDialog(QDialog):
         self.captcha_label.setPixmap(pixmap)
 
     # ===================================================
-    # 🔐 Validasi & Reset Password Aman (SHA256 + salt)
+    # 🔐 Validasi & Reset Password Aman
     # ===================================================
     def reset_password(self):
         email = self.email_input.text().strip()
@@ -4783,14 +5025,28 @@ class ResetPasswordDialog(QDialog):
         otp_code = self.otp_input.text().strip()
         captcha_in = self.captcha_input.text().strip().upper()
 
+        def pop_with_overlay(func, *args, **kwargs):
+            ov = QWidget(self)
+            ov.setGeometry(self.rect())
+            ov.setStyleSheet("background-color: rgba(255,255,255,180);")
+            ov.show()
+            ov.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(14)
+            self.setGraphicsEffect(blur)
+            func(*args, **kwargs)
+            ov.hide()
+            ov.deleteLater()
+            self.setGraphicsEffect(None)
+
         if not email or not new_pw or not re_pw or not otp_code or not captcha_in:
-            show_modern_warning(self, "Gagal", "Semua field harus diisi.")
+            pop_with_overlay(show_modern_warning, self, "Gagal", "Semua field harus diisi.")
             return
         if new_pw != re_pw:
-            show_modern_error(self, "Gagal", "Password baru tidak sama.")
+            pop_with_overlay(show_modern_error, self, "Gagal", "Password baru tidak sama.")
             return
         if captcha_in != self.captcha_code:
-            show_modern_error(self, "Gagal", "Captcha salah, reset ditolak.")
+            pop_with_overlay(show_modern_error, self, "Gagal", "Captcha salah, reset ditolak.")
             self.refresh_captcha_image()
             return
 
@@ -4801,27 +5057,28 @@ class ResetPasswordDialog(QDialog):
             cur.execute("SELECT otp_secret FROM users WHERE email=?", (email,))
             row = cur.fetchone()
             if not row:
-                show_modern_error(self, "Gagal", "Email tidak terdaftar.")
+                pop_with_overlay(show_modern_error, self, "Gagal", "Email tidak terdaftar.")
                 return
 
             otp_secret = row[0]
-            import pyotp, hashlib  # type: ignore
+            import pyotp, hashlib
             totp = pyotp.TOTP(otp_secret)
             if not totp.verify(otp_code):
-                show_modern_error(self, "Gagal", "Kode OTP salah atau sudah kedaluwarsa.")
+                pop_with_overlay(show_modern_error, self, "Gagal", "Kode OTP salah atau sudah kedaluwarsa.")
                 return
 
-            # 🔒 Hash password baru + salt (email)
             salted_input = (new_pw + email).encode("utf-8")
             hashed_pw = hashlib.sha256(salted_input).hexdigest()
 
             cur.execute("UPDATE users SET password=? WHERE email=?", (hashed_pw, email))
             conn.commit()
-            show_modern_info(self, "Berhasil", "Reset password berhasil dilakukan!")
+
+            pop_with_overlay(show_modern_info, self, "Berhasil", "Reset password berhasil dilakukan!")
             self.accept()
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Terjadi kesalahan:\n{e}")
+            pop_with_overlay(show_modern_error, self, "Error", f"Terjadi kesalahan:\n{e}")
+
 
 class HoverDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -5342,7 +5599,7 @@ class MainWindow(QMainWindow):
             self.user_label.setStyleSheet("""
                 font-family: 'Segoe UI';
                 font-weight: bold;
-                font-size: 14px;
+                font-size: 15px;
             """)
             self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             toolbar.addWidget(self.user_label)
@@ -22891,6 +23148,19 @@ class RegisterWindow(QMainWindow):
         pix = QPixmap(); pix.loadFromData(buf.getvalue())
 
         # === Dialog QR ===
+        # 🌫️ Tambahkan overlay semi-blur di belakang dialog
+        overlay = QWidget(self)
+        overlay.setGeometry(self.rect())
+        overlay.setStyleSheet("background-color: rgba(255, 255, 255, 180);")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        overlay.show()
+        overlay.raise_()
+
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        self.setGraphicsEffect(blur)
+
+        # === Dialog QR Asli ===
         qr_dialog = QDialog(self)
         qr_dialog.setWindowTitle("Aktivasi OTP")
         qr_dialog.setFixedSize(460, 600)
@@ -22937,46 +23207,89 @@ class RegisterWindow(QMainWindow):
         btn.setFixedSize(240, 46)
         vbox.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # klik tombol langsung lanjut ke input OTP
+        # Klik tombol → lanjut verifikasi, lalu hilangkan overlay
         def lanjut_verifikasi():
             qr_dialog.accept()
+            overlay.hide()
+            overlay.deleteLater()
             QTimer.singleShot(300, lambda: self._verify_otp_flow(otp_secret))
         btn.clicked.connect(lanjut_verifikasi)
 
+        # Kalau dialog ditutup manual (Alt+F4 / ESC) → overlay tetap dibersihkan
+        def bersihkan_overlay():
+            overlay.hide()
+            overlay.deleteLater()
+
+        qr_dialog.finished.connect(bersihkan_overlay)
         qr_dialog.exec()
 
     # =========================================================
     # 🔢 Alur Verifikasi OTP (tanpa popup ganda, UX halus)
     # =========================================================
     def _verify_otp_flow(self, otp_secret: str):
-        """
-        Menangani proses verifikasi OTP setelah user scan QR.
-        Anti-hang, popup tunggal, dan bisa retry 3x.
-        """
+        """Menangani proses verifikasi OTP setelah user scan QR (dengan overlay blur halus)."""
+
+        def buat_overlay(blur_radius=16, color="rgba(255,255,255,180)"):
+            """Buat overlay blur di belakang dialog (tanpa backdrop-filter)."""
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet(f"background-color: {color};")
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur)
+            return overlay
+
         totp = pyotp.TOTP(otp_secret)
 
         for attempt in range(3):
             code = self._prompt_otp_code_dialog()
             if code is None:
+                overlay = buat_overlay()
                 show_modern_warning(self, "Dibatalkan", "Verifikasi OTP dibatalkan.")
+                overlay.hide()
+                overlay.deleteLater()
+                self.setGraphicsEffect(None)  # ✅ hapus blur
                 return
 
             # ✅ OTP valid
             if totp.verify(code, valid_window=1):
+                overlay = buat_overlay()
+
                 show_modern_info(self, "Sukses", "Akun NexVo anda berhasil dibuat!")
+                overlay.hide()
+                overlay.deleteLater()
+                self.setGraphicsEffect(None)  # ✅ hapus blur
+
                 self.close()
                 self.login_window = LoginWindow()
                 self.login_window.show()
                 return
+
+        # ❌ Gagal 3 kali
+        overlay = buat_overlay()
         show_modern_error(self, "Gagal", "Verifikasi OTP gagal 3 kali. Silakan scan ulang QR dan coba lagi.")
+        overlay.hide()
+        overlay.deleteLater()
+        self.setGraphicsEffect(None)  # ✅ hapus blur
 
     # =========================================================
     # 🧾 Dialog Input OTP (fokus ulang saat salah)
     # =========================================================
     def _prompt_otp_code_dialog(self):
-        """
-        Dialog kecil untuk input OTP 6 digit, tanpa tumpang tindih popup.
-        """
+        """Dialog input OTP 6 digit dengan overlay blur lembut."""
+        overlay = QWidget(self)
+        overlay.setGeometry(self.rect())
+        overlay.setStyleSheet("background-color: rgba(255, 255, 255, 180);")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        overlay.show()
+        overlay.raise_()
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        self.setGraphicsEffect(blur)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Verifikasi OTP")
         dlg.setFixedSize(360, 190)
@@ -23031,7 +23344,6 @@ class RegisterWindow(QMainWindow):
                 code_holder["val"] = code
                 dlg.accept()
             else:
-                # ❗ Tidak munculkan popup baru, cukup 1 per dialog
                 show_modern_warning(dlg, "Format Salah", "Kode OTP harus 6 digit angka!")
                 otp_input.setFocus()
                 otp_input.selectAll()
@@ -23043,9 +23355,16 @@ class RegisterWindow(QMainWindow):
         btn_cancel.clicked.connect(do_cancel)
         otp_input.returnPressed.connect(btn_ok.click)
 
+        # 🌫️ Bersihkan overlay dan efek blur setelah dialog selesai
+        def bersihkan_overlay():
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)  # ✅ hilangkan blur dari window utama
+
+        dlg.finished.connect(bersihkan_overlay)
+
         dlg.exec()
         return code_holder["val"]
-
 
 #if __name__ == "__main__":
     # 🔹 Inisialisasi database terenkripsi (hanya sekali)
