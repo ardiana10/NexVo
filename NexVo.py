@@ -88,7 +88,7 @@ from reportlab.pdfgen import canvas
 from PyPDF2 import PdfMerger
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 # ==========================================================
@@ -5234,17 +5234,18 @@ class MainWindow(QMainWindow):
             spacer.setFixedWidth(width)
             toolbar.addWidget(spacer)
 
-        # === Tombol kiri ===
-        btn_baru = QPushButton("Baru")
-        self.style_button(btn_baru, bg="#d71d1d", fg="white", bold=True)
-        toolbar.addWidget(btn_baru)
-        add_spacer()
-
         # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_rekap = QToolButton()
         btn_rekap.setText(" Rekap ")
         btn_rekap.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn_rekap.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+
+        # === Tombol kiri ===
+        btn_baru = QPushButton("Export")
+        self.style_button(btn_baru, bg="#d71d1d", fg="white", bold=True)
+        btn_baru.clicked.connect(self.export_filtered_data_to_excel)
+        toolbar.addWidget(btn_baru)
+        add_spacer()
 
         # Gunakan stylesheet yang sama dengan tombol lain (style_button)
         btn_rekap.setStyleSheet(f"""
@@ -12070,6 +12071,179 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal memuat data Laporan Coklit:\n{e}")
 
+    def export_filtered_data_to_excel(self):
+        """Export seluruh data yang sedang ditampilkan (hasil filter) ke Excel dengan format NexVo."""
+
+        # =========================================================
+        # 🔸 Konfirmasi modern NexVo
+        # =========================================================
+        if not show_modern_question(
+            self,
+            "Konfirmasi Export Data",
+            "Apakah Anda yakin ingin melakukan Export Data?",
+        ):
+            show_modern_info(self, "Dibatalkan", "Proses Export Data dibatalkan.")
+            return
+
+        # =========================================================
+        # 🔹 Ambil data yang sedang ditampilkan di tabel
+        # =========================================================
+        try:
+            visible_rows = []
+            for row in range(self.table.rowCount()):
+                row_data = {}
+                for col in range(self.table.columnCount()):
+                    header_item = self.table.horizontalHeaderItem(col)
+                    if not header_item:
+                        continue
+                    col_name = header_item.text()
+                    item = self.table.item(row, col)
+                    row_data[col_name] = item.text().strip() if item else ""
+                visible_rows.append(row_data)
+
+            if not visible_rows:
+                show_modern_warning(self, "Kosong", "Tidak ada data yang ditampilkan untuk diexport.")
+                return
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membaca data dari tabel:\n{e}")
+            return
+
+        # =========================================================
+        # 🔹 Siapkan folder & nama file
+        # =========================================================
+        export_dir = r"C:\NexVo\Export Excel"
+        os.makedirs(export_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%d%m%Y %H.%M")
+        filename = f"{self._kecamatan} {self._desa} {timestamp}.xlsx"
+        filepath = os.path.join(export_dir, filename)
+
+        # =========================================================
+        # 🔹 Buat file Excel
+        # =========================================================
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data Pemilih"
+
+        # =========================================================
+        # 🔹 Header
+        # =========================================================
+        headers = [
+            "KECAMATAN","DESA","DPID","NKK","NIK","NAMA","KELAMIN","TEMPAT LAHIR",
+            "TANGGAL LAHIR","STATUS","ALAMAT","RT","RW","DIFABEL","KTPel","SUMBER",
+            "KETERANGAN","TPS","LastUpdate"
+        ]
+        ws.append(headers)
+
+        # Style header
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill("solid", fgColor="4E4E4E")
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        ws.freeze_panes = "A2"
+
+        # =========================================================
+        # 🔹 Isi data baris demi baris
+        # =========================================================
+        for row_data in visible_rows:
+            ws.append([
+                row_data.get("KECAMATAN", ""),
+                row_data.get("DESA", ""),
+                row_data.get("DPID", ""),
+                row_data.get("NKK", ""),
+                row_data.get("NIK", ""),
+                row_data.get("NAMA", ""),
+                row_data.get("JK", ""),                 # -> KELAMIN
+                row_data.get("TMPT_LHR", ""),           # -> TEMPAT LAHIR
+                row_data.get("TGL_LHR", ""),            # -> TANGGAL LAHIR
+                row_data.get("STS", ""),                # -> STATUS
+                row_data.get("ALAMAT", ""),
+                row_data.get("RT", ""),
+                row_data.get("RW", ""),
+                row_data.get("DIS", ""),                # -> DIFABEL
+                row_data.get("KTPel", ""),
+                row_data.get("SUMBER", ""),
+                row_data.get("KET", ""),
+                row_data.get("TPS", ""),
+                row_data.get("LastUpdate", "")
+            ])
+
+        # =========================================================
+        # 🔹 Terapkan format kolom
+        # =========================================================
+        thin = Side(border_style="thin", color="CCCCCC")
+
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                col = ws.cell(row=1, column=cell.column).value
+
+                # --- Default: left align ---
+                align = Alignment(horizontal="left", vertical="center")
+
+                # --- Center align untuk kolom tertentu ---
+                if col in ("KELAMIN", "STATUS", "RT", "RW", "DIFABEL", "KTPel", "KETERANGAN", "TPS"):
+                    align = Alignment(horizontal="center", vertical="center")
+
+                # --- Format angka untuk kolom numerik ---
+                if col in ("DPID", "RT", "RW", "DIFABEL", "TPS"):
+                    try:
+                        if str(cell.value).isdigit():
+                            cell.value = int(cell.value)
+                            cell.number_format = "0"
+                    except:
+                        pass
+
+                # --- Kolom KETERANGAN (bisa 0–8 atau huruf B/U) ---
+                if col == "KETERANGAN":
+                    val = str(cell.value).strip().upper()
+                    if val in ("0","1","2","3","4","5","6","7","8"):
+                        try:
+                            cell.value = int(val)
+                            cell.number_format = "0"
+                        except:
+                            pass
+                    else:
+                        cell.value = val
+
+                # --- Terapkan alignment & border ---
+                cell.alignment = align
+                cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+        # =========================================================
+        # 🔹 Auto column width
+        # =========================================================
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    val = str(cell.value)
+                    if len(val) > max_length:
+                        max_length = len(val)
+                except:
+                    pass
+            ws.column_dimensions[column].width = max_length + 2
+
+        # =========================================================
+        # 🔹 Simpan file
+        # =========================================================
+        try:
+            wb.save(filepath)
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal menyimpan file Excel:\n{e}")
+            return
+
+        # =========================================================
+        # ✅ Notifikasi sukses modern NexVo
+        # =========================================================
+        show_modern_info(
+            self,
+            "Sukses",
+            f"Export Data berhasil disimpan!\n\nLokasi file:\n{filepath}"
+        )
 
     def get_distinct_tps(self):
         """Ambil daftar distinct TPS dari tabel aktif, abaikan baris dengan KET=0."""
