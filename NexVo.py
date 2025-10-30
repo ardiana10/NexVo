@@ -3752,6 +3752,23 @@ class DetailInformasiPemilihDialog(QDialog):
                 # "K3": self.k3_widget.line_edit.text().strip() or "0",
                 "LastUpdate": current_timestamp
             }
+            
+            # ============================================================
+            # 🔁 Jika KET = 1–8, isi JK dan TPS dari JK_ASAL / TPS_ASAL
+            # ============================================================
+            try:
+                if updated_data["KET"] in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    jk_asal = self.get_value("JK_ASAL", "")
+                    tps_asal = self.get_value("TPS_ASAL", "")
+                    if jk_asal:
+                        updated_data["JK"] = jk_asal
+                        # Pastikan tampilan di combo juga ikut berubah
+                        self.jk_widget.combo.setCurrentText(jk_asal)
+                    if tps_asal:
+                        updated_data["TPS"] = tps_asal
+                        self.tps_widget.line_edit.setText(tps_asal)
+            except Exception as e:
+                print(f"[DEBUG] Gagal menyalin JK/TPS asal: {e}")
 
             # === Validasi data ===
             validation_errors = self._validate_data(updated_data)
@@ -3978,7 +3995,6 @@ class DetailInformasiPemilihDialog(QDialog):
             print(f"[ERROR] Gagal update data di memori: {e}")
             import traceback
             traceback.print_exc()
-
 
 # ==========================================================
 # UI: Login Window (fullscreen, putih lembut, hover oranye)
@@ -5195,13 +5211,11 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu = menubar.addMenu("Import Ecoklit")
 
             action_import_baru = QAction(" Import Pemilih Baru", self)
+            action_import_baru.triggered.connect(self.import_baruecoklit)
             action_import_tms = QAction(" Import Pemilih TMS", self)
+            action_import_tms.triggered.connect(self.import_saringecoklit)
             action_import_ubah = QAction(" Import Pemilih Ubah Data ", self)
-
-            # Placeholder fungsi (bisa diisi nanti)
-            action_import_baru.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih Baru diklik"))
-            action_import_tms.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih TMS diklik"))
-            action_import_ubah.triggered.connect(lambda: show_modern_info(self, "Info", "Import Pemilih Ubah Data diklik"))
+            action_import_ubah.triggered.connect(self.import_ubahecoklit)
 
             import_ecoklit_menu.addAction(action_import_baru)
             import_ecoklit_menu.addAction(action_import_tms)
@@ -7907,7 +7921,6 @@ class MainWindow(QMainWindow):
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
 
                 show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
@@ -7994,10 +8007,13 @@ class MainWindow(QMainWindow):
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
 
             except Exception as e:
-                show_modern_error(self, "Error", f"Gagal batch aktifkan pemilih:\n{e}")
+                show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
+            finally:
+                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
+                self._clear_row_selection(row)
+                self._reset_tabel_background()
                 
     # =========================================================
     # 🔹 ROUTER OTOMATIS UNTUK AKTIFKAN
@@ -8030,7 +8046,7 @@ class MainWindow(QMainWindow):
                 ket = self.table.item(row, self.col_index("KET")).text().strip() if self.col_index("KET") != -1 else ""
 
                 # --- Validasi dasar
-                if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
+                if not dpid or dpid == "0" or ket in ("1","2","3","4","5","6","7","8"):
                     show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
                     return
 
@@ -8092,7 +8108,6 @@ class MainWindow(QMainWindow):
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
 
                 show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
@@ -8152,7 +8167,7 @@ class MainWindow(QMainWindow):
                     nama = nama_item.text().strip() if nama_item else ""
 
                     # --- Validasi (hanya KET 1–8)
-                    if not dpid or dpid == "0" or ket not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    if not dpid or dpid == "0" or ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
                         rejected += 1
                         continue
 
@@ -8203,10 +8218,13 @@ class MainWindow(QMainWindow):
                 # --- Refresh tampilan tabel
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
 
             except Exception as e:
-                show_modern_error(self, "Error", f"Gagal batch set status:\n{e}")
+                show_modern_error(self, "Error", f"Gagal set status:\n{e}")
+            finally:
+                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
+                self._clear_row_selection(row)
+                self._reset_tabel_background()
 
     # =========================================================
     # 🔹 ROUTER OTOMATIS UNTUK STATUS
@@ -9030,14 +9048,34 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
                     return
 
-                # 🔹 Verifikasi baris ke-15
-                kecamatan_csv = reader[14][1].strip().upper()
-                desa_csv = reader[14][3].strip().upper()
-                if kecamatan_csv != self._kecamatan or desa_csv != self._desa:
+                # 🔹 Verifikasi kecamatan & desa di baris ke-15 (berdasarkan nama kolom, bukan index tetap)
+                header = [h.strip().upper() for h in reader[0]]
+                header_idx = {col: i for i, col in enumerate(header)}
+
+                # Cari posisi kolom "KECAMATAN" dan "KELURAHAN"
+                idx_kec = header_idx.get("KECAMATAN")
+                idx_kel = header_idx.get("KELURAHAN")
+
+                if idx_kec is None or idx_kel is None:
+                    show_modern_warning(
+                        self, "Error",
+                        "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan di header CSV."
+                    )
+                    return
+
+                try:
+                    # Ambil baris ke-15 (index 14) sesuai format Sidalih
+                    kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
+                    desa_csv = (reader[14][idx_kel] or "").strip().upper()
+                except Exception:
+                    show_modern_warning(self, "Error", "Format CSV tidak sesuai, gagal membaca KECAMATAN/KELURAHAN.")
+                    return
+
+                if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
                     show_modern_warning(
                         self, "Error",
                         f"Import CSV gagal!\n"
-                        f"Harap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih"
+                        f"Harap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
                     )
                     return
 
@@ -9257,6 +9295,542 @@ class MainWindow(QMainWindow):
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal import CSV:\n{e}")
 
+    def import_baruecoklit(self):
+        """
+        Import CSV Ecoklit -> TAMBAH baris ke tabel DPHP tanpa menyentuh data lama.
+        - Baris diambil hanya bila DPID kosong/0 dan KET=B/b.
+        - Kolom JK/TPS juga diisi ke JK_ASAL/TPS_ASAL.
+        - Kolom KET dipaksa menjadi 'B'.
+        - LastUpdate diisi otomatis saat proses import.
+        - Tidak membuat atau menghapus data di tabel DPHP.
+        - Pencarian kolom KEC/KEL berbasis nama header (tidak tergantung urutan kolom).
+        - Data dengan kecamatan/desa berbeda tidak diproses.
+        - DPID=0 diubah menjadi kosong.
+        - Jika NIK sudah ada di dphp dan DPID-nya kosong/0 → dilewati.
+        - Optimasi kecepatan: synchronous=NORMAL + BEGIN IMMEDIATE.
+        """
+        from sqlite3 import OperationalError as _SqlOpErr
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Pilih File CSV Ecoklit", "", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        # === Baca CSV sekali ===
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = list(csv.reader(csvfile, delimiter="#"))
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membaca CSV:\n{e}")
+            return
+        if len(reader) < 2:
+            show_modern_warning(self, "Error", "File CSV tidak berisi data.")
+            return
+
+        header = [h.strip().upper() for h in reader[0]]
+        header_idx = {col: i for i, col in enumerate(header)}
+        idx_kec = header_idx.get("KECAMATAN") or header_idx.get("KEC")
+        idx_kel = header_idx.get("KELURAHAN") or header_idx.get("KEL")
+        if idx_kec is None or idx_kel is None:
+            show_modern_warning(self, "Error", "Kolom 'KECAMATAN/KEC' dan 'KELURAHAN/KEL' tidak ditemukan di header CSV.")
+            return
+
+        try:
+            kecamatan_csv = (reader[1][idx_kec] or "").strip().upper()
+            desa_csv = (reader[1][idx_kel] or "").strip().upper()
+        except Exception:
+            show_modern_warning(self, "Error", "Format CSV tidak sesuai untuk kolom KEC/KEL.")
+            return
+
+        if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
+            show_modern_warning(
+                self, "Error",
+                f"Import CSV gagal!\nHarap gunakan CSV Ecoklit untuk Desa {self._desa.title()} "
+                f"Kecamatan {self._kecamatan.title()}."
+            )
+            return
+
+        # === Gunakan koneksi SQLCipher global ===
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Pastikan tabel dphp siap
+        try:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dphp'")
+            if not cur.fetchone():
+                show_modern_warning(self, "Ditolak", "Data Sidalih masih kosong, silahkan import csv Sidalih terlebih dahulu")
+                return
+            cur.execute("SELECT 1 FROM dphp LIMIT 1")
+            if not cur.fetchone():
+                show_modern_warning(self, "Ditolak", "Data Sidalih masih kosong, silahkan import csv Sidalih terlebih dahulu")
+                return
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa tabel DPHP:\n{e}")
+            return
+
+        cur.execute("PRAGMA table_info(dphp)")
+        dphp_cols = [r[1] for r in cur.fetchall()]
+        if not dphp_cols:
+            show_modern_warning(self, "Ditolak", "Data Sidalih masih kosong, silahkan import csv Sidalih terlebih dahulu")
+            return
+        dphp_cols_set = set(dphp_cols)
+
+        # === Ambil NIK yg sudah ada dengan DPID kosong ===
+        cur.execute("SELECT DISTINCT NIK FROM dphp WHERE IFNULL(DPID,'')='' OR DPID='0'")
+        nik_sudah_ada = {r[0].strip() for r in cur.fetchall() if r[0]}
+
+        # === Mapping kolom ===
+        idx_dpid = header_idx.get("DPID")
+        idx_ket = header_idx.get("KETERANGAN", header_idx.get("KET"))
+        idx_jk = header_idx.get("KELAMIN")
+        idx_tps = header_idx.get("TPS")
+        idx_nik = header_idx.get("NIK")
+        if idx_dpid is None or idx_ket is None or idx_nik is None:
+            show_modern_warning(self, "Error", "Kolom DPID, NIK, atau KETERANGAN tidak ditemukan di CSV.")
+            return
+
+        csv_to_dphp = {
+            "KECAMATAN": "KECAMATAN", "KELURAHAN": "DESA", "DPID": "DPID", "NKK": "NKK",
+            "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK", "TEMPAT LAHIR": "TMPT_LHR",
+            "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS", "ALAMAT": "ALAMAT",
+            "RT": "RT", "RW": "RW", "DISABILITAS": "DIS", "EKTP": "KTPel",
+            "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS"
+        }
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        nama_kec, nama_desa = (self._kecamatan or "").upper(), (self._desa or "").upper()
+        batch = []
+
+        def _empty_row_dict():
+            d = {c: "" for c in dphp_cols}
+            if "checked" in d: d["checked"] = 0
+            return d
+
+        # === Loop filter cepat di RAM ===
+        for row in reader[1:]:
+            if not row:
+                continue
+
+            kec_val = (row[idx_kec].strip().upper() if idx_kec < len(row) else "")
+            kel_val = (row[idx_kel].strip().upper() if idx_kel < len(row) else "")
+            if kec_val != nama_kec or kel_val != nama_desa:
+                continue
+
+            dpid_val = (row[idx_dpid].strip() if idx_dpid < len(row) else "")
+            ket_val = (row[idx_ket].strip() if idx_ket < len(row) else "")
+            nik_val = (row[idx_nik].strip() if idx_nik < len(row) else "")
+            if nik_val and nik_val in nik_sudah_ada:
+                continue
+            if dpid_val not in ("", "0"):
+                continue
+            if ket_val.upper() != "B":
+                continue
+
+            rec = _empty_row_dict()
+            for csv_col, dphp_col in csv_to_dphp.items():
+                if csv_col in header_idx and dphp_col in dphp_cols_set:
+                    val = (row[header_idx[csv_col]] or "").strip()
+                    if dphp_col in ("RT", "RW", "TPS") and val.isdigit():
+                        val = str(int(val))
+                    rec[dphp_col] = val
+            if "DPID" in rec and rec["DPID"] == "0":
+                rec["DPID"] = ""
+            if "KECAMATAN" in dphp_cols_set:
+                rec["KECAMATAN"] = nama_kec
+            if "DESA" in dphp_cols_set:
+                rec["DESA"] = nama_desa
+            if "JK_ASAL" in dphp_cols_set and idx_jk is not None and idx_jk < len(row):
+                rec["JK_ASAL"] = (row[idx_jk] or "").strip()
+            if "TPS_ASAL" in dphp_cols_set and idx_tps is not None and idx_tps < len(row):
+                v = (row[idx_tps] or "").strip()
+                if v.isdigit(): v = str(int(v))
+                rec["TPS_ASAL"] = v
+            rec["KET"] = "B"
+            if "LastUpdate" in dphp_cols_set:
+                rec["LastUpdate"] = now_str
+
+            batch.append(tuple(rec[c] for c in dphp_cols))
+
+        if not batch:
+            show_modern_info(self, "Kosong", "Tidak ada data Baru Ecoklit yang valid untuk ditambahkan.")
+            return
+
+        # === Optimasi insert: synchronous NORMAL + BEGIN IMMEDIATE ===
+        try:
+            cur.execute("PRAGMA synchronous = NORMAL;")
+            cur.execute("BEGIN IMMEDIATE;")
+            placeholders = ",".join(["?"] * len(dphp_cols))
+            cols_sql = ",".join([f'"{c}"' for c in dphp_cols])
+            cur.executemany(f'INSERT INTO dphp ({cols_sql}) VALUES ({placeholders})', batch)
+            conn.commit()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal menambahkan data ke DPHP:\n{e}")
+            return
+        finally:
+            cur.execute("PRAGMA synchronous = FULL;")  # kembalikan default aman
+
+        # === Refresh tampilan ===
+        try:
+            cur_page = getattr(self, "current_page", 1)
+            with self.freeze_ui():
+                self.load_data_from_db()
+                self.update_pagination()
+                self.show_page(cur_page if 1 <= cur_page <= self.total_pages else 1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
+                if hasattr(self, "_warnai_baris_berdasarkan_ket"):
+                    self._warnai_baris_berdasarkan_ket()
+                if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
+                    self._terapkan_warna_ke_tabel_aktif()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Data tersimpan tapi gagal refresh tabel:\n{e}")
+            return
+
+        show_modern_info(
+            self, "Sukses",
+            f"Berhasil menambahkan {len(batch)} data Baru Ecoklit ke DPHP.\n"
+            f"Waktu import: {now_str}"
+        )
+
+    def import_saringecoklit(self):
+        """
+        Import CSV Ecoklit → PERBARUI data di tabel DPHP berdasarkan DPID.
+        - Hanya memproses baris dengan DPID tidak kosong/0.
+        - Hanya memproses data dengan KETERANGAN = 1–8.
+        - Data menggantikan data lama di DPHP berdasarkan kolom DPID.
+        - Kolom DPID, CEK_DATA, JK_ASAL, TPS_ASAL tidak diubah.
+        - Kolom lain (NKK sampai TPS) diperbarui.
+        - Data dengan KECAMATAN/DESA berbeda dilewati.
+        - Optimasi: synchronous=NORMAL + BEGIN IMMEDIATE.
+        """
+        from sqlite3 import OperationalError as _SqlOpErr
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Pilih File CSV Ecoklit", "", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        # === 1️⃣ Baca CSV ===
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = list(csv.reader(csvfile, delimiter="#"))
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membaca CSV:\n{e}")
+            return
+        if len(reader) < 2:
+            show_modern_warning(self, "Error", "File CSV tidak berisi data.")
+            return
+
+        header = [h.strip().upper() for h in reader[0]]
+        header_idx = {col: i for i, col in enumerate(header)}
+
+        # === 2️⃣ Verifikasi kolom lokasi ===
+        idx_kec = header_idx.get("KECAMATAN") or header_idx.get("KEC")
+        idx_kel = header_idx.get("KELURAHAN") or header_idx.get("KEL")
+        if idx_kec is None or idx_kel is None:
+            show_modern_warning(self, "Error", "Kolom 'KECAMATAN/KEC' dan 'KELURAHAN/KEL' tidak ditemukan di header CSV.")
+            return
+
+        try:
+            kecamatan_csv = (reader[1][idx_kec] or "").strip().upper()
+            desa_csv = (reader[1][idx_kel] or "").strip().upper()
+        except Exception:
+            show_modern_warning(self, "Error", "Format CSV tidak sesuai untuk kolom KEC/KEL.")
+            return
+
+        if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
+            show_modern_warning(
+                self, "Error",
+                f"Import CSV gagal!\nHarap gunakan CSV Ecoklit untuk Desa {self._desa.title()} "
+                f"Kecamatan {self._kecamatan.title()}."
+            )
+            return
+
+        # === 3️⃣ Koneksi DB ===
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Pastikan tabel dphp tersedia
+        try:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dphp'")
+            if not cur.fetchone():
+                show_modern_warning(self, "Ditolak", "Tabel DPHP belum tersedia.")
+                return
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa tabel DPHP:\n{e}")
+            return
+
+        cur.execute("PRAGMA table_info(dphp)")
+        dphp_cols = [r[1] for r in cur.fetchall()]
+        if not dphp_cols:
+            show_modern_warning(self, "Ditolak", "Struktur tabel DPHP kosong.")
+            return
+
+        dphp_cols_set = set(dphp_cols)
+
+        # === 4️⃣ Mapping kolom CSV → DPHP ===
+        idx_dpid = header_idx.get("DPID")
+        idx_ket = header_idx.get("KETERANGAN", header_idx.get("KET"))
+        if idx_dpid is None or idx_ket is None:
+            show_modern_warning(self, "Error", "Kolom DPID atau KETERANGAN tidak ditemukan di CSV.")
+            return
+
+        csv_to_dphp = {
+            "NKK": "NKK", "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK",
+            "TEMPAT LAHIR": "TMPT_LHR", "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS",
+            "ALAMAT": "ALAMAT", "RT": "RT", "RW": "RW", "DISABILITAS": "DIS",
+            "EKTP": "KTPel", "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS"
+        }
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        nama_kec, nama_desa = (self._kecamatan or "").upper(), (self._desa or "").upper()
+        update_data = []
+
+        # === 5️⃣ Loop filter data valid ===
+        for row in reader[1:]:
+            if not row:
+                continue
+
+            kec_val = (row[idx_kec].strip().upper() if idx_kec < len(row) else "")
+            kel_val = (row[idx_kel].strip().upper() if idx_kel < len(row) else "")
+            if kec_val != nama_kec or kel_val != nama_desa:
+                continue
+
+            dpid_val = (row[idx_dpid].strip() if idx_dpid < len(row) else "")
+            ket_val = (row[idx_ket].strip() if idx_ket < len(row) else "")
+
+            # Hanya DPID yang tidak kosong/0 dan KETERANGAN 1–8
+            if not dpid_val or dpid_val == "0":
+                continue
+            if ket_val not in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                continue
+
+            rec = {}
+            for csv_col, dphp_col in csv_to_dphp.items():
+                if csv_col in header_idx and dphp_col in dphp_cols_set:
+                    val = (row[header_idx[csv_col]] or "").strip()
+                    if dphp_col in ("RT", "RW", "TPS") and val.isdigit():
+                        val = str(int(val))
+                    rec[dphp_col] = val
+
+            rec["LastUpdate"] = now_str
+            update_data.append((rec, dpid_val))
+
+        if not update_data:
+            show_modern_info(self, "Kosong", "Tidak ada data Saring Ecoklit yang valid untuk diperbarui.")
+            return
+
+        # === 6️⃣ Update cepat dengan transaksi tunggal ===
+        try:
+            cur.execute("PRAGMA synchronous = NORMAL;")
+            cur.execute("BEGIN IMMEDIATE;")
+
+            for rec, dpid in update_data:
+                set_clause = ", ".join([f'"{col}"=?' for col in rec.keys()])
+                values = list(rec.values()) + [dpid]
+                cur.execute(f"UPDATE dphp SET {set_clause} WHERE DPID=?;", values)
+
+            conn.commit()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memperbarui data DPHP:\n{e}")
+            return
+        finally:
+            cur.execute("PRAGMA synchronous = FULL;")
+
+        # === 7️⃣ Refresh tampilan ===
+        try:
+            cur_page = getattr(self, "current_page", 1)
+            with self.freeze_ui():
+                self.load_data_from_db()
+                self.update_pagination()
+                self.show_page(cur_page if 1 <= cur_page <= self.total_pages else 1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
+                if hasattr(self, "_warnai_baris_berdasarkan_ket"):
+                    self._warnai_baris_berdasarkan_ket()
+                if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
+                    self._terapkan_warna_ke_tabel_aktif()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Data tersimpan tapi gagal refresh tabel:\n{e}")
+            return
+
+        show_modern_info(
+            self, "Sukses",
+            f"Berhasil memperbarui {len(update_data)} data Saring Ecoklit di DPHP.\n"
+            f"Waktu update: {now_str}"
+        )
+
+    def import_ubahecoklit(self):
+        """
+        Import CSV Ecoklit → PERBARUI data di tabel DPHP berdasarkan DPID.
+        - Hanya memproses baris dengan DPID tidak kosong/0.
+        - Hanya memproses data dengan KETERANGAN = U/u.
+        - Data menggantikan data lama di DPHP berdasarkan kolom DPID.
+        - Kolom DPID, CEK_DATA, JK_ASAL, TPS_ASAL, KECAMATAN, dan DESA tidak diubah.
+        - Kolom lain (NKK sampai TPS) diperbarui.
+        - Data dengan KECAMATAN/DESA berbeda dilewati.
+        - Optimasi: synchronous=NORMAL + BEGIN IMMEDIATE.
+        """
+        from sqlite3 import OperationalError as _SqlOpErr
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Pilih File CSV Ecoklit (Ubah)", "", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        # === 1️⃣ Baca CSV ===
+        try:
+            with open(file_path, newline="", encoding="utf-8") as csvfile:
+                reader = list(csv.reader(csvfile, delimiter="#"))
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membaca CSV:\n{e}")
+            return
+        if len(reader) < 2:
+            show_modern_warning(self, "Error", "File CSV tidak berisi data.")
+            return
+
+        header = [h.strip().upper() for h in reader[0]]
+        header_idx = {col: i for i, col in enumerate(header)}
+
+        # === 2️⃣ Verifikasi kolom lokasi ===
+        idx_kec = header_idx.get("KECAMATAN") or header_idx.get("KEC")
+        idx_kel = header_idx.get("KELURAHAN") or header_idx.get("KEL")
+        if idx_kec is None or idx_kel is None:
+            show_modern_warning(self, "Error", "Kolom 'KECAMATAN/KEC' dan 'KELURAHAN/KEL' tidak ditemukan di header CSV.")
+            return
+
+        try:
+            kecamatan_csv = (reader[1][idx_kec] or "").strip().upper()
+            desa_csv = (reader[1][idx_kel] or "").strip().upper()
+        except Exception:
+            show_modern_warning(self, "Error", "Format CSV tidak sesuai untuk kolom KEC/KEL.")
+            return
+
+        if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
+            show_modern_warning(
+                self, "Error",
+                f"Import CSV gagal!\nHarap gunakan CSV Ecoklit untuk Desa {self._desa.title()} "
+                f"Kecamatan {self._kecamatan.title()}."
+            )
+            return
+
+        # === 3️⃣ Koneksi DB ===
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Pastikan tabel dphp tersedia
+        try:
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dphp'")
+            if not cur.fetchone():
+                show_modern_warning(self, "Ditolak", "Tabel DPHP belum tersedia.")
+                return
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa tabel DPHP:\n{e}")
+            return
+
+        cur.execute("PRAGMA table_info(dphp)")
+        dphp_cols = [r[1] for r in cur.fetchall()]
+        if not dphp_cols:
+            show_modern_warning(self, "Ditolak", "Struktur tabel DPHP kosong.")
+            return
+        dphp_cols_set = set(dphp_cols)
+
+        # === 4️⃣ Mapping kolom CSV → DPHP ===
+        idx_dpid = header_idx.get("DPID")
+        idx_ket = header_idx.get("KETERANGAN", header_idx.get("KET"))
+        if idx_dpid is None or idx_ket is None:
+            show_modern_warning(self, "Error", "Kolom DPID atau KETERANGAN tidak ditemukan di CSV.")
+            return
+
+        csv_to_dphp = {
+            "NKK": "NKK", "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK",
+            "TEMPAT LAHIR": "TMPT_LHR", "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS",
+            "ALAMAT": "ALAMAT", "RT": "RT", "RW": "RW", "DISABILITAS": "DIS",
+            "EKTP": "KTPel", "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS"
+        }
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        nama_kec, nama_desa = (self._kecamatan or "").upper(), (self._desa or "").upper()
+        update_data = []
+
+        # === 5️⃣ Loop filter data valid ===
+        for row in reader[1:]:
+            if not row:
+                continue
+
+            kec_val = (row[idx_kec].strip().upper() if idx_kec < len(row) else "")
+            kel_val = (row[idx_kel].strip().upper() if idx_kel < len(row) else "")
+            if kec_val != nama_kec or kel_val != nama_desa:
+                continue
+
+            dpid_val = (row[idx_dpid].strip() if idx_dpid < len(row) else "")
+            ket_val = (row[idx_ket].strip() if idx_ket < len(row) else "")
+
+            # ✅ Hanya DPID tidak kosong/0 dan KET = U/u
+            if not dpid_val or dpid_val == "0":
+                continue
+            if ket_val.upper() != "U":
+                continue
+            ket_val = "U"
+
+            rec = {}
+            for csv_col, dphp_col in csv_to_dphp.items():
+                if csv_col in header_idx and dphp_col in dphp_cols_set:
+                    val = (row[header_idx[csv_col]] or "").strip()
+                    if dphp_col in ("RT", "RW", "TPS") and val.isdigit():
+                        val = str(int(val))
+                    rec[dphp_col] = val
+
+            rec["KET"] = "U"
+            rec["LastUpdate"] = now_str
+            update_data.append((rec, dpid_val))
+
+        if not update_data:
+            show_modern_info(self, "Kosong", "Tidak ada data Ubah Ecoklit yang valid untuk diperbarui.")
+            return
+
+        # === 6️⃣ Update cepat dengan transaksi tunggal ===
+        try:
+            cur.execute("PRAGMA synchronous = NORMAL;")
+            cur.execute("BEGIN IMMEDIATE;")
+
+            for rec, dpid in update_data:
+                set_clause = ", ".join([f'"{col}"=?' for col in rec.keys()])
+                values = list(rec.values()) + [dpid]
+                cur.execute(f"UPDATE dphp SET {set_clause} WHERE DPID=?;", values)
+
+            conn.commit()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memperbarui data DPHP:\n{e}")
+            return
+        finally:
+            cur.execute("PRAGMA synchronous = FULL;")
+
+        # === 7️⃣ Refresh tampilan ===
+        try:
+            cur_page = getattr(self, "current_page", 1)
+            with self.freeze_ui():
+                self.load_data_from_db()
+                self.update_pagination()
+                self.show_page(cur_page if 1 <= cur_page <= self.total_pages else 1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
+                if hasattr(self, "_warnai_baris_berdasarkan_ket"):
+                    self._warnai_baris_berdasarkan_ket()
+                if hasattr(self, "_terapkan_warna_ke_tabel_aktif"):
+                    self._terapkan_warna_ke_tabel_aktif()
+        except Exception as e:
+            show_modern_error(self, "Error", f"Data tersimpan tapi gagal refresh tabel:\n{e}")
+            return
+
+        show_modern_info(
+            self, "Sukses",
+            f"Berhasil memperbarui {len(update_data)} data Ubah Ecoklit di DPHP.\n"
+            f"Waktu update: {now_str}"
+        )
 
     @with_safe_db
     def load_data_from_db(self, conn=None):
