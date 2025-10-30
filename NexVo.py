@@ -2544,6 +2544,10 @@ class FilterSidebar(QWidget):
         self.tgl_lahir = QLineEdit()
         self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
         layout.addWidget(self.tgl_lahir)
+
+        self.alamat = QLineEdit()
+        self.alamat.setPlaceholderText("Alamat")
+        layout.addWidget(self.alamat)
     
     def _setup_age_slider(self, layout, gap):
         # ... (Metode ini tetap sama, dengan perbaikan dari respons sebelumnya) ...
@@ -2579,9 +2583,7 @@ class FilterSidebar(QWidget):
         self.ktp_el = CustomComboBox()
         self.sumber = CustomComboBox()
         self.rank = CustomComboBox()
-        
-        self.alamat = QLineEdit()
-        self.alamat.setPlaceholderText("Alamat")
+        self.tps = CustomComboBox()
         
         self._populate_dropdown_options()
         
@@ -2591,8 +2593,12 @@ class FilterSidebar(QWidget):
         grid_layout.addWidget(self.disabilitas, 1, 0)
         grid_layout.addWidget(self.ktp_el, 1, 1)
         grid_layout.addWidget(self.sumber, 1, 2)
-        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)
-        grid_layout.addWidget(self.rank, 2, 2)
+        tps_rank_layout = QHBoxLayout()
+        tps_rank_layout.setContentsMargins(0, 0, 0, 0)
+        tps_rank_layout.setSpacing(6)  # Gunakan gap yang sama
+        tps_rank_layout.addWidget(self.tps)
+        tps_rank_layout.addWidget(self.rank)
+        grid_layout.addLayout(tps_rank_layout, 2, 0, 1, 3)
     
     def _populate_dropdown_options(self):
         # ... (Metode ini tetap sama) ...
@@ -2610,10 +2616,11 @@ class FilterSidebar(QWidget):
         ])
         self.ktp_el.addItems(["KTP-el", "B", "S"])
         self._populate_sumber_from_mainwindow()
+        self._populate_tps_from_mainwindow()
         self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
 
     def _populate_sumber_from_mainwindow(self):
-        # ... (Metode ini tetap sama) ...
+        """Populate dropdown Sumber dari MainWindow"""
         try:
             main = self._get_main_window()
             if not main:
@@ -2630,6 +2637,25 @@ class FilterSidebar(QWidget):
             print(f"[FilterSidebar._populate_sumber_from_mainwindow Error] {e}")
             self.sumber.clear()
             self.sumber.addItems(["Sumber"])
+
+    def _populate_tps_from_mainwindow(self):
+        """Populate dropdown TPS dari MainWindow"""
+        try:
+            main = self._get_main_window()
+            if not main:
+                print("[FilterSidebar] Tidak bisa menemukan MainWindow (get_distinct_tps tidak ada).")
+                self.tps.clear()
+                self.tps.addItems(["TPS"])
+                return
+            tps_list = main.get_distinct_tps()
+            self.tps.clear()
+            self.tps.addItems(tps_list)
+            if self.tps.count() > 0:
+                self.tps.model().item(0).setEnabled(False)
+        except Exception as e:
+            print(f"[FilterSidebar._populate_tps_from_mainwindow Error] {e}")
+            self.tps.clear()
+            self.tps.addItems(["TPS"])
 
     
     def _setup_checkboxes(self, layout):
@@ -2681,7 +2707,8 @@ class FilterSidebar(QWidget):
         input_widgets = [
             self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, 
             self.alamat, self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber, self.rank
+            self.disabilitas, self.ktp_el, self.sumber, self.rank,
+            self.tps
         ]
         for widget in input_widgets:
             widget.setFixedHeight(desired_height)
@@ -2693,7 +2720,7 @@ class FilterSidebar(QWidget):
         column_width = int((total_inner_width - (gap * 2)) / 3)
         double_column_width = (column_width * 2) + gap
         
-        full_width_fields = [self.tgl_update, self.nama, self.tgl_lahir]
+        full_width_fields = [self.tgl_update, self.nama, self.tgl_lahir, self.alamat]
         for field in full_width_fields:
             field.setFixedWidth(total_inner_width)
         
@@ -2703,12 +2730,13 @@ class FilterSidebar(QWidget):
         
         grid_fields = [
             self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber, self.rank
+            self.disabilitas, self.ktp_el, self.sumber
         ]
         for field in grid_fields:
             field.setFixedWidth(column_width)
         
-        self.alamat.setFixedWidth(double_column_width)
+        self.tps.setFixedWidth(half_width)
+        self.rank.setFixedWidth(half_width)
     
     def resizeEvent(self, event):  # type: ignore
         # ... (Metode ini tetap sama) ...
@@ -2746,7 +2774,7 @@ class FilterSidebar(QWidget):
         
         dropdown_fields = [
             self.keterangan, self.kelamin, self.kawin, self.disabilitas, 
-            self.ktp_el, self.sumber, self.rank
+            self.ktp_el, self.sumber, self.rank, self.tps
         ]
         for dropdown in dropdown_fields:
             dropdown.setCurrentIndex(0)
@@ -2808,6 +2836,7 @@ class FilterSidebar(QWidget):
             "nik": self.nik.text().strip(),
             "nkk": self.nkk.text().strip(),
             "tgl_lahir": self.tgl_lahir.text().strip(),
+            "alamat": self.alamat.text().strip(),
             "umur_min": self.umur_slider.lowerValue(),
             "umur_max": self.umur_slider.upperValue(),
             "keterangan": keterangan_value,
@@ -2816,10 +2845,10 @@ class FilterSidebar(QWidget):
             "dis": disabilitas_value,
             "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
             "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
+            "tps": self.tps.currentText() if self.tps.currentText() != "TPS" else "",
             "rank": rank_value,
             "last_update_start": last_update_start,
-            "last_update_end": last_update_end,
-            "alamat": self.alamat.text().strip() 
+            "last_update_end": last_update_end
         }
         
     def _is_valid_date(self, date_string: str) -> bool:
@@ -6267,6 +6296,7 @@ class MainWindow(QMainWindow):
         dis_data    = (getv(["DIS"]) or "").strip().upper()
         ktpel_data  = (getv(["KTPel","KTP_EL","KTP_EL?"]) or "").strip().upper()
         sumber_data = (getv(["SUMBER"]) or "").strip().upper()
+        tps_data    = (getv(["TPS"]) or "").strip().upper()
         alamat_data = (getv(["ALAMAT"]) or "").strip()
         dpid_val    = (getv(["DPID"]) or "").strip()
         last_raw    = (getv(["LastUpdate","LASTUPDATE","LAST_UPDATE"]) or "").strip()
@@ -6353,6 +6383,11 @@ class MainWindow(QMainWindow):
             if rank_req == "BARU" and ket_val != "B":
                 return False
             if rank_req == "TMS" and not is_tms:
+                return False
+        
+        # TPS
+        if filters["tps"]:
+            if filters["tps"].strip().upper() != tps_data:
                 return False
 
         # Alamat (wildcard)
@@ -9265,6 +9300,11 @@ class MainWindow(QMainWindow):
                             self.filter_sidebar._populate_sumber_from_mainwindow()
                         except Exception as e:
                             print(f"[Warning] Gagal refresh sumber di FilterSidebar: {e}")
+
+                        # try:
+                        #     self.filter_sidebar._populate_tps_from_mainwindow()
+                        # except Exception as e:
+                        #     print(f"[Warning] Gagal refresh TPS di FilterSidebar: {e}")
 
                     show_modern_info(
                         self, "Sukses",
