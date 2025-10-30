@@ -6056,36 +6056,95 @@ class MainWindow(QMainWindow):
 
     @with_safe_db
     def apply_column_visibility(self, *args, conn=None):
-        """Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi_<tahapan>."""
-        cur = conn.cursor()
+        """
+        Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi_<tahapan>
+        dan otomatis sesuaikan lebar hanya untuk kolom yang baru ditampilkan.
+        """
+        try:
+            cur = conn.cursor()
 
-        # Gunakan tabel setting berdasarkan tahapan aktif
-        tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
+            # Gunakan tabel setting berdasarkan tahapan aktif
+            tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
 
-        # Pastikan tabel ada
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {tbl_name} (
-                nama_kolom TEXT PRIMARY KEY,
-                tampil INTEGER
-            )
-        """)
+            # Pastikan tabel ada
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tbl_name} (
+                    nama_kolom TEXT PRIMARY KEY,
+                    tampil INTEGER
+                )
+            """)
 
-        # Ambil semua pengaturan visibilitas
-        cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
-        settings = dict(cur.fetchall())
+            # Ambil semua pengaturan visibilitas
+            cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
+            settings = dict(cur.fetchall())
 
-        # Terapkan ke tabel tampilan
-        for i in range(self.table.columnCount()):
-            header_item = self.table.horizontalHeaderItem(i)
-            if not header_item:
-                continue  # skip kolom tanpa header label
-            col_name = header_item.text().strip()
-            if col_name in settings:
-                hidden = (settings[col_name] == 0)
+            newly_shown_cols = []  # daftar kolom yang baru muncul
+
+            # Terapkan visibilitas & deteksi kolom yang baru ditampilkan
+            for i in range(self.table.columnCount()):
+                header_item = self.table.horizontalHeaderItem(i)
+                if not header_item:
+                    continue  # skip kolom tanpa header label
+
+                col_name = header_item.text().strip()
+                # status visibilitas sebelumnya
+                was_hidden = self.table.isColumnHidden(i)
+                # status baru (berdasarkan setting di DB)
+                hidden = (settings.get(col_name, 1) == 0)
+
+                # ubah visibilitas kolom
                 self.table.setColumnHidden(i, hidden)
-            else:
-                # default: kolom terlihat
-                self.table.setColumnHidden(i, False)
+
+                # jika sebelumnya tersembunyi dan sekarang tampil → tandai untuk auto-fit
+                if was_hidden and not hidden:
+                    newly_shown_cols.append(i)
+
+            # =====================================================
+            # 🧩 AUTO FIT HANYA UNTUK KOLOM YANG BARU DITAMPILKAN
+            # =====================================================
+            if newly_shown_cols:
+                self.table.setUpdatesEnabled(False)
+                for col in newly_shown_cols:
+                    self.table.resizeColumnToContents(col)
+                    # tambahkan sedikit ruang biar tidak rapat
+                    new_width = self.table.columnWidth(col)
+                    self.table.setColumnWidth(col, new_width)
+
+                self.table.setUpdatesEnabled(True)
+
+                # Refresh tampilan supaya efek langsung terlihat
+                self.table.viewport().update()
+                QApplication.processEvents()
+
+        except Exception as e:
+            print(f"[ERROR] apply_column_visibility gagal: {e}")
+
+
+    def auto_fit_visible_columns(self):
+        """Atur otomatis lebar kolom yang tampil berdasarkan konten terpanjangnya."""
+        try:
+            if not hasattr(self, "table") or self.table is None:
+                return
+            
+            header = self.table.horizontalHeader()
+            visible_columns = []
+
+            for col in range(self.table.columnCount()):
+                if not self.table.isColumnHidden(col):
+                    visible_columns.append(col)
+
+            # Fit to content hanya untuk kolom yang terlihat
+            for col in visible_columns:
+                self.table.resizeColumnToContents(col)
+
+            # Sedikit buffer supaya teks tidak terlalu mepet
+            for col in visible_columns:
+                width = self.table.columnWidth(col)
+                self.table.setColumnWidth(col, width + 20)
+
+        except Exception as e:
+            print(f"[WARN] Gagal auto-fit kolom: {e}")
+
 
     def showEvent(self, event):
         """Otomatis maximize saat pertama kali tampil."""
