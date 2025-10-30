@@ -1905,7 +1905,7 @@ class FilterSidebar(QWidget):
         super().__init__(parent)
         
         # Konfigurasi dimensi dan spacing untuk tampilan yang rapi
-        self._dock_width = 260  # Lebar dock harus selaras dengan FixedDockWidget
+        self._dock_width = 220  # Lebar dock harus selaras dengan FixedDockWidget
         gap = 6  # Jarak antar elemen yang pas - tidak terlalu rapat
         side_margin = 8  # Margin samping yang minimal namun tetap memberikan ruang
         section_gap = 16
@@ -2003,6 +2003,9 @@ class FilterSidebar(QWidget):
         
         # Terapkan lebar internal yang tepat
         self._apply_internal_widths(gap, side_margin)
+        if hasattr(parent, "_filter_sidebar_width"):
+            self._dock_width = parent._filter_sidebar_width
+        self.setFixedWidth(self._dock_width)
     
     def _setup_date_filter(self, layout):
         """Setup field filter tanggal dengan compact popup date range picker."""
@@ -2523,24 +2526,32 @@ class FilterSidebar(QWidget):
         self.tgl_update.mousePressEvent = mousePressEvent
     
     def _setup_text_fields(self, layout, gap):
-        # ... (Metode ini tetap sama) ...
+        """Setup field teks utama (nama, alamat, NIK, NKK, tanggal lahir)."""
         self.nama = QLineEdit()
         self.nama.setPlaceholderText("Nama")
         layout.addWidget(self.nama)
         
+        self.alamat = QLineEdit()
+        self.alamat.setPlaceholderText("Alamat")
+        layout.addWidget(self.alamat)
+
+        # 🔹 Tambahkan baris horizontal untuk NIK & NKK
         nik_nkk_row = QHBoxLayout()
         nik_nkk_row.setContentsMargins(0, 0, 0, 0)
         nik_nkk_row.setSpacing(gap)
-        
+
         self.nik = QLineEdit()
         self.nik.setPlaceholderText("NIK")
+        nik_nkk_row.addWidget(self.nik)
+
         self.nkk = QLineEdit()
         self.nkk.setPlaceholderText("NKK")
-        
-        nik_nkk_row.addWidget(self.nik)
         nik_nkk_row.addWidget(self.nkk)
+
+        # ✅ Tambahkan baris ke layout utama!
         layout.addLayout(nik_nkk_row)
-        
+
+        # 🔹 Tambahkan field tanggal lahir di bawahnya
         self.tgl_lahir = QLineEdit()
         self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
         layout.addWidget(self.tgl_lahir)
@@ -2580,8 +2591,8 @@ class FilterSidebar(QWidget):
         self.sumber = CustomComboBox()
         self.rank = CustomComboBox()
         
-        self.alamat = QLineEdit()
-        self.alamat.setPlaceholderText("Alamat")
+        #self.tps = QLineEdit()
+        #self.tps.setPlaceholderText("Alamat")
         
         self._populate_dropdown_options()
         
@@ -2591,7 +2602,7 @@ class FilterSidebar(QWidget):
         grid_layout.addWidget(self.disabilitas, 1, 0)
         grid_layout.addWidget(self.ktp_el, 1, 1)
         grid_layout.addWidget(self.sumber, 1, 2)
-        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)
+        #grid_layout.addWidget(self.tps, 1, 0)
         grid_layout.addWidget(self.rank, 2, 2)
     
     def _populate_dropdown_options(self):
@@ -2679,8 +2690,9 @@ class FilterSidebar(QWidget):
         # ... (Metode ini tetap sama) ...
         desired_height = 34
         input_widgets = [
-            self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, 
-            self.alamat, self.keterangan, self.kelamin, self.kawin, 
+            self.tgl_update, self.nama, self.alamat, 
+            self.nik, self.nkk, self.tgl_lahir,
+            self.keterangan, self.kelamin, self.kawin, 
             self.disabilitas, self.ktp_el, self.sumber, self.rank
         ]
         for widget in input_widgets:
@@ -2738,8 +2750,8 @@ class FilterSidebar(QWidget):
     def _reset_form_only(self):
         # ... (Metode ini tetap sama) ...
         text_fields = [
-            self.tgl_update, self.nama, self.nik, self.nkk, 
-            self.tgl_lahir, self.alamat
+            self.tgl_update, self.nama, self.alamat, self.nik, self.nkk, 
+            self.tgl_lahir
         ]
         for field in text_fields:
             field.clear()
@@ -3507,7 +3519,7 @@ class DetailInformasiPemilihDialog(QDialog):
         # === Keterangan, Disabilitas, dan Status KTP-El ===
         self.ubah_widget = FloatingLabelComboBox(
             "Keterangan Ubah (0-8 atau U)",
-            ["0", "1", "2", "3", "4", "5", "6", "7", "8", "U"],
+            ["U", "1", "2", "3", "4", "5", "6", "7", "8"],
             self.get_value("KET", "0")
         )
 
@@ -3531,7 +3543,7 @@ class DetailInformasiPemilihDialog(QDialog):
         self.sumber_widget.combo.setEditable(True)
 
         # Dokumen Pendukung
-        dok_label = QLabel("DOKUMEN PENDUKUNG")
+        dok_label = QLabel("")
         dok_label.setStyleSheet("""
             color: #6B7280; 
             font-size: 11px; 
@@ -3540,8 +3552,8 @@ class DetailInformasiPemilihDialog(QDialog):
         """)
         upload_layout = QHBoxLayout()
         upload_layout.setSpacing(12)
-        self.btn_upload = QPushButton("Upload")
-        self.btn_upload.setFixedSize(100, 36)
+        self.btn_upload = QPushButton("")
+        self.btn_upload.setFixedSize(0, 0)
         self.btn_upload.setStyleSheet("""
             QPushButton {
                 background-color: #EAB308;
@@ -3553,8 +3565,8 @@ class DetailInformasiPemilihDialog(QDialog):
             }
             QPushButton:hover { background-color: #CA8A04; }
         """)
-        self.btn_upload.clicked.connect(self.upload_file)
-        self.lbl_file = QLabel("-")
+        #self.btn_upload.clicked.connect(self.upload_file)
+        self.lbl_file = QLabel("")
         self.lbl_file.setStyleSheet("color: #6B7280; font-size: 13px; font-style: italic;")
         upload_layout.addWidget(self.btn_upload)
         upload_layout.addWidget(self.lbl_file)
@@ -6022,33 +6034,34 @@ class MainWindow(QMainWindow):
         return btn
     
     def toggle_filter_sidebar(self):
+        """Menampilkan / menyembunyikan sidebar filter dengan lebar yang bisa dikontrol dari satu titik."""
         if self.filter_dock is None:
-            self.filter_sidebar = FilterSidebar(self)
-            # Gunakan FixedDockWidget agar lebar benar-benar fix dan tidak bisa digeser
-            fixed_width = 320
-            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=fixed_width)
-            self.filter_dock.setWidget(self.filter_sidebar)
+            # 💡 Tentukan lebar sidebar di sini saja!
+            sidebar_width = getattr(self, "_filter_sidebar_width", 300)  # default 240
             
-            # Apply current theme to filter sidebar
+            # Buat FilterSidebar dengan referensi parent
+            self.filter_sidebar = FilterSidebar(self)
+            self.filter_sidebar._dock_width = sidebar_width
+            self.filter_sidebar.setFixedWidth(sidebar_width)
+
+            # Gunakan FixedDockWidget agar lebar fix dan tidak bisa di-resize
+            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=sidebar_width)
+            self.filter_dock.setWidget(self.filter_sidebar)
+
+            # Terapkan tema
             current_theme = self.load_theme()
             self.filter_sidebar.apply_theme()
 
             # Tambahkan ke main window
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
-            
-            # Lebar sudah dikunci oleh FixedDockWidget; tidak perlu setFixedWidth lagi
-        
+
+            # Pastikan dock tidak bisa diubah ukurannya
+            self.filter_dock.setMinimumWidth(sidebar_width)
+            self.filter_dock.setMaximumWidth(sidebar_width)
+            self.filter_dock.setFixedWidth(sidebar_width)
+
         # Toggle visibility
         self.filter_dock.setVisible(not self.filter_dock.isVisible())
-
-     # Sembunyikan checkbox dan radio button
-        self.filter_sidebar.cb_ganda.hide()
-        self.filter_sidebar.cb_invalid_tgl.hide()
-        self.filter_sidebar.cb_nkk_terpisah.hide()
-        self.filter_sidebar.cb_analisis_tms.hide()
-        self.filter_sidebar.rb_reguler.hide()
-        self.filter_sidebar.rb_khusus.hide()
-        self.filter_sidebar.rb_reguler_khusus.hide()
     
     # double click row
     def on_row_double_clicked(self, item):
@@ -9270,7 +9283,7 @@ class MainWindow(QMainWindow):
 
                         if self.filter_sidebar is None:
                             self.filter_sidebar = FilterSidebar(self)
-                            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=320)
+                            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=self.filter_sidebar._dock_width)
                             self.filter_dock.setWidget(self.filter_sidebar)
                             self.filter_sidebar.apply_theme()
                             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
@@ -11562,21 +11575,40 @@ class MainWindow(QMainWindow):
     
 
     def create_filter_sidebar(self):
-        """Compatibility wrapper — gunakan toggle_filter_sidebar() sebagai satu-satunya implementasi."""
+        """Membuat sidebar filter dengan lebar terkunci dan sinkron dengan FilterSidebar."""
         try:
-            # canonical implementation: toggle_filter_sidebar sudah membuat FixedDockWidget di kanan
             self.toggle_filter_sidebar()
         except Exception:
-            # fallback minimal agar tidak crash jika toggle_filter_sidebar belum tersedia
+            # 💡 Tentukan lebar sidebar di sini
+            sidebar_width = 300  # ubah sesukamu: 220–260 ideal
+
+            # Simpan agar FilterSidebar tahu
+            self._filter_sidebar_width = sidebar_width
+
+            # Buat sidebar dan set lebarnya
             self.filter_sidebar = FilterSidebar(self)
+            self.filter_sidebar._dock_width = sidebar_width
+            self.filter_sidebar.setFixedWidth(sidebar_width)
+
+            # Hapus dock lama jika ada
             if getattr(self, "filter_dock", None):
                 try:
                     self.removeDockWidget(self.filter_dock)
                 except Exception:
                     pass
-            fixed_width = getattr(self.filter_sidebar, "_dock_width", 260)
-            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=fixed_width)
+
+            # 💪 Buat dock baru dengan lebar yang sama
+            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=sidebar_width)
+
+            # Pastikan dock tidak auto resize
+            self.filter_dock.setMinimumWidth(sidebar_width)
+            self.filter_dock.setMaximumWidth(sidebar_width)
+            self.filter_dock.setFixedWidth(sidebar_width)
+
+            # Masukkan sidebar ke dalam dock
             self.filter_dock.setWidget(self.filter_sidebar)
+
+            # Tambahkan ke kanan
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
 
 
