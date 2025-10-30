@@ -3409,7 +3409,6 @@ class DetailInformasiPemilihDialog(QDialog):
         self.setMinimumSize(950, 600)
         self._data = data_dict or {}
         self.main_window = main_window_ref
-        self.selected_file = ""
         self.init_ui()
 
     def get_value(self, *keys, default=""):
@@ -3530,45 +3529,13 @@ class DetailInformasiPemilihDialog(QDialog):
         self.sumber_widget = FloatingLabelComboBox("Sumber Data", [], self.get_value("SUMBER"))
         self.sumber_widget.combo.setEditable(True)
 
-        # Dokumen Pendukung
-        dok_label = QLabel("DOKUMEN PENDUKUNG")
-        dok_label.setStyleSheet("""
-            color: #6B7280; 
-            font-size: 11px; 
-            font-weight: 600; 
-            margin-top: 8px;
-        """)
-        upload_layout = QHBoxLayout()
-        upload_layout.setSpacing(12)
-        self.btn_upload = QPushButton("Upload")
-        self.btn_upload.setFixedSize(100, 36)
-        self.btn_upload.setStyleSheet("""
-            QPushButton {
-                background-color: #EAB308;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton:hover { background-color: #CA8A04; }
-        """)
-        self.btn_upload.clicked.connect(self.upload_file)
-        self.lbl_file = QLabel("-")
-        self.lbl_file.setStyleSheet("color: #6B7280; font-size: 13px; font-style: italic;")
-        upload_layout.addWidget(self.btn_upload)
-        upload_layout.addWidget(self.lbl_file)
-        upload_layout.addStretch()
-
         right_layout.addWidget(self.ubah_widget)
         right_layout.addLayout(dis_layout)
         right_layout.addWidget(self.sumber_widget)
-        right_layout.addWidget(dok_label)
-        right_layout.addLayout(upload_layout)
         right_layout.addStretch()
 
-        content_layout.addLayout(left_layout)
-        content_layout.addLayout(right_layout)
+        content_layout.addLayout(left_layout, 1)  # Tambahkan stretch factor 1
+        content_layout.addLayout(right_layout, 1)  # Tambahkan stretch factor 1
         main_layout.addLayout(content_layout)
 
         # === FOOTER BUTTONS ===
