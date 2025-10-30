@@ -51,7 +51,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence, QMouseEvent,
     QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication, QClipboard,
-    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut
+    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut, QCursor
 )
 
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
@@ -5244,21 +5244,21 @@ class MainWindow(QMainWindow):
         action_bulk_sidalih.triggered.connect(self.bulk_sidalih)
         generate_menu.addAction(action_bulk_sidalih)
 
-        view_menu = menubar.addMenu("View")
+        #view_menu = menubar.addMenu("View")
         # Actual Size (reset zoom)
-        self.act_zoom_reset = QAction(" Actual Size", self)
-        self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
-        view_menu.addAction(self.act_zoom_reset)
+        #self.act_zoom_reset = QAction(" Actual Size", self)
+        #self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
+        #view_menu.addAction(self.act_zoom_reset)
 
         # Zoom In
-        self.act_zoom_in = QAction(" Zoom In", self)
-        self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
-        view_menu.addAction(self.act_zoom_in)
+        #self.act_zoom_in = QAction(" Zoom In", self)
+        #self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
+        #view_menu.addAction(self.act_zoom_in)
 
         # Zoom Out
-        self.act_zoom_out = QAction(" Zoom Out", self)
-        self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
-        view_menu.addAction(self.act_zoom_out)
+        #self.act_zoom_out = QAction(" Zoom Out", self)
+        #self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
+        #view_menu.addAction(self.act_zoom_out)
 
         self._zoom_shortcuts = []
 
@@ -5312,31 +5312,186 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu.addAction(action_import_tms)
             import_ecoklit_menu.addAction(action_import_ubah)
 
-        # === Toolbar ===
-        toolbar = QToolBar("Toolbar")
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+            # === Toolbar ===
+            toolbar = QToolBar("Toolbar")
+            toolbar.setMovable(False)
+            toolbar.setFloatable(False)
+            toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
+            self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        # fungsi bantu untuk bikin jarak antar tombol
-        def add_spacer(width=4):
-            spacer = QWidget()
-            spacer.setFixedWidth(width)
-            toolbar.addWidget(spacer)
+            # fungsi bantu jarak antar tombol
+            def add_spacer(width=6):
+                spacer = QWidget()
+                spacer.setFixedWidth(width)
+                toolbar.addWidget(spacer)
+
+            # === Banner kiri ===
+            banner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "note.png")
+            self.banner_label = QLabel()
+            self.banner_label.setToolTip("Kerahasiaan dan Keamanan Data Pribadi adalah Komitmen Kita Bersama")
+            pixmap = QPixmap(banner_path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaledToHeight(36, Qt.TransformationMode.SmoothTransformation)
+                self.banner_label.setPixmap(scaled)
+                self.banner_label.setFixedSize(scaled.size())
+            toolbar.addWidget(self.banner_label)
+            add_spacer(10)
+
+            # === Label user (akan kita posisikan manual) ===
+            self.user_label = QLabel(nama)
+            self.user_label.setStyleSheet("""
+                font-family: 'Segoe UI';
+                font-weight: bold;
+                font-size: 14px;
+            """)
+            self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            toolbar.addWidget(self.user_label)
+
+            # === Spacer kanan ===
+            spacer_right = QWidget()
+            spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            toolbar.addWidget(spacer_right)
+
+            # ==============================================================
+            # 🧭 Center sejati + auto kalibrasi global + adaptasi lintas monitor (dynamic DPI)
+            # ==============================================================
+
+            if not hasattr(self, "_debug_center_line"):
+                self._debug_center_line = QLabel(self)
+                self._debug_center_line.setStyleSheet("background-color: rgba(255,0,0,100);")
+                self._debug_center_line.setFixedWidth(1)
+                self._debug_center_line.setVisible(False)  # ubah ke True kalau mau lihat garis tengah
+
+            self._auto_offset = 0
+            self._calibration_done = False
+            self._last_screen = None
+            self._last_dpi = None
+
+            @with_safe_db
+            def _save_offset_to_db(offset_value, conn=None):
+                """Simpan offset global (1 tabel untuk semua tahapan)."""
+                try:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                            key TEXT PRIMARY KEY,
+                            value TEXT
+                        )
+                    """)
+                    cur.execute("INSERT OR REPLACE INTO setting_aplikasi_global (key, value) VALUES (?, ?)",
+                                ("offset_user_label", str(offset_value)))
+                    conn.commit()
+                    print(f"[CALIBRATION] Offset user_label tersimpan (global): {offset_value}")
+                except Exception as e:
+                    print(f"[CALIBRATION ERROR] Gagal simpan offset global: {e}")
+
+            @with_safe_db
+            def _load_offset_from_db(conn=None):
+                """Ambil offset global tersimpan (jika ada)."""
+                try:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                            key TEXT PRIMARY KEY,
+                            value TEXT
+                        )
+                    """)
+                    cur.execute("SELECT value FROM setting_aplikasi_global WHERE key = 'offset_user_label'")
+                    row = cur.fetchone()
+                    if row:
+                        self._auto_offset = int(float(row[0]))
+                        print(f"[CALIBRATION] Offset global dimuat: {self._auto_offset}")
+                    else:
+                        self._auto_offset = 0
+                except Exception as e:
+                    print(f"[CALIBRATION ERROR] Gagal baca offset global: {e}")
+                    self._auto_offset = 0
+
+            def center_user_label(force_recalibrate=False):
+                """Tempatkan user_label tepat di tengah jendela utama (multi-monitor aware)."""
+                if not self.isVisible():
+                    return
+
+                win_w = self.width()
+                current_screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+                dpi_now = current_screen.logicalDotsPerInch() if current_screen else 96
+
+                # Jika berpindah layar (atau DPI berubah), rekalibrasi ringan
+                if force_recalibrate or (self._last_screen != current_screen) or (self._last_dpi != dpi_now):
+                    self._calibration_done = False
+                    self._last_screen = current_screen
+                    self._last_dpi = dpi_now
+
+                banner_w = self.banner_label.width() if hasattr(self, "banner_label") else 0
+
+                # hitung total lebar tombol kanan
+                right_w = 0
+                for b in toolbar.findChildren(QPushButton) + toolbar.findChildren(QToolButton):
+                    if b.isVisible():
+                        right_w += b.width()
+
+                # posisi tengah sejati (koreksi selisih kiri-kanan)
+                correction = (banner_w - right_w) / 2
+                mid_x = (win_w / 2) - correction
+
+                # offset visual proporsional terhadap DPI dan kalibrasi global
+                base_offset = 96
+                visual_offset = int((base_offset / 96) * (dpi_now / 96) * 96) + self._auto_offset
+                mid_x += visual_offset
+
+                # pusatkan label
+                label_w = self.user_label.width()
+                self.user_label.move(int(mid_x - (label_w / 2)), self.user_label.y())
+
+                # garis bantu tengah
+                self._debug_center_line.setFixedHeight(self.height())
+                self._debug_center_line.move(int(win_w / 2), 0)
+                self._debug_center_line.raise_()
+
+                # =========================================================
+                # 🧠 Auto kalibrasi ringan (1–2 kali saja tiap pindah layar)
+                # =========================================================
+                if not self._calibration_done:
+                    label_center = self.user_label.x() + (self.user_label.width() / 2)
+                    center_line = win_w / 2
+                    diff = int(center_line - label_center)
+
+                    if abs(diff) <= 1:
+                        self._calibration_done = True
+                        _save_offset_to_db(self._auto_offset)
+                        self._debug_center_line.setVisible(False)
+                    else:
+                        self._auto_offset += diff
+                        QTimer.singleShot(60, lambda: center_user_label(force_recalibrate))
+
+            # === Event binding ===
+            old_resize = self.resizeEvent if hasattr(self, "resizeEvent") else None
+            def resizeEvent(event):
+                center_user_label()
+                if old_resize:
+                    old_resize(event)
+            self.resizeEvent = resizeEvent
+
+            old_show = self.showEvent if hasattr(self, "showEvent") else None
+            def showEvent(event):
+                _load_offset_from_db()
+                center_user_label(force_recalibrate=True)
+
+                # deteksi otomatis kalau window pindah ke layar lain (multi-monitor)
+                if self.windowHandle():
+                    self.windowHandle().screenChanged.connect(
+                        lambda scr: QTimer.singleShot(150, lambda: center_user_label(force_recalibrate=True))
+                    )
+                if old_show:
+                    old_show(event)
+            self.showEvent = showEvent
+
 
         # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_rekap = QToolButton()
         btn_rekap.setText(" Rekap ")
         btn_rekap.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn_rekap.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-
-        # === Tombol kiri ===
-        btn_baru = QPushButton("Export")
-        self.style_button(btn_baru, bg="#d71d1d", fg="white", bold=True)
-        btn_baru.clicked.connect(self.export_filtered_data_to_excel)
-        toolbar.addWidget(btn_baru)
-        add_spacer()
 
         # Gunakan stylesheet yang sama dengan tombol lain (style_button)
         btn_rekap.setStyleSheet(f"""
@@ -5415,22 +5570,6 @@ class MainWindow(QMainWindow):
                 margin: 4px 10px;
             }
         """)
-
-        # === Spacer kiri ke tengah ===
-        spacer_left = QWidget()
-        spacer_left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer_left)
-
-        # === Label User di tengah ===
-        self.user_label = QLabel(nama)
-        self.user_label.setStyleSheet("font-family: Segoe UI; font-weight: bold; font-size: 14px;")
-        self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        toolbar.addWidget(self.user_label)
-
-        # === Spacer tengah ke kanan ===
-        spacer_right = QWidget()
-        spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer_right)
 
         # === Tombol Cek Data (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_cekdata = QToolButton()
@@ -12222,7 +12361,7 @@ class MainWindow(QMainWindow):
             show_modern_error(self, "Error", f"Gagal memuat data Laporan Coklit:\n{e}")
 
     def export_filtered_data_to_excel(self):
-        """Export seluruh data yang sedang ditampilkan (hasil filter) ke Excel dengan format NexVo."""
+        """Export seluruh data hasil filter (semua halaman) ke Excel dengan format NexVo."""
 
         # =========================================================
         # 🔸 Konfirmasi modern NexVo
@@ -12230,32 +12369,22 @@ class MainWindow(QMainWindow):
         if not show_modern_question(
             self,
             "Konfirmasi Export Data",
-            "Apakah Anda yakin ingin melakukan Export Data?",
+            "Apakah Anda yakin ingin melakukan Export Data seluruh hasil filter?",
         ):
             show_modern_info(self, "Dibatalkan", "Proses Export Data dibatalkan.")
             return
 
         # =========================================================
-        # 🔹 Ambil data yang sedang ditampilkan di tabel
+        # 🔹 Gunakan seluruh data hasil filter (self.all_data)
         # =========================================================
         try:
-            visible_rows = []
-            for row in range(self.table.rowCount()):
-                row_data = {}
-                for col in range(self.table.columnCount()):
-                    header_item = self.table.horizontalHeaderItem(col)
-                    if not header_item:
-                        continue
-                    col_name = header_item.text()
-                    item = self.table.item(row, col)
-                    row_data[col_name] = item.text().strip() if item else ""
-                visible_rows.append(row_data)
-
-            if not visible_rows:
-                show_modern_warning(self, "Kosong", "Tidak ada data yang ditampilkan untuk diexport.")
+            if not hasattr(self, "all_data") or not self.all_data:
+                show_modern_warning(self, "Kosong", "Tidak ada data hasil filter untuk diexport.")
                 return
+
+            visible_rows = self.all_data  # semua data yang sudah difilter
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal membaca data dari tabel:\n{e}")
+            show_modern_error(self, "Error", f"Gagal membaca data hasil filter:\n{e}")
             return
 
         # =========================================================
@@ -12285,18 +12414,16 @@ class MainWindow(QMainWindow):
         ]
         ws.append(headers)
 
-        # Style header
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="4E4E4E")
         for cell in ws[1]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
-
         ws.freeze_panes = "A2"
 
         # =========================================================
-        # 🔹 Isi data baris demi baris
+        # 🔹 Isi data seluruh hasil filter
         # =========================================================
         for row_data in visible_rows:
             ws.append([
@@ -12322,22 +12449,18 @@ class MainWindow(QMainWindow):
             ])
 
         # =========================================================
-        # 🔹 Terapkan format kolom
+        # 🔹 Format kolom & border
         # =========================================================
         thin = Side(border_style="thin", color="CCCCCC")
 
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 col = ws.cell(row=1, column=cell.column).value
-
-                # --- Default: left align ---
                 align = Alignment(horizontal="left", vertical="center")
 
-                # --- Center align untuk kolom tertentu ---
                 if col in ("KELAMIN", "STATUS", "RT", "RW", "DIFABEL", "KTPel", "KETERANGAN", "TPS"):
                     align = Alignment(horizontal="center", vertical="center")
 
-                # --- Format angka untuk kolom numerik ---
                 if col in ("DPID", "RT", "RW", "DIFABEL", "TPS"):
                     try:
                         if str(cell.value).isdigit():
@@ -12346,7 +12469,6 @@ class MainWindow(QMainWindow):
                     except:
                         pass
 
-                # --- Kolom KETERANGAN (bisa 0–8 atau huruf B/U) ---
                 if col == "KETERANGAN":
                     val = str(cell.value).strip().upper()
                     if val in ("0","1","2","3","4","5","6","7","8"):
@@ -12358,7 +12480,6 @@ class MainWindow(QMainWindow):
                     else:
                         cell.value = val
 
-                # --- Terapkan alignment & border ---
                 cell.alignment = align
                 cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
 
@@ -12369,12 +12490,9 @@ class MainWindow(QMainWindow):
             max_length = 0
             column = col[0].column_letter
             for cell in col:
-                try:
-                    val = str(cell.value)
-                    if len(val) > max_length:
-                        max_length = len(val)
-                except:
-                    pass
+                val = str(cell.value)
+                if len(val) > max_length:
+                    max_length = len(val)
             ws.column_dimensions[column].width = max_length + 2
 
         # =========================================================
@@ -12394,6 +12512,7 @@ class MainWindow(QMainWindow):
             "Sukses",
             f"Export Data berhasil disimpan!\n\nLokasi file:\n{filepath}"
         )
+
 
     def get_distinct_tps(self):
         """Ambil daftar distinct TPS dari tabel aktif, abaikan baris dengan KET=0."""
