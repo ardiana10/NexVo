@@ -2520,6 +2520,10 @@ class FilterSidebar(QWidget):
         nik_nkk_row.addWidget(self.nik)
         nik_nkk_row.addWidget(self.nkk)
         layout.addLayout(nik_nkk_row)
+
+        self.alamat = QLineEdit()
+        self.alamat.setPlaceholderText("Alamat")
+        layout.addWidget(self.alamat)
         
         self.tgl_lahir = QLineEdit()
         self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
@@ -2558,10 +2562,8 @@ class FilterSidebar(QWidget):
         self.disabilitas = CustomComboBox()
         self.ktp_el = CustomComboBox()
         self.sumber = CustomComboBox()
+        self.tps = CustomComboBox()
         self.rank = CustomComboBox()
-        
-        self.alamat = QLineEdit()
-        self.alamat.setPlaceholderText("Alamat")
         
         self._populate_dropdown_options()
         
@@ -2571,11 +2573,12 @@ class FilterSidebar(QWidget):
         grid_layout.addWidget(self.disabilitas, 1, 0)
         grid_layout.addWidget(self.ktp_el, 1, 1)
         grid_layout.addWidget(self.sumber, 1, 2)
-        grid_layout.addWidget(self.alamat, 2, 0, 1, 2)
+        grid_layout.addWidget(self.tps, 2, 0, 1, 1)
         grid_layout.addWidget(self.rank, 2, 2)
+
     
     def _populate_dropdown_options(self):
-        # ... (Metode ini tetap sama) ...
+        """Isi semua dropdown di sidebar filter, ambil TPS langsung dari MainWindow."""
         self.keterangan.addItems([
             "Keterangan", "1 (Meninggal)", "2 (Ganda)", "3 (Di Bawah Umur)",
             "4 (Pindah Domisili)", "5 (WNA)", "6 (TNI)", "7 (Polri)",
@@ -2591,6 +2594,28 @@ class FilterSidebar(QWidget):
         self.ktp_el.addItems(["KTP-el", "B", "S"])
         self._populate_sumber_from_mainwindow()
         self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
+
+        # ==========================================================
+        # 🔹 Ambil TPS langsung dari MainWindow
+        # ==========================================================
+        try:
+            main = self._get_main_window()
+            self.tps.clear()
+            if main and hasattr(main, "get_distinct_tps"):
+                tps_list = main.get_distinct_tps()
+                # pastikan hasilnya benar-benar list dengan lebih dari 1 elemen
+                if isinstance(tps_list, list) and len(tps_list) > 1:
+                    self.tps.addItems(tps_list)
+                else:
+                    # fallback jika query belum jalan atau tabel belum siap
+                    self.tps.addItems(["TPS"])
+            else:
+                self.tps.addItems(["TPS"])
+        except Exception as e:
+            print(f"[FilterSidebar] Gagal ambil TPS: {e}")
+            self.tps.clear()
+            self.tps.addItems(["TPS"])
+
 
     def _populate_sumber_from_mainwindow(self):
         # ... (Metode ini tetap sama) ...
@@ -2702,11 +2727,11 @@ class FilterSidebar(QWidget):
     
     def _apply_consistent_sizing(self):
         # ... (Metode ini tetap sama) ...
-        desired_height = 34
+        desired_height = 28
         input_widgets = [
             self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, 
             self.alamat, self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber, self.rank
+            self.disabilitas, self.ktp_el, self.sumber, self.tps, self.rank
         ]
         for widget in input_widgets:
             widget.setFixedHeight(desired_height)
@@ -2728,12 +2753,11 @@ class FilterSidebar(QWidget):
         
         grid_fields = [
             self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber, self.rank
+            self.disabilitas, self.ktp_el, self.sumber, self.tps, self.rank
         ]
         for field in grid_fields:
             field.setFixedWidth(column_width)
         
-        self.alamat.setFixedWidth(double_column_width)
     
     def resizeEvent(self, event):  # type: ignore
         # ... (Metode ini tetap sama) ...
@@ -2771,7 +2795,7 @@ class FilterSidebar(QWidget):
         
         dropdown_fields = [
             self.keterangan, self.kelamin, self.kawin, self.disabilitas, 
-            self.ktp_el, self.sumber, self.rank
+            self.ktp_el, self.sumber, self.tps, self.rank
         ]
         for dropdown in dropdown_fields:
             dropdown.setCurrentIndex(0)
@@ -2841,6 +2865,7 @@ class FilterSidebar(QWidget):
             "dis": disabilitas_value,
             "ktpel": self.ktp_el.currentText() if self.ktp_el.currentText() != "KTP-el" else "",
             "sumber": self.sumber.currentText() if self.sumber.currentText() != "Sumber" else "",
+            "tps": self.tps.currentText() if self.tps.currentText() != "TPS" else "",
             "rank": rank_value,
             "last_update_start": last_update_start,
             "last_update_end": last_update_end,
@@ -6156,38 +6181,107 @@ class MainWindow(QMainWindow):
 
     def reset_tampilkan_semua_data(self, silent=False):
         """
-        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF.
-        Penting: muat juga ROWID agar aksi hapus berikutnya tetap spesifik ke baris.
-        Setelah reset, fungsi-fungsi pagination, sorting, dan pewarnaan juga dijalankan ulang.
+        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF tanpa flicker.
+        Menampilkan progress overlay putih di tengah layar.
         """
         from db_manager import get_connection
-        from PyQt6.QtCore import QTimer
+        from PyQt6.QtCore import QTimer, Qt
+        from PyQt6.QtWidgets import QApplication, QFrame, QVBoxLayout, QLabel, QProgressBar
+
         try:
-            # Tutup sidebar filter jika ada
+            # =========================================================
+            # 🧭 Overlay putih kecil di tengah layar
+            # =========================================================
+            overlay = QFrame(self)
+            overlay.setObjectName("overlayProgress")
+            overlay.setStyleSheet("""
+                QFrame#overlayProgress {
+                    background-color: rgba(255, 255, 255, 240);
+                    border: 2px solid #dddddd;
+                    border-radius: 12px;
+                }
+            """)
+
+            # Ukuran proporsional di tengah (misal 320x120)
+            ow, oh = 320, 120
+            pw, ph = self.width(), self.height()
+            overlay.setGeometry(
+                int((pw - ow) / 2),
+                int((ph - oh) / 2),
+                ow,
+                oh
+            )
+            overlay.setVisible(True)
+            overlay.raise_()
+
+            layout = QVBoxLayout(overlay)
+            layout.setContentsMargins(25, 20, 25, 20)
+            layout.setSpacing(10)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            label = QLabel("🔄 Memuat ulang data...")
+            label.setStyleSheet("color: black; font-size: 12pt; font-family: Segoe UI;")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            progress = QProgressBar()
+            progress.setRange(0, 100)
+            progress.setValue(0)
+            progress.setTextVisible(True)
+            progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress.setStyleSheet("""
+                QProgressBar {
+                    background-color: #f0f0f0;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    border-radius: 8px;
+                    text-align: center;
+                    height: 18px;
+                    font-family: Segoe UI;
+                    font-size: 10pt;
+                }
+                QProgressBar::chunk {
+                    background-color: #ff6600;
+                    border-radius: 8px;
+                }
+            """)
+
+            layout.addWidget(label)
+            layout.addWidget(progress)
+
+            QApplication.processEvents()
+
+            # =========================================================
+            # 🧹 Tutup sidebar filter & inisialisasi koneksi
+            # =========================================================
             try:
                 if hasattr(self, "filter_dock") and self.filter_dock and self.filter_dock.isVisible():
                     self.filter_dock.hide()
-            except Exception as e:
-                print("[UI WARNING] Gagal menutup sidebar filter:", e)
+            except Exception:
+                pass
 
             tbl_name = self._active_table()
             if not tbl_name:
+                overlay.deleteLater()
                 show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
             conn = get_connection()
             conn.row_factory = sqlcipher.Row
-
-            # Pastikan sinkronisasi dari koneksi lain
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             conn.commit()
-            #print("[DEBUG RESET] database_list =", conn.execute("PRAGMA database_list;").fetchall())
 
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            # =========================================================
+            # 📦 Ambil data dari database
+            # =========================================================
             cur = conn.cursor()
             cur.execute(f"SELECT rowid, * FROM {tbl_name}")
             rows = cur.fetchall()
 
             if not rows:
+                overlay.deleteLater()
                 if not silent:
                     show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
                 self.all_data = []
@@ -6195,36 +6289,63 @@ class MainWindow(QMainWindow):
                 self.show_page(1)
                 return
 
-            # === Bangun ulang data dengan rowid
             headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
             all_data = []
-            for r in rows:
+            total = len(rows)
+            step = max(1, total // 40)  # update progress setiap 2.5%
+
+            for i, r in enumerate(rows):
                 d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
                 d["rowid"] = r["rowid"]
                 all_data.append(d)
+                if i % step == 0:
+                    progress.setValue(min(80, int(i / total * 80)))
+                    QApplication.processEvents()
+
             self.all_data = all_data
+            progress.setValue(85)
+            QApplication.processEvents()
 
-            # === Tampilkan ulang tabel dengan freeze_ui untuk mencegah flicker
+            # =========================================================
+            # 🧊 Freeze UI & tampilkan ulang tabel (tanpa flicker)
+            # =========================================================
             with self.freeze_ui():
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+                self.table.setVisible(False)
+
                 self._refresh_table_with_new_data(self.all_data)
+                self.update_pagination()
+                self.show_page(1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
+                self._warnai_baris_berdasarkan_ket()
+                self._terapkan_warna_ke_tabel_aktif()
 
-            # === Jalankan seluruh fungsi pendukung pasca-reset
-            self.update_pagination()
-            self.show_page(1)
-            self.connect_header_events()
-            self.sort_data(auto=True)
-            self._warnai_baris_berdasarkan_ket()
+                self.table.setVisible(True)
+                self.table.setUpdatesEnabled(True)
+                self.table.viewport().update()
+                QApplication.processEvents()
+                self.table.blockSignals(False)
 
-            # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
-            QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+            progress.setValue(100)
+            QApplication.processEvents()
 
-            #print("[RESET] Data tabel berhasil dimuat ulang dan tampilan diperbarui ✅")
+            # =========================================================
+            # ✨ Hilangkan overlay setelah 0.3 detik
+            # =========================================================
+            QTimer.singleShot(300, overlay.deleteLater)
 
         except Exception as e:
+            try:
+                overlay.deleteLater()
+            except Exception:
+                pass
             if not silent:
                 show_modern_error(self, "Error", f"Gagal menampilkan ulang data:\n{e}")
             else:
                 print(f"[Silent Reset Warning] {e}")
+
 
     def reset_tampilan_setelah_hapus(self, silent=False):
         """
@@ -6664,6 +6785,8 @@ class MainWindow(QMainWindow):
             conditions.append("KTPel = ?");    params.append(filters["ktpel"])
         if filters.get("sumber"):
             conditions.append("SUMBER = ?");   params.append(filters["sumber"])
+        if filters.get("tps"):
+            conditions.append("TPS = ?");      params.append(filters["tps"])
 
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         # Sertakan rowid supaya baris tetap punya identitas unik
@@ -12816,31 +12939,7 @@ class MainWindow(QMainWindow):
             "Sukses",
             f"Export Data berhasil disimpan!\n\nLokasi file:\n{filepath}"
         )
-
-
-    def get_distinct_tps(self):
-        """Ambil daftar distinct TPS dari tabel aktif, abaikan baris dengan KET=0."""
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            tbl = self._active_table()
-
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl}
-                WHERE (KET IS NULL OR KET <> '0')
-                ORDER BY TPS ASC
-            """)
-            result = [str(r[0]) for r in cur.fetchall() if r[0] not in (None, "")]
-            conn.commit()
-
-            self._distinct_tps_list = result or ["-"]
-            self._current_tps_index = 0
-            #print(f"[TPS List] Ditemukan {len(result)} TPS aktif: {result}")
-            return result
-        except Exception as e:
-            print(f"[TPS Error] {e}")
-            return []
-        
+ 
 
     def bulk_sidalih(self):
         """Ekspor data tabel aktif ke Excel 'Bulk Sidalih' dengan format dan urutan kolom sesuai spesifikasi."""
