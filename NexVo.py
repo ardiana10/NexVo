@@ -5552,6 +5552,183 @@ class MainWindow(QMainWindow):
 
         help_menu.addAction(QAction(" About", self))
 
+        # === Toolbar ===
+        toolbar = QToolBar("Toolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        # fungsi bantu jarak antar tombol
+        def add_spacer(width=6):
+            spacer = QWidget()
+            spacer.setFixedWidth(width)
+            toolbar.addWidget(spacer)
+
+        # === Banner kiri ===
+        banner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "note.png")
+        self.banner_label = QLabel()
+        self.banner_label.setToolTip("Kerahasiaan dan Keamanan Data Pribadi adalah Komitmen Kita Bersama")
+        pixmap = QPixmap(banner_path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaledToHeight(36, Qt.TransformationMode.SmoothTransformation)
+            self.banner_label.setPixmap(scaled)
+            self.banner_label.setFixedSize(scaled.size())
+        toolbar.addWidget(self.banner_label)
+        add_spacer(10)
+
+        # === Label user (akan kita posisikan manual) ===
+        self.user_label = QLabel(nama)
+        self.user_label.setStyleSheet("""
+            font-family: 'Segoe UI';
+            font-weight: bold;
+            font-size: 15px;
+        """)
+        self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        toolbar.addWidget(self.user_label)
+
+        # === Spacer kanan ===
+        spacer_right = QWidget()
+        spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer_right)
+
+        # ==============================================================
+        # 🧭 Center sejati + auto kalibrasi global + adaptasi lintas monitor (dynamic DPI)
+        # ==============================================================
+
+        if not hasattr(self, "_debug_center_line"):
+            self._debug_center_line = QLabel(self)
+            self._debug_center_line.setStyleSheet("background-color: rgba(255,0,0,100);")
+            self._debug_center_line.setFixedWidth(1)
+            self._debug_center_line.setVisible(False)  # ubah ke True kalau mau lihat garis tengah
+
+        self._auto_offset = 0
+        self._calibration_done = False
+        self._last_screen = None
+        self._last_dpi = None
+
+        @with_safe_db
+        def _save_offset_to_db(offset_value, conn=None):
+            """Simpan offset global (1 tabel untuk semua tahapan)."""
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                cur.execute("INSERT OR REPLACE INTO setting_aplikasi_global (key, value) VALUES (?, ?)",
+                            ("offset_user_label", str(offset_value)))
+                conn.commit()
+                #print(f"[CALIBRATION] Offset user_label tersimpan (global): {offset_value}")
+            except Exception as e:
+                print(f"[CALIBRATION ERROR] Gagal simpan offset global: {e}")
+
+        @with_safe_db
+        def _load_offset_from_db(conn=None):
+            """Ambil offset global tersimpan (jika ada)."""
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                cur.execute("SELECT value FROM setting_aplikasi_global WHERE key = 'offset_user_label'")
+                row = cur.fetchone()
+                if row:
+                    self._auto_offset = int(float(row[0]))
+                    #print(f"[CALIBRATION] Offset global dimuat: {self._auto_offset}")
+                else:
+                    self._auto_offset = 0
+            except Exception as e:
+                print(f"[CALIBRATION ERROR] Gagal baca offset global: {e}")
+                self._auto_offset = 0
+
+        def center_user_label(force_recalibrate=False):
+            """Tempatkan user_label tepat di tengah jendela utama (multi-monitor aware)."""
+            if not self.isVisible():
+                return
+
+            win_w = self.width()
+            current_screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+            dpi_now = current_screen.logicalDotsPerInch() if current_screen else 96
+
+            # Jika berpindah layar (atau DPI berubah), rekalibrasi ringan
+            if force_recalibrate or (self._last_screen != current_screen) or (self._last_dpi != dpi_now):
+                self._calibration_done = False
+                self._last_screen = current_screen
+                self._last_dpi = dpi_now
+
+            banner_w = self.banner_label.width() if hasattr(self, "banner_label") else 0
+
+            # hitung total lebar tombol kanan
+            right_w = 0
+            for b in toolbar.findChildren(QPushButton) + toolbar.findChildren(QToolButton):
+                if b.isVisible():
+                    right_w += b.width()
+
+            # posisi tengah sejati (koreksi selisih kiri-kanan)
+            correction = (banner_w - right_w) / 2
+            mid_x = (win_w / 2) - correction
+
+            # offset visual proporsional terhadap DPI dan kalibrasi global
+            base_offset = 96
+            visual_offset = int((base_offset / 96) * (dpi_now / 96) * 96) + self._auto_offset
+            mid_x += visual_offset
+
+            # pusatkan label
+            label_w = self.user_label.width()
+            self.user_label.move(int(mid_x - (label_w / 2)), self.user_label.y())
+
+            # garis bantu tengah
+            self._debug_center_line.setFixedHeight(self.height())
+            self._debug_center_line.move(int(win_w / 2), 0)
+            self._debug_center_line.raise_()
+
+            # =========================================================
+            # 🧠 Auto kalibrasi ringan (1–2 kali saja tiap pindah layar)
+            # =========================================================
+            if not self._calibration_done:
+                label_center = self.user_label.x() + (self.user_label.width() / 2)
+                center_line = win_w / 2
+                diff = int(center_line - label_center)
+
+                if abs(diff) <= 1:
+                    self._calibration_done = True
+                    _save_offset_to_db(self._auto_offset)
+                    self._debug_center_line.setVisible(False)
+                else:
+                    self._auto_offset += diff
+                    QTimer.singleShot(60, lambda: center_user_label(force_recalibrate))
+
+        # === Event binding ===
+        old_resize = self.resizeEvent if hasattr(self, "resizeEvent") else None
+        def resizeEvent(event):
+            center_user_label()
+            if old_resize:
+                old_resize(event)
+        self.resizeEvent = resizeEvent
+
+        old_show = self.showEvent if hasattr(self, "showEvent") else None
+        def showEvent(event):
+            _load_offset_from_db()
+            center_user_label(force_recalibrate=True)
+
+            # deteksi otomatis kalau window pindah ke layar lain (multi-monitor)
+            if self.windowHandle():
+                self.windowHandle().screenChanged.connect(
+                    lambda scr: QTimer.singleShot(150, lambda: center_user_label(force_recalibrate=True))
+                )
+            if old_show:
+                old_show(event)
+        self.showEvent = showEvent
+        self.user_label.adjustSize()
+        QApplication.processEvents()
+        center_user_label(force_recalibrate=True)
+
         # ==========================================================
         # ✅ Tampilkan menu "Import Ecoklit" hanya jika tahapan = DPHP
         # ==========================================================
@@ -5568,180 +5745,6 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu.addAction(action_import_baru)
             import_ecoklit_menu.addAction(action_import_tms)
             import_ecoklit_menu.addAction(action_import_ubah)
-
-            # === Toolbar ===
-            toolbar = QToolBar("Toolbar")
-            toolbar.setMovable(False)
-            toolbar.setFloatable(False)
-            toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
-            self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
-
-            # fungsi bantu jarak antar tombol
-            def add_spacer(width=6):
-                spacer = QWidget()
-                spacer.setFixedWidth(width)
-                toolbar.addWidget(spacer)
-
-            # === Banner kiri ===
-            banner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "note.png")
-            self.banner_label = QLabel()
-            self.banner_label.setToolTip("Kerahasiaan dan Keamanan Data Pribadi adalah Komitmen Kita Bersama")
-            pixmap = QPixmap(banner_path)
-            if not pixmap.isNull():
-                scaled = pixmap.scaledToHeight(36, Qt.TransformationMode.SmoothTransformation)
-                self.banner_label.setPixmap(scaled)
-                self.banner_label.setFixedSize(scaled.size())
-            toolbar.addWidget(self.banner_label)
-            add_spacer(10)
-
-            # === Label user (akan kita posisikan manual) ===
-            self.user_label = QLabel(nama)
-            self.user_label.setStyleSheet("""
-                font-family: 'Segoe UI';
-                font-weight: bold;
-                font-size: 15px;
-            """)
-            self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            toolbar.addWidget(self.user_label)
-
-            # === Spacer kanan ===
-            spacer_right = QWidget()
-            spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            toolbar.addWidget(spacer_right)
-
-            # ==============================================================
-            # 🧭 Center sejati + auto kalibrasi global + adaptasi lintas monitor (dynamic DPI)
-            # ==============================================================
-
-            if not hasattr(self, "_debug_center_line"):
-                self._debug_center_line = QLabel(self)
-                self._debug_center_line.setStyleSheet("background-color: rgba(255,0,0,100);")
-                self._debug_center_line.setFixedWidth(1)
-                self._debug_center_line.setVisible(False)  # ubah ke True kalau mau lihat garis tengah
-
-            self._auto_offset = 0
-            self._calibration_done = False
-            self._last_screen = None
-            self._last_dpi = None
-
-            @with_safe_db
-            def _save_offset_to_db(offset_value, conn=None):
-                """Simpan offset global (1 tabel untuk semua tahapan)."""
-                try:
-                    cur = conn.cursor()
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
-                            key TEXT PRIMARY KEY,
-                            value TEXT
-                        )
-                    """)
-                    cur.execute("INSERT OR REPLACE INTO setting_aplikasi_global (key, value) VALUES (?, ?)",
-                                ("offset_user_label", str(offset_value)))
-                    conn.commit()
-                    print(f"[CALIBRATION] Offset user_label tersimpan (global): {offset_value}")
-                except Exception as e:
-                    print(f"[CALIBRATION ERROR] Gagal simpan offset global: {e}")
-
-            @with_safe_db
-            def _load_offset_from_db(conn=None):
-                """Ambil offset global tersimpan (jika ada)."""
-                try:
-                    cur = conn.cursor()
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
-                            key TEXT PRIMARY KEY,
-                            value TEXT
-                        )
-                    """)
-                    cur.execute("SELECT value FROM setting_aplikasi_global WHERE key = 'offset_user_label'")
-                    row = cur.fetchone()
-                    if row:
-                        self._auto_offset = int(float(row[0]))
-                        print(f"[CALIBRATION] Offset global dimuat: {self._auto_offset}")
-                    else:
-                        self._auto_offset = 0
-                except Exception as e:
-                    print(f"[CALIBRATION ERROR] Gagal baca offset global: {e}")
-                    self._auto_offset = 0
-
-            def center_user_label(force_recalibrate=False):
-                """Tempatkan user_label tepat di tengah jendela utama (multi-monitor aware)."""
-                if not self.isVisible():
-                    return
-
-                win_w = self.width()
-                current_screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
-                dpi_now = current_screen.logicalDotsPerInch() if current_screen else 96
-
-                # Jika berpindah layar (atau DPI berubah), rekalibrasi ringan
-                if force_recalibrate or (self._last_screen != current_screen) or (self._last_dpi != dpi_now):
-                    self._calibration_done = False
-                    self._last_screen = current_screen
-                    self._last_dpi = dpi_now
-
-                banner_w = self.banner_label.width() if hasattr(self, "banner_label") else 0
-
-                # hitung total lebar tombol kanan
-                right_w = 0
-                for b in toolbar.findChildren(QPushButton) + toolbar.findChildren(QToolButton):
-                    if b.isVisible():
-                        right_w += b.width()
-
-                # posisi tengah sejati (koreksi selisih kiri-kanan)
-                correction = (banner_w - right_w) / 2
-                mid_x = (win_w / 2) - correction
-
-                # offset visual proporsional terhadap DPI dan kalibrasi global
-                base_offset = 96
-                visual_offset = int((base_offset / 96) * (dpi_now / 96) * 96) + self._auto_offset
-                mid_x += visual_offset
-
-                # pusatkan label
-                label_w = self.user_label.width()
-                self.user_label.move(int(mid_x - (label_w / 2)), self.user_label.y())
-
-                # garis bantu tengah
-                self._debug_center_line.setFixedHeight(self.height())
-                self._debug_center_line.move(int(win_w / 2), 0)
-                self._debug_center_line.raise_()
-
-                # =========================================================
-                # 🧠 Auto kalibrasi ringan (1–2 kali saja tiap pindah layar)
-                # =========================================================
-                if not self._calibration_done:
-                    label_center = self.user_label.x() + (self.user_label.width() / 2)
-                    center_line = win_w / 2
-                    diff = int(center_line - label_center)
-
-                    if abs(diff) <= 1:
-                        self._calibration_done = True
-                        _save_offset_to_db(self._auto_offset)
-                        self._debug_center_line.setVisible(False)
-                    else:
-                        self._auto_offset += diff
-                        QTimer.singleShot(60, lambda: center_user_label(force_recalibrate))
-
-            # === Event binding ===
-            old_resize = self.resizeEvent if hasattr(self, "resizeEvent") else None
-            def resizeEvent(event):
-                center_user_label()
-                if old_resize:
-                    old_resize(event)
-            self.resizeEvent = resizeEvent
-
-            old_show = self.showEvent if hasattr(self, "showEvent") else None
-            def showEvent(event):
-                _load_offset_from_db()
-                center_user_label(force_recalibrate=True)
-
-                # deteksi otomatis kalau window pindah ke layar lain (multi-monitor)
-                if self.windowHandle():
-                    self.windowHandle().screenChanged.connect(
-                        lambda scr: QTimer.singleShot(150, lambda: center_user_label(force_recalibrate=True))
-                    )
-                if old_show:
-                    old_show(event)
-            self.showEvent = showEvent
 
 
         # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
@@ -8190,34 +8193,29 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_satu_pemilih(self, row, conn=None):
-        """Hapus satu baris data pemilih dengan konfirmasi dan freeze UI."""
+        """Hapus satu baris data pemilih dengan konfirmasi dan anti flicker."""
         try:
             tbl = self._active_table()
             if not tbl:
                 show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # --- Ambil data dari tabel UI
             def _val(col):
                 ci = self.col_index(col)
                 it = self.table.item(row, ci) if ci != -1 else None
                 return it.text().strip() if it else ""
 
-            nama = _val("NAMA")
-            nik = _val("NIK")
-            nkk = _val("NKK")
-            dpid = _val("DPID")
-            tgl = _val("TGL_LHR")
+            nama, nik, nkk, dpid, tgl, ket = map(_val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"])
 
-            # --- Proteksi: hanya DPID kosong / "0" yang bisa dihapus
-            if dpid and dpid != "0":
+            # ✅ Validasi hanya pemilih baru (DPID kosong/0 & KET=B/b)
+            if not ((not dpid or dpid == "0") and (ket or "").strip().lower() == "b"):
                 show_modern_warning(
-                    self, "Ditolak",
+                    self,
+                    "Ditolak",
                     f"{nama} tidak dapat dihapus.<br>Hanya pemilih baru di tahapan ini yang bisa dihapus!",
                 )
                 return
 
-            # --- Konfirmasi
             if not show_modern_question(
                 self,
                 "Konfirmasi Hapus",
@@ -8229,8 +8227,10 @@ class MainWindow(QMainWindow):
             # --- Eksekusi delete dengan UI freeze
             with self.freeze_ui():
                 conn = get_connection()
-                conn.execute("PRAGMA busy_timeout = 3000;")
-                conn.execute("PRAGMA journal_mode = WAL;")
+                conn.executescript("""
+                    PRAGMA busy_timeout = 3000;
+                    PRAGMA journal_mode = WAL;
+                """)
 
                 deleted = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl)
                 conn.commit()
@@ -8240,9 +8240,12 @@ class MainWindow(QMainWindow):
                 else:
                     show_modern_warning(self, "Info", f"Data {nama} tidak ditemukan di database.")
 
-                # --- Refresh tabel
+                # 🔹 Anti flicker: nonaktifkan repaint
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
@@ -8250,8 +8253,8 @@ class MainWindow(QMainWindow):
             try:
                 if conn:
                     conn.commit()
-                    self._clear_row_selection(row)
-                    self._reset_tabel_background()
+                self._clear_row_selection(row)
+                self._reset_tabel_background()
             except Exception:
                 pass
 
@@ -8260,7 +8263,7 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_banyak_pemilih(self, rows, conn=None):
-        """Menghapus banyak baris data sekaligus dengan freeze UI."""
+        """Hapus banyak baris data sekaligus dengan anti flicker & konfirmasi batch."""
         try:
             if not rows:
                 show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
@@ -8271,7 +8274,6 @@ class MainWindow(QMainWindow):
                 show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # --- Konfirmasi awal
             if not show_modern_question(
                 self,
                 "Konfirmasi Batch",
@@ -8279,7 +8281,6 @@ class MainWindow(QMainWindow):
             ):
                 return
 
-            # --- Jalankan batch dengan UI freeze
             with self.freeze_ui():
                 conn = get_connection()
                 cur = conn.cursor()
@@ -8298,13 +8299,10 @@ class MainWindow(QMainWindow):
                         it = self.table.item(row, ci) if ci != -1 else None
                         return it.text().strip() if it else ""
 
-                    nama = _val("NAMA")
-                    nik = _val("NIK")
-                    nkk = _val("NKK")
-                    dpid = _val("DPID")
-                    tgl = _val("TGL_LHR")
+                    nama, nik, nkk, dpid, tgl, ket = map(_val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"])
 
-                    if dpid and dpid != "0":
+                    # ✅ Hanya boleh hapus jika DPID kosong/0 dan KET = B/b
+                    if not ((not dpid or dpid == "0") and (ket or "").strip().lower() == "b"):
                         rejected += 1
                         continue
 
@@ -8319,20 +8317,20 @@ class MainWindow(QMainWindow):
 
                 conn.commit()
 
-                # --- Tampilkan ringkasan
-                total = ok + skipped + rejected
                 msg = f"✅ {ok} dihapus"
                 if rejected:
                     msg += f", ❌ {rejected} ditolak"
                 if skipped:
                     msg += f", ⏸️ {skipped} dilewati"
-                msg += f" (Total: {total})"
+                msg += f" (Total: {ok + skipped + rejected})"
                 show_modern_info(self, "Selesai", msg)
 
-                # --- Refresh tabel
+                # 🔹 Anti flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(250, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
+                QTimer.singleShot(200, lambda: self._refresh_dan_buka_repaint())
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data batch:\n{e}")
@@ -8340,9 +8338,10 @@ class MainWindow(QMainWindow):
             try:
                 if conn:
                     conn.commit()
+                self._clear_row_selection(rows)
+                self._reset_tabel_background()
             except Exception:
                 pass
-
 
     # =========================================================
     # 🔹 ROUTER: otomatis pilih hapus satu / banyak
@@ -8411,9 +8410,7 @@ class MainWindow(QMainWindow):
     # 🔹 AKTIFKAN SATU PEMILIH
     # =========================================================
     def aktifkan_satu_pemilih(self, row):
-        """Aktifkan satu pemilih (KET → 0) dengan konfirmasi & freeze UI."""
-        from datetime import datetime
-
+        """Aktifkan satu pemilih (KET → 0) tanpa flicker dan tanpa error QTableWidget."""
         with self.freeze_ui():
             try:
                 tbl = self._active_table()
@@ -8421,7 +8418,6 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
-                # --- Ambil data baris
                 def _val(col):
                     ci = self.col_index(col)
                     it = self.table.item(row, ci) if ci != -1 else None
@@ -8441,7 +8437,7 @@ class MainWindow(QMainWindow):
                     f"Aktifkan kembali pemilih ini?<br><b>{nama}</b>"):
                     return
 
-                # --- Update DB & memori
+                # --- Update DB
                 today_str = datetime.now().strftime("%d/%m/%Y")
                 conn = get_connection()
                 cur = conn.cursor()
@@ -8449,42 +8445,50 @@ class MainWindow(QMainWindow):
                 cur.execute(f"UPDATE {tbl} SET KET = 0, LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
                 conn.commit()
 
-                # --- Update UI
+                # --- Update data cache
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = "0"
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                last_update_col = self.col_index("LastUpdate")
-                if last_update_col != -1:
-                    lu_item = self.table.item(row, last_update_col)
-                    if not lu_item:
-                        lu_item = QTableWidgetItem()
-                        self.table.setItem(row, last_update_col, lu_item)
-                    lu_item.setText(today_str)
+                # --- Update tampilan langsung dengan aman
+                ket_col = self.col_index("KET")
+                if ket_col != -1:
+                    existing_item = self.table.item(row, ket_col)
+                    if existing_item:
+                        existing_item.setText("0")
+                    else:
+                        self.table.setItem(row, ket_col, QTableWidgetItem("0"))
 
-                #self._warnai_baris_berdasarkan_ket()
-                #self._terapkan_warna_ke_tabel_aktif()
+                lu_col = self.col_index("LastUpdate")
+                if lu_col != -1:
+                    existing_item = self.table.item(row, lu_col)
+                    if existing_item:
+                        existing_item.setText(today_str)
+                    else:
+                        self.table.setItem(row, lu_col, QTableWidgetItem(today_str))
 
+                # --- Nonaktifkan repaint sementara (anti flicker)
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                # --- Jalankan fungsi refresh wajib
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
                 show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
                 self._reset_tabel_background()
                 
-
-
     # =========================================================
     # 🔹 AKTIFKAN BANYAK PEMILIH (BATCH)
     # =========================================================
     def aktifkan_banyak_pemilih(self, rows):
-        """Aktifkan banyak pemilih (KET → 0) sekaligus, TANPA mengubah JK/TPS."""
+        """Aktifkan banyak pemilih (KET → 0) sekaligus, TANPA mengubah JK/TPS, tanpa flicker."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -8517,12 +8521,10 @@ class MainWindow(QMainWindow):
                     dpid = dpid_item.text().strip() if dpid_item else ""
                     ket  = ket_item.text().strip() if ket_item else ""
 
-                    # Hanya proses yang KET-nya 1–8 (sesuai aturan kamu)
                     if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
                         rejected += 1
                         continue
 
-                    # ⛔ Tidak menyentuh JK/TPS sama sekali
                     batch_data.append((today_str, dpid))
                     ok += 1
 
@@ -8530,7 +8532,7 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
                     return
 
-                # Eksekusi batch cepat
+                # --- Eksekusi batch cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8547,19 +8549,51 @@ class MainWindow(QMainWindow):
                 """, batch_data)
                 conn.commit()
 
+                # --- Update cache di memori
+                dpid_map = {d for _, d in batch_data}
+                for rdata in self.all_data:
+                    if rdata.get("DPID") in dpid_map:
+                        rdata["KET"] = "0"
+                        rdata["LastUpdate"] = today_str
+
+                # --- Update tampilan langsung (tanpa flicker)
+                for row in rows:
+                    ci_ket = self.col_index("KET")
+                    ci_lu  = self.col_index("LastUpdate")
+
+                    if ci_ket != -1:
+                        item = self.table.item(row, ci_ket)
+                        if item:
+                            item.setText("0")
+                        else:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            self.table.setItem(row, ci_ket, QTableWidgetItem("0"))
+
+                    if ci_lu != -1:
+                        item = self.table.item(row, ci_lu)
+                        if item:
+                            item.setText(today_str)
+                        else:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            self.table.setItem(row, ci_lu, QTableWidgetItem(today_str))
+
+                # --- Bekukan repaint selama reload untuk hilangkan flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                # --- Jalankan fungsi wajib
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+
                 msg = f"✅ {ok} diaktifkan"
                 if rejected:
                     msg += f", ❌ {rejected} dilewati"
                 show_modern_info(self, "Selesai", msg)
 
-                self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
-                self._clear_row_selection(row)
+                self._clear_row_selection(rows)
                 self._reset_tabel_background()
                 
     # =========================================================
@@ -8575,12 +8609,20 @@ class MainWindow(QMainWindow):
         else:
             self.aktifkan_banyak_pemilih(rows)
 
+    def _refresh_dan_buka_repaint(self):
+        """Lanjutkan refresh dan buka repaint tabel (anti flicker)."""
+        try:
+            self._refresh_setelah_hapus()
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            self.table.viewport().update()
 
     # =========================================================
     # 🔹 SET STATUS SATU (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_satu(self, row, new_value, label):
-        """Set status KET untuk satu baris dengan freeze & konfirmasi."""
+        """Set status KET untuk satu baris dengan freeze & konfirmasi — tanpa flicker."""
         with self.freeze_ui():
             try:
                 tbl = self._active_table()
@@ -8588,80 +8630,87 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
-                dpid = self.table.item(row, self.col_index("DPID")).text().strip()
-                nama = self.table.item(row, self.col_index("NAMA")).text().strip()
-                ket = self.table.item(row, self.col_index("KET")).text().strip() if self.col_index("KET") != -1 else ""
+                ci_dpid = self.col_index("DPID")
+                ci_nama = self.col_index("NAMA")
+                ci_ket  = self.col_index("KET")
 
-                # --- Validasi dasar
-                if not dpid or dpid == "0" or ket in ("1","2","3","4","5","6","7","8"):
-                    show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
+                dpid = self.table.item(row, ci_dpid).text().strip() if ci_dpid != -1 else ""
+                nama = self.table.item(row, ci_nama).text().strip() if ci_nama != -1 else ""
+                ket  = self.table.item(row, ci_ket).text().strip() if ci_ket != -1 and self.table.item(row, ci_ket) else ""
+
+                if not dpid or dpid == "0" or ket.lower() == "b":
+                    show_modern_warning(self, "Ditolak", f"{nama} Pemilih Baru di tahap ini tidak dapat di-TMS-kan.")
                     return
 
-                # 🔹 Tambahan logika: isi JK dan TPS dari *_ASAL
-                jk_asal_idx = self.col_index("JK_ASAL")
-                tps_asal_idx = self.col_index("TPS_ASAL")
-                jk_idx = self.col_index("JK")
-                tps_idx = self.col_index("TPS")
+                # 🔹 Salin nilai JK/TPS dari *_ASAL
+                jk_asal_idx, tps_asal_idx = self.col_index("JK_ASAL"), self.col_index("TPS_ASAL")
+                jk_idx, tps_idx = self.col_index("JK"), self.col_index("TPS")
 
                 if jk_asal_idx != -1 and jk_idx != -1:
-                    jk_asal = self.table.item(row, jk_asal_idx)
-                    if jk_asal:
-                        jk_value = jk_asal.text().strip()
-                        self.table.item(row, jk_idx).setText(jk_value)
-                if tps_asal_idx != -1 and tps_idx != -1:
-                    tps_asal = self.table.item(row, tps_asal_idx)
-                    if tps_asal:
-                        tps_value = tps_asal.text().strip()
-                        self.table.item(row, tps_idx).setText(tps_value)
+                    jk_asal_item = self.table.item(row, jk_asal_idx)
+                    if jk_asal_item:
+                        jk_value = jk_asal_item.text().strip()
+                        target_item = self.table.item(row, jk_idx)
+                        if target_item:
+                            target_item.setText(jk_value)
+                        else:
+                            self.table.setItem(row, jk_idx, QTableWidgetItem(jk_value))
 
-                # 🔹 Update juga ke database
+                if tps_asal_idx != -1 and tps_idx != -1:
+                    tps_asal_item = self.table.item(row, tps_asal_idx)
+                    if tps_asal_item:
+                        tps_value = tps_asal_item.text().strip()
+                        target_item = self.table.item(row, tps_idx)
+                        if target_item:
+                            target_item.setText(tps_value)
+                        else:
+                            self.table.setItem(row, tps_idx, QTableWidgetItem(tps_value))
+
+                # 🔹 Update database
                 conn = get_connection()
                 cur = conn.cursor()
+                conn.execute("PRAGMA busy_timeout = 3000;")
+
                 if jk_asal_idx != -1 and tps_asal_idx != -1:
-                    cur.execute(
-                        f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?",
-                        (dpid,)
-                    )
+                    cur.execute(f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?", (dpid,))
                     conn.commit()
 
-                # 🔹 Konfirmasi user
                 if not show_modern_question(
                     self, f"Tandai {label}",
                     f"Apakah Anda yakin ingin menandai <b>{nama}</b> sebagai Pemilih {label}?"):
                     return
 
-                # --- Update status dan waktu
                 today_str = datetime.now().strftime("%d/%m/%Y")
                 cur.execute(f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?", (new_value, today_str, dpid))
                 conn.commit()
 
-                # --- Update di memori
+                # 🔹 Update data cache
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = new_value
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                # --- Update tampilan tabel
-                last_col = self.col_index("LastUpdate")
-                if last_col != -1:
-                    lu_item = self.table.item(row, last_col)
-                    if not lu_item:
-                        lu_item = QTableWidgetItem()
-                        self.table.setItem(row, last_col, lu_item)
-                    lu_item.setText(today_str)
+                # 🔹 Update tampilan LastUpdate aman
+                ci_lu = self.col_index("LastUpdate")
+                if ci_lu != -1:
+                    lu_item = self.table.item(row, ci_lu)
+                    if lu_item:
+                        lu_item.setText(today_str)
+                    else:
+                        self.table.setItem(row, ci_lu, QTableWidgetItem(today_str))
 
-                #self._warnai_baris_berdasarkan_ket()
-                #self._terapkan_warna_ke_tabel_aktif()
+                # 🔹 Hindari flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
 
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
                 show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal set status:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
                 self._reset_tabel_background()
 
@@ -8669,7 +8718,7 @@ class MainWindow(QMainWindow):
     # 🔹 SET STATUS BANYAK (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_banyak(self, rows, new_value, label):
-        """Set status KET untuk banyak baris sekaligus (batch super kilat)."""
+        """Set status KET untuk banyak baris sekaligus — batch cepat tanpa flicker."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -8686,9 +8735,7 @@ class MainWindow(QMainWindow):
                     f"Tandai <b>{len(rows)}</b> pemilih sebagai {label}?"):
                     return
 
-                # --- Ambil indeks kolom (efisien)
                 ci_dpid = self.col_index("DPID")
-                ci_nama = self.col_index("NAMA")
                 ci_ket = self.col_index("KET")
                 ci_jk = self.col_index("JK")
                 ci_tps = self.col_index("TPS")
@@ -8699,36 +8746,35 @@ class MainWindow(QMainWindow):
                 batch_data = []
                 ok = rejected = 0
 
-                # --- Loop logika pemilihan data valid
                 for row in rows:
-                    # Pastikan semua index valid
-                    if ci_dpid == -1 or ci_nama == -1:
-                        continue
-
                     dpid_item = self.table.item(row, ci_dpid)
                     ket_item = self.table.item(row, ci_ket)
-                    nama_item = self.table.item(row, ci_nama)
 
                     dpid = dpid_item.text().strip() if dpid_item else ""
                     ket = ket_item.text().strip() if ket_item else ""
-                    nama = nama_item.text().strip() if nama_item else ""
 
-                    # --- Validasi (hanya KET 1–8)
-                    if not dpid or dpid == "0" or ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    if not dpid or dpid == "0" or ket.lower() == "b":
                         rejected += 1
                         continue
 
-                    # --- Ambil nilai JK_ASAL dan TPS_ASAL
                     jk_asal = self.table.item(row, ci_jk_asal).text().strip() if ci_jk_asal != -1 and self.table.item(row, ci_jk_asal) else ""
                     tps_asal = self.table.item(row, ci_tps_asal).text().strip() if ci_tps_asal != -1 and self.table.item(row, ci_tps_asal) else ""
 
-                    # --- Update langsung di tabel (UI)
-                    if ci_jk != -1 and self.table.item(row, ci_jk):
-                        self.table.item(row, ci_jk).setText(jk_asal)
-                    if ci_tps != -1 and self.table.item(row, ci_tps):
-                        self.table.item(row, ci_tps).setText(tps_asal)
+                    # --- Update tampilan langsung
+                    if ci_jk != -1:
+                        jk_item = self.table.item(row, ci_jk)
+                        if jk_item:
+                            jk_item.setText(jk_asal)
+                        else:
+                            self.table.setItem(row, ci_jk, QTableWidgetItem(jk_asal))
 
-                    # --- Masukkan ke batch DB
+                    if ci_tps != -1:
+                        tps_item = self.table.item(row, ci_tps)
+                        if tps_item:
+                            tps_item.setText(tps_asal)
+                        else:
+                            self.table.setItem(row, ci_tps, QTableWidgetItem(tps_asal))
+
                     batch_data.append((new_value, today_str, jk_asal, tps_asal, dpid))
                     ok += 1
 
@@ -8736,7 +8782,6 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
                     return
 
-                # --- Eksekusi batch ultra cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8757,20 +8802,22 @@ class MainWindow(QMainWindow):
                 """, batch_data)
                 conn.commit()
 
+                # 🔹 Nonaktifkan repaint (anti flicker)
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+
                 msg = f"✅ {ok} ditandai {label}"
                 if rejected:
                     msg += f", ❌ {rejected} dilewati"
                 show_modern_info(self, "Selesai", msg)
 
-                # --- Refresh tampilan tabel
-                self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal set status:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
-                self._clear_row_selection(row)
+                self._clear_row_selection(rows)
                 self._reset_tabel_background()
 
     # =========================================================
