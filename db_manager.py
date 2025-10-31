@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-db_manager.py – Pengelola koneksi database terenkripsi NexVo
+db_manager.py – Pengelola koneksi database terenkripsi \\NexVo
 Kompatibel dengan SQLCipher3 dan fallback otomatis ke SQLite.
+Versi ini stabil untuk dijalankan di VSCode dan hasil build (.exe)
+tanpa looping init_db.py berulang.
 """
 
 import os, sys, sqlite3, subprocess, time, functools
@@ -16,18 +18,32 @@ _connection = None
 _connection_lock = Lock()
 
 # =========================================================
-# 🗂️ PATH KONFIGURASI
+# 🗂️ PATH KONFIGURASI (STABIL UNTUK DEV & BUILD)
 # =========================================================
-# Folder AppData untuk NexVo dan Key
-APPDATA_DIR = Path(os.getenv("APPDATA"))  # biasanya C:\Users\<User>\AppData\Roaming
-DB_DIR = APPDATA_DIR / "NexVo"
-KEY_DIR = APPDATA_DIR / "Aplikasi"
+def get_persistent_path():
+    """
+    Tentukan folder penyimpanan database & key:
+    - Jika dijalankan di EXE (PyInstaller), gunakan AppData\\NexVo.
+    - Jika dijalankan dari VSCode, gunakan folder skrip (lokal proyek).
+    """
+    if getattr(sys, 'frozen', False):
+        # 🔒 Saat dijalankan dari hasil build (PyInstaller)
+        base_dir = Path(os.getenv("APPDATA")) / "NexVo"
+    else:
+        # 💻 Saat dijalankan dari source code (VSCode)
+        base_dir = Path(__file__).resolve().parent
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
 
-# Buat folder jika belum ada
+
+# --- Tentukan direktori utama ---
+APPDATA_DIR = Path(os.getenv("APPDATA"))
+DB_DIR = APPDATA_DIR / "NexVo"
+KEY_DIR = APPDATA_DIR / "Aplikasi"           # Folder khusus untuk kunci
 DB_DIR.mkdir(parents=True, exist_ok=True)
 KEY_DIR.mkdir(parents=True, exist_ok=True)
 
-# Path lengkap file
+# --- Path lengkap file ---
 DB_PATH = DB_DIR / "nexvo.db"
 KEY_PATH = KEY_DIR / "nexvo.key"
 
@@ -194,17 +210,11 @@ def init_schema(conn) -> None:
     if count == 0:
         print("[INFO] Tabel 'kecamatan' kosong → menjalankan init_db.py ...")
         try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(base_dir, "init_db.py")
-            if os.path.exists(script_path):
-                subprocess.run([sys.executable, script_path], check=True)
-                print("[✅] Data kecamatan berhasil diinisialisasi otomatis.")
-            else:
-                print(f"[PERINGATAN] File init_db.py tidak ditemukan di {script_path}")
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] init_db.py gagal dijalankan: {e}")
+            from init_db import init_kecamatan
+            init_kecamatan()
+            print("[✅] Data kecamatan berhasil diinisialisasi otomatis.")
         except Exception as e:
-            print(f"[ERROR] Gagal menjalankan init_db.py: {e}")
+            print(f"[ERROR] Gagal inisialisasi data kecamatan: {e}")
 
 
 # =========================================================

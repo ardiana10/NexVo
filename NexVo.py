@@ -40,6 +40,8 @@ except Exception as e:
     print("[ERROR] sqlcipher3 belum terpasang. Install: pip install sqlcipher3-wheels (Windows) atau sqlcipher3.")
     raise
 
+from app_utils import resource_path, app_icon
+
 # =========================
 # PyQt6
 # =========================
@@ -4145,6 +4147,7 @@ class LoginWindow(QMainWindow):
         super().__init__()
         self.conn = conn
         self.setWindowTitle("Login Akun")
+        self.setWindowIcon(app_icon())
 
         # === Logo aplikasi di title bar ===
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -4823,6 +4826,7 @@ class LoginWindow(QMainWindow):
 class ResetPasswordDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowIcon(app_icon())
 
         # ============================================================
         # 🌫️ Overlay blur khas NexVo — aktif otomatis saat dialog dibuka
@@ -5359,6 +5363,7 @@ class MainWindow(QMainWindow):
     """Halaman utama sederhana sementara (dengan ikon di title bar bawaan)."""
     def __init__(self, nama, kecamatan, desa, db_name, tahapan):
         super().__init__()
+        self.setWindowIcon(app_icon())
 
         self._nama = nama
         self._kecamatan = kecamatan
@@ -5389,7 +5394,7 @@ class MainWindow(QMainWindow):
             print(f"[PERINGATAN] File ikon tidak ditemukan: {icon_path}")
         else:
             # ✅ Set icon ke title bar bawaan Windows
-            self.setWindowIcon(QIcon(icon_path))
+            self.setWindowIcon(app_icon())
 
         # Title bar default bawaan
         self.setWindowTitle(f"Desa {desa.title()} – Tahap {tahapan.upper()}")
@@ -7086,7 +7091,7 @@ class MainWindow(QMainWindow):
         # === Pastikan ikon aplikasi (KPU.png) muncul di kiri atas ===
         icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
         if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+            self.setWindowIcon(app_icon())
 
         # === Siapkan dashboard (bangun baru atau refresh jika sudah ada) ===
         if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
@@ -13121,6 +13126,7 @@ class UnggahRegulerWindow(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.setPalette(QApplication.instance().palette())
+        self.setWindowIcon(app_icon())
         self.main_window = main_window
 
         # ==========================================
@@ -13143,7 +13149,7 @@ class UnggahRegulerWindow(QWidget):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base_dir, "KPU.png")
             if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
+                self.setWindowIcon(app_icon())
         except Exception as e:
             print(f"[Warning] Gagal memuat ikon KPU: {e}")
 
@@ -13772,6 +13778,7 @@ class SesuaiWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Sesuai")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14029,6 +14036,7 @@ class RekapWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Aktif")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14288,6 +14296,7 @@ class BaruWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14547,6 +14556,7 @@ class PemulaWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru (non-DP4)")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14805,6 +14815,7 @@ class UbahWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Pemilih")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15063,6 +15074,7 @@ class SaringWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih TMS")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15294,6 +15306,7 @@ class KtpWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih KTPel")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15522,6 +15535,7 @@ class DifabelWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Disabilitas")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15750,6 +15764,7 @@ class UbahKelaminWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Jenis Kelamin")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -16008,6 +16023,7 @@ class UbahTPSWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
 
         self.setWindowTitle("Rekap Ubah TPS Masuk dan Ubah TPS Keluar")
@@ -16281,6 +16297,7 @@ class BeritaAcara(QMainWindow):
     """Jendela Berita Acara lengkap sesuai template resmi (2 halaman, dengan logo, input, navigasi, dan viewer)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -18052,6 +18069,7 @@ class _DialogDataBA(QDialog):
 class _DialogMasukan(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Input Masukan / Tanggapan")
         self.setModal(True)
         self.setMinimumWidth(520)
@@ -18152,6 +18170,7 @@ class LampAdpp(QMainWindow):
     """Tampilan langsung Model A – Daftar Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -19812,6 +19831,7 @@ class LampArpp(QMainWindow):
     """Tampilan langsung Model A – Rekap Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -20522,6 +20542,7 @@ class LampRekapPps(QMainWindow):
     """Tampilan langsung Model A – Rekap Pemilih Aktif PPS (portrait, A4, Arial 12, lengkap fungsi simpan & print)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -21061,6 +21082,7 @@ class LapCoklit(QMainWindow):
     """Tampilan langsung Model Laporan Hasil Coklit."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -22128,6 +22150,7 @@ class Data_Pantarlih(QMainWindow):
     """Jendela pengisian data pantarlih per TPS — full SQLCipher native, cepat, dan stabil."""
     def __init__(self, lapcoklit_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.lapcoklit = lapcoklit_window
         self.setWindowTitle("Data Pantarlih")
         self.setStyleSheet("background-color: white;")
@@ -22143,7 +22166,7 @@ class Data_Pantarlih(QMainWindow):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base_dir, "KPU.png")
             if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
+                self.setWindowIcon(app_icon())
         except Exception:
             pass
 
@@ -22845,44 +22868,6 @@ class CopyEventFilter(QObject):
 
         return super().eventFilter(obj, event)
 
-#####################################*************########################################
-#####################################*************########################################
-#####################################*************########################################
-def is_dev_mode_requested():
-    """Cek apakah mode Dev diaktifkan via environment variable atau argumen CLI."""
-    if os.getenv("NEXVO_DEV_MODE", "") == "1":
-        return True
-    if "--dev" in sys.argv:
-        return True
-    return False
-
-
-def confirm_dev_mode(parent=None):
-    """
-    Jika ada password dev di environment variable, minta password dulu.
-    Jika tidak, hanya tampilkan konfirmasi yes/no.
-    """
-    dev_pw = os.getenv("NEXVO_DEV_PASSWORD", "").strip()
-    if dev_pw:
-        pw, ok = QInputDialog.getText(
-            parent, "Dev Mode",
-            "Masukkan DEV password:",
-            echo=QInputDialog.EchoMode.Password
-        )
-        if not ok:
-            return False
-        return pw == dev_pw
-    else:
-        ans = QMessageBox.question(
-            parent, "Dev Mode",
-            "Jalankan aplikasi dalam MODE DEV (bypass login & OTP)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        return ans == QMessageBox.StandardButton.Yes
-#####################################*************########################################
-#####################################*************########################################
-#####################################*************########################################
-
 # =====================================================
 # FORM BUAT AKUN BARU (REGISTER)
 # =====================================================
@@ -22890,6 +22875,8 @@ class RegisterWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Buat Akun Baru")
+        self.setWindowIcon(app_icon())
+        self.setWindowIcon(app_icon())
         self.conn = get_connection()
         self.showMaximized()
 
@@ -23511,85 +23498,59 @@ class RegisterWindow(QMainWindow):
 
         dlg.exec()
         return code_holder["val"]
+    
 
-#if __name__ == "__main__":
-    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
-#    from db_manager import bootstrap, close_connection
-#    conn = bootstrap()
-
-#    if conn is None:
-#        QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
-#        sys.exit(1)
-
-    # 🔹 Jalankan aplikasi Qt
-#    app = QApplication(sys.argv)
-#    app.setStyle(QStyleFactory.create("Fusion"))
-#    apply_global_palette(app, mode="light")
-#    app.setApplicationName("NexVo")
-
-    # 🔹 Jalankan halaman login
-#    win = LoginWindow(conn)
-#    win.show()  # showMaximized sudah di dalam __init__
-
-    # 🔹 Tangani penutupan koneksi saat aplikasi ditutup
-#    exit_code = app.exec()
-#    close_connection()
-#    sys.exit(exit_code)
-
-
-
-# ==========================================================
-# 🚀 Entry point dengan Mode DEV opsional
-# ==========================================================
 if __name__ == "__main__":
+    import os, sys, ctypes
     from db_manager import bootstrap, close_connection, DB_PATH
-    from PyQt6.QtWidgets import QApplication, QMessageBox
-    import sys
+    from PyQt6.QtWidgets import QApplication, QMessageBox, QStyleFactory
+    from app_utils import app_icon  # ← hanya app_icon, karena apply_global_palette sudah ada di NexVo.py
 
-    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
-    conn = bootstrap()
-    if conn is None:
-        QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
-        sys.exit(1)
-
-    # 🔹 Bangun aplikasi Qt
+    # ============================================================
+    # 🔹 Buat QApplication lebih dulu
+    # ============================================================
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
-    apply_global_palette(app)
+    apply_global_palette(app)  # ini panggil fungsi yang sudah ada di NexVo.py
     app.setApplicationName("NexVo")
 
-    # ===================================================
-    # 🔹 Cek apakah mode DEV diaktifkan
-    # ===================================================
-    try:
-        if is_dev_mode_requested():
-            if confirm_dev_mode(None):
-                print("[DEV MODE] Melewati proses login & OTP...")
-                dev_nama = "ARI ARDIANA"
-                dev_kecamatan = "TANJUNGJAYA"
-                dev_desa = "SUKASENANG"
-                dev_tahapan = "DPHP"
+    # ============================================================
+    # 🔹 Set ikon global aplikasi
+    # ============================================================
+    app.setWindowIcon(app_icon())
 
-                mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
-                mw.show()
+    # 🪟 FIX: Pastikan ikon taskbar ikut muncul di Windows
+    if os.name == "nt":
+        try:
+            myappid = "com.kpu.nexvo"  # ID unik bebas
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print(f"[WARN] Gagal set AppUserModelID: {e}")
 
-                # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
-                exit_code = app.exec()
-                close_connection()
-                sys.exit(exit_code)
-            else:
-                print("[INFO] Mode DEV dibatalkan oleh user.")
-    except NameError:
-        # fallback jika belum didefinisikan
-        print("[WARN] Fungsi is_dev_mode_requested() / confirm_dev_mode() belum didefinisikan.")
+    # ============================================================
+    # 🔹 Inisialisasi database terenkripsi
+    # ============================================================
+    conn = bootstrap()
+    if conn is None:
+        QMessageBox.critical(None, "Kesalahan Fatal",
+                             "Gagal inisialisasi database. Aplikasi akan keluar.")
+        sys.exit(1)
 
-    # ===================================================
-    # 🔹 Mode normal → tampilkan login
-    # ===================================================
+    # ============================================================
+    # 🔹 Jalankan halaman login utama
+    # ============================================================
     win = LoginWindow(conn)
     win.show()
 
-    # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
+    # ============================================================
+    # 🔹 Jalankan event loop Qt & tutup koneksi saat keluar
+    # ============================================================
     exit_code = app.exec()
-    close_connection()
+
+    try:
+        close_connection()
+        print("[INFO] Koneksi database ditutup dengan aman.")
+    except Exception as e:
+        print(f"[WARN] Gagal menutup koneksi database: {e}")
+
     sys.exit(exit_code)
