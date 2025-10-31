@@ -9,6 +9,8 @@
 *.enc
 *.env
 .env.*
+*.bat
+.bat.*
 *.json
 nexvo.key
 config.json
@@ -26,6 +28,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.vscode
+*.build
+*.buildenv
+*.dist
+*.Portable
 
 # 🧩 Virtual environment
 venv/
