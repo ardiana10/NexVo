@@ -16,6 +16,9 @@ nexvo.key
 config.json
 secrets.json
 
+# Salah ketik perintah Git
+t commit NexVo*
+
 # 🧱 Database lokal
 *.db
 *.sqlite
@@ -70,11 +73,19 @@ build/
 *.dll
 *.pyd
 
+# PyInstaller spec file
+*.spec
+
 # 🧰 Testing & profiling
 .coverage
 .cache/
 pytest_cache/
 htmlcov/
+
+# Local Git config
+.gitconfig
+NexVo
+NexVo.*
 
 # 🔍 Backup / temp / auto-save
 *.bak
