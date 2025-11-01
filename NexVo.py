@@ -23608,7 +23608,6 @@ class RegisterWindow(QMainWindow):
         dlg.exec()
         return code_holder["val"]
     
-
 if __name__ == "__main__":
     import os, sys, ctypes
     from db_manager import bootstrap, close_connection, DB_PATH
