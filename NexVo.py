@@ -7083,30 +7083,28 @@ class MainWindow(QMainWindow):
         import os
         from PyQt6.QtGui import QIcon
 
-        # === Pastikan self.stack masih valid ===
+        # === Pastikan stack masih valid ===
         if not hasattr(self, "stack") or self.stack is None:
             show_modern_error(self, "Error", "Elemen utama (stack) telah dihapus. Mohon restart aplikasi.")
             return
 
-        # === Pastikan ikon aplikasi (KPU.png) muncul di kiri atas ===
+        # === Ikon kiri atas ===
         icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(app_icon())
 
-        # === Siapkan dashboard (bangun baru atau refresh jika sudah ada) ===
+        # === Siapkan dashboard ===
         if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
-            # Dashboard sudah pernah dibuat → cukup refresh saja
             if hasattr(self, "refresh_dashboard_on_show"):
                 try:
                     self.refresh_dashboard_on_show()
                 except Exception as e:
                     print(f"[Dashboard Refresh Error] {e}")
         else:
-            # Dashboard belum pernah dibuat → bangun baru
             self.dashboard_page = self._build_dashboard_widget()
             self.stack.addWidget(self.dashboard_page)
 
-        # === Ambil ulang data dari DB aktif (pasti sinkron dengan tabel utama) ===
+        # === Ambil ulang data utama header ===
         @with_safe_db
         def _get_header_stats(self, conn=None):
             cur = conn.cursor()
@@ -7132,7 +7130,7 @@ class MainWindow(QMainWindow):
 
         stats = _get_header_stats(self)
 
-        # === Update label atas (pastikan sesuai nama label yang anda gunakan) ===
+        # === Update label atas ===
         try:
             if hasattr(self, "lbl_total_pemilih"):
                 self.lbl_total_pemilih.setText(f"{stats['total']:,}".replace(",", "."))
@@ -7144,16 +7142,12 @@ class MainWindow(QMainWindow):
                 self.lbl_total_desa.setText(f"{stats['desa']:,}".replace(",", "."))
             if hasattr(self, "lbl_total_tps"):
                 self.lbl_total_tps.setText(f"{stats['tps']:,}".replace(",", "."))
-            #print("[Dashboard Header] Label atas diperbarui sukses.")
         except Exception as e:
             print(f"[Dashboard Header Error] {e}")
 
-        # === Pastikan sudah terdaftar di stack ===
+        # === Pastikan sudah di stack ===
         if self.stack.indexOf(self.dashboard_page) == -1:
             self.stack.addWidget(self.dashboard_page)
-
-        # Tandai bahwa posisi user sedang di dashboard
-        self._is_on_dashboard = True
 
         # === Sembunyikan toolbar & filter ===
         for tb in self.findChildren(QToolBar):
@@ -7161,17 +7155,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, "filter_dock") and self.filter_dock:
             self.filter_dock.hide()
 
-        # === Status bar tetap ada tapi hanya menampilkan versi NexVo ===
+        # === Status bar tetap tampil versi ===
         if self.statusBar():
             self.statusBar().showMessage("NexVo v1.0")
 
-        # === Tampilkan dashboard dengan animasi Fade-in ===
+        # === Animasi masuk dashboard ===
         self._stack_fade_to(self.dashboard_page, duration=600)
-
 
     def _build_dashboard_widget(self) -> QWidget:
         """Bangun halaman Dashboard modern dinamis dari database aktif."""
-        # === Widget utama ===
         dash_widget = QWidget()
         dash_layout = QVBoxLayout(dash_widget)
         dash_layout.setContentsMargins(30, 0, 30, 10)
@@ -7205,7 +7197,7 @@ class MainWindow(QMainWindow):
         dash_layout.addWidget(header_frame)
         dash_layout.addSpacing(-50)
 
-        # === Fade-in ===
+        # === Fade-in efek ===
         header_effect = QGraphicsOpacityEffect(header_frame)
         header_frame.setGraphicsEffect(header_effect)
         header_anim = QPropertyAnimation(header_effect, b"opacity")
@@ -7215,91 +7207,80 @@ class MainWindow(QMainWindow):
         header_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         header_anim.start()
 
-        # ======================================================
-        # 🧮 Ambil Data Statistik dari Database Aktif
-        # ======================================================
+        # === Ambil data dashboard ===
         @with_safe_db
         def get_dashboard_data(self, conn=None):
             cur = conn.cursor()
             tbl = self._active_table()
-
             where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
 
-            # Total pemilih
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
             total = cur.fetchone()[0] or 0
 
-            # 🧩 Jika tabel kosong, langsung kembalikan nilai 0 semua
             if total == 0:
                 return {
                     "desa": self._desa.title(),
-                    "total": 0,
-                    "laki": 0,
-                    "perempuan": 0,
-                    "desa_distinct": 0,
-                    "tps": 0,
-                    "bars": {
-                        "MENINGGAL": 0,
-                        "GANDA": 0,
-                        "DI BAWAH UMUR": 0,
-                        "PINDAH DOMISILI": 0,
-                        "WNA": 0,
-                        "TNI": 0,
-                        "POLRI": 0,
-                        "SALAH TPS": 0,
-                    },
+                    "total": 0, "laki": 0, "perempuan": 0,
+                    "desa_distinct": 0, "tps": 0,
+                    "bars": {k: 0 for k in ["MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI", "WNA", "TNI", "POLRI", "SALAH TPS"]},
+                    "baru_l": 0, "baru_p": 0, "baru_total": 0,
+                    "ubah_l": 0, "ubah_p": 0, "ubah_total": 0
                 }
 
-            # Laki-laki & Perempuan
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
             laki = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
 
-            # Distinct desa & TPS
             cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
             desa_distinct = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
-            # Status-statistik (KET 1–8)
             bars = {}
             kode_map = {
-                1: "MENINGGAL",
-                2: "GANDA",
-                3: "DI BAWAH UMUR",
-                4: "PINDAH DOMISILI",
-                5: "WNA",
-                6: "TNI",
-                7: "POLRI",
-                8: "SALAH TPS"
+                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR",
+                4: "PINDAH DOMISILI", 5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
             }
             for kode, label in kode_map.items():
                 cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
                 bars[label] = cur.fetchone()[0] or 0
 
+            # Statistik tambahan
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('L','l'))")
+            baru_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('P','p'))")
+            baru_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b'))")
+            baru_total = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('L','l'))")
+            ubah_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('P','p'))")
+            ubah_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u'))")
+            ubah_total = cur.fetchone()[0] or 0
+
             return {
                 "desa": self._desa.title(),
-                "total": total,
-                "laki": laki,
-                "perempuan": perempuan,
-                "desa_distinct": desa_distinct,
-                "tps": tps_distinct,
+                "total": total, "laki": laki, "perempuan": perempuan,
+                "desa_distinct": desa_distinct, "tps": tps_distinct,
                 "bars": bars,
+                "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
+                "ubah_l": ubah_l, "ubah_p": ubah_p, "ubah_total": ubah_total
             }
 
         stats = get_dashboard_data(self)
 
         # ======================================================
-        # 🪪 Kartu Ringkasan
+        # 🪪 KARTU RINGKASAN
         # ======================================================
         top_row = QHBoxLayout()
         top_row.setSpacing(15)
 
         def make_card(icon, title, value):
             card = QFrame()
-            card.setMinimumWidth(150)
-            card.setMaximumWidth(220)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             lay = QVBoxLayout(card)
             lay.setContentsMargins(10, 8, 10, 8)
             lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -7342,7 +7323,7 @@ class MainWindow(QMainWindow):
 
         # === PIE DONUT + BAR ===
         middle_row = QHBoxLayout()
-        middle_row.setSpacing(40)
+        middle_row.setSpacing(60)
 
         # === PIE DONUT ===
         total = max(stats["total"], 1)
@@ -7539,19 +7520,19 @@ class MainWindow(QMainWindow):
 
             bg = QFrame()
             bg.setFixedHeight(8)
-            bg.setMaximumWidth(280)
+            bg.setMaximumWidth(420)
             bg.setStyleSheet("background:#eee; border-radius:2px;")
 
             inner = QHBoxLayout(bg)
-            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setContentsMargins(6, 0, 0, 0)
             inner.setSpacing(0)
 
             fg = QFrame()
             fg.setFixedHeight(8)
             fg.setStyleSheet("background:#ff6600; border-radius:2px;")
 
-            base_ratio = 0.9
-            stretch_val = max(1, min(int(ratio * 100 * base_ratio), 80))
+            base_ratio = 1.3
+            stretch_val = max(5, min(int(ratio * 100 * base_ratio), 95))
             inner.addWidget(fg, stretch_val)
             inner.addStretch(100 - stretch_val)
 
@@ -7573,7 +7554,83 @@ class MainWindow(QMainWindow):
             bar_layout.addLayout(row)
 
         middle_row.addWidget(bar_frame, 2)
+        # ======================================================
+        # 📈 PANEL TAMBAHAN: Pemilih Baru & Ubah Data
+        # ======================================================
+        extra_frame = QFrame()
+        extra_layout = QVBoxLayout(extra_frame)
+        extra_layout.setSpacing(6)
+        extra_layout.setContentsMargins(35, 25, 35, 25)
+
+        # 🔹 Judul
+        judul_lbl = QLabel("🧾 Pemilih Baru & Ubah Data")
+        judul_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        judul_lbl.setStyleSheet("""
+            font-size:12pt;
+            font-weight:600;
+            color:#333;
+            margin-bottom:8px;
+        """)
+        extra_layout.addWidget(judul_lbl)
+
+        def make_stat_row(label, value, color="#6b4e71"):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+            lbl = QLabel(label)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setStyleSheet("font-size:10.5pt; color:#333;")
+
+            val_lbl = QLabel(f"{value:,}".replace(",", "."))
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            val_lbl.setStyleSheet(f"font-size:11pt; font-weight:600; color:{color}; min-width:55px;")
+
+            row.addWidget(lbl, 2)
+            row.addWidget(val_lbl, 1)
+            return row
+
+        # 🔸 Grup 1: Pemilih Baru
+        extra_layout.addLayout(make_stat_row("Pemilih Baru (L)", stats["baru_l"], "#6b4e71"))
+        extra_layout.addLayout(make_stat_row("Pemilih Baru (P)", stats["baru_p"], "#ff6600"))
+        extra_layout.addLayout(make_stat_row("Total Pemilih Baru", stats["baru_total"], "#444"))
+
+        # 🔹 Garis pemisah halus abu-abu
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("color:#ddd; background:#ddd; max-height:1px; margin-top:6px; margin-bottom:6px;")
+        extra_layout.addWidget(separator)
+
+        # 🔸 Grup 2: Ubah Data
+        extra_layout.addLayout(make_stat_row("Ubah Data (L)", stats["ubah_l"], "#6b4e71"))
+        extra_layout.addLayout(make_stat_row("Ubah Data (P)", stats["ubah_p"], "#ff6600"))
+        extra_layout.addLayout(make_stat_row("Total Ubah Data", stats["ubah_total"], "#444"))
+
+        # 🔹 Gaya & bayangan kartu
+        shadow_extra = QGraphicsDropShadowEffect()
+        shadow_extra.setBlurRadius(25)
+        shadow_extra.setOffset(0, 3)
+        shadow_extra.setColor(QColor(0, 0, 0, 50))
+        extra_frame.setGraphicsEffect(shadow_extra)
+        extra_frame.setStyleSheet("background:#fff; border-radius:14px;")
+
+        extra_frame.setMinimumWidth(260)
+        extra_frame.setMaximumWidth(310)
+
+        middle_row.addWidget(extra_frame, 1)
         dash_layout.addLayout(middle_row)
+
+        # === Simpan referensi untuk refresh cepat ===
+        self.extra_labels = {
+            "baru_l": extra_layout.itemAt(1).layout().itemAt(1).widget(),
+            "baru_p": extra_layout.itemAt(2).layout().itemAt(1).widget(),
+            "baru_total": extra_layout.itemAt(3).layout().itemAt(1).widget(),
+            "ubah_l": extra_layout.itemAt(5).layout().itemAt(1).widget(),
+            "ubah_p": extra_layout.itemAt(6).layout().itemAt(1).widget(),
+            "ubah_total": extra_layout.itemAt(7).layout().itemAt(1).widget(),
+        }
 
         # === STYLE GLOBAL ===
         dash_widget.setStyleSheet("""
@@ -7641,16 +7698,12 @@ class MainWindow(QMainWindow):
     def refresh_dashboard_on_show(self):
         """Refresh data dashboard setiap kali halaman dashboard ditampilkan."""
         try:
-            # Jika dashboard belum pernah dibuat, keluar diam-diam
+            # Dashboard belum siap? keluar diam-diam
             if not hasattr(self, "bar_labels") or not hasattr(self, "slice_laki") or not hasattr(self, "slice_perempuan"):
-                #print("[Dashboard Refresh] Dashboard belum siap → dilewati.")
                 return
-
-            if hasattr(self, "dashboard_page") and getattr(self, "current_page", "") == "dashboard":
-                if hasattr(self, "refresh_dashboard"):
-                    self.refresh_dashboard()
         except Exception as e:
             print(f"[Dashboard Refresh Error] {e}")
+            return
 
         # === Ambil ulang data dari DB aktif ===
         @with_safe_db
@@ -7659,50 +7712,80 @@ class MainWindow(QMainWindow):
             tbl = self._active_table()
             where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
 
+            # Total pemilih
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
             total = cur.fetchone()[0] or 0
 
             if total == 0:
-                bars = {
-                    "MENINGGAL": 0, "GANDA": 0, "DI BAWAH UMUR": 0, "PINDAH DOMISILI": 0,
-                    "WNA": 0, "TNI": 0, "POLRI": 0, "SALAH TPS": 0
+                return {
+                    "desa": self._desa.title(),
+                    "total": 0, "laki": 0, "perempuan": 0,
+                    "desa_distinct": 0, "tps": 0,
+                    "bars": {k: 0 for k in [
+                        "MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI",
+                        "WNA", "TNI", "POLRI", "SALAH TPS"
+                    ]},
+                    "baru_l": 0, "baru_p": 0, "baru_total": 0,
+                    "ubah_l": 0, "ubah_p": 0, "ubah_total": 0
                 }
-                return {"total": 0, "laki": 0, "perempuan": 0,
-                        "desa_distinct": 0, "tps": 0, "bars": bars}
 
-            # Data valid → lanjut hitung
+            # Laki-laki & Perempuan
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
             laki = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
+
+            # Distinct desa & TPS
             cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
             desa_distinct = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
-            kode_map = {
-                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR", 4: "PINDAH DOMISILI",
-                5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
-            }
+            # Status KET 1–8
             bars = {}
+            kode_map = {
+                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR",
+                4: "PINDAH DOMISILI", 5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
+            }
             for kode, label in kode_map.items():
                 cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
                 bars[label] = cur.fetchone()[0] or 0
 
-            return {"total": total, "laki": laki, "perempuan": perempuan,
-                    "desa_distinct": desa_distinct, "tps": tps_distinct, "bars": bars}
+            # Statistik tambahan
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('L','l'))")
+            baru_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('P','p'))")
+            baru_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b'))")
+            baru_total = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('L','l'))")
+            ubah_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('P','p'))")
+            ubah_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u'))")
+            ubah_total = cur.fetchone()[0] or 0
+
+            return {
+                "desa": self._desa.title(),
+                "total": total, "laki": laki, "perempuan": perempuan,
+                "desa_distinct": desa_distinct, "tps": tps_distinct,
+                "bars": bars,
+                "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
+                "ubah_l": ubah_l, "ubah_p": ubah_p, "ubah_total": ubah_total
+            }
 
         stats = get_dashboard_data(self)
 
-        # === Kalau dashboard belum siap, keluar aman ===
-        if not hasattr(self, "bar_labels"):
-            #print("[Dashboard Refresh] Tidak ada bar_labels → dilewati.")
-            return
-        
+        # === Update statistik tambahan (panel kanan) ===
+        if hasattr(self, "extra_labels"):
+            for key in self.extra_labels:
+                val = stats.get(key, 0)
+                self.extra_labels[key].setText(f"{val:,}".replace(",", "."))
+
         # === Update bar chart ===
         total_safe = max(stats["total"], 1)
 
-        # === Helper untuk ubah panjang batang ===
         def _set_bar_stretch(ref, stretch_0_100: int):
             inner = ref["inner"]
             fg = ref["fg"]
@@ -7728,19 +7811,19 @@ class MainWindow(QMainWindow):
                 ref = self.bar_labels[key]
                 ref["value"].setText(f"{val:,}".replace(",", "."))
                 stretch = int((val / total_safe) * 100)
-                stretch = max(1, min(stretch, 90))
+                stretch = max(5, min(stretch, 95))
                 _set_bar_stretch(ref, stretch)
 
-        # === Update pie chart ===
+        # === Update pie chart (donut) ===
         total = max(stats["total"], 1)
         pct_laki = (stats["laki"] / total) * 100
         pct_perempuan = (stats["perempuan"] / total) * 100
         self.slice_laki.setValue(pct_laki)
         self.slice_perempuan.setValue(pct_perempuan)
 
-        # === Refresh label ringkasan atas (Pemilih, Laki-laki, Perempuan, Desa, TPS) ===
-        try:
-            if hasattr(self, "card_labels"):
+        # === Update kartu ringkasan atas ===
+        if hasattr(self, "card_labels"):
+            try:
                 if "total" in self.card_labels:
                     self.card_labels["total"].setText(f"{stats['total']:,}".replace(",", "."))
                 if "laki" in self.card_labels:
@@ -7751,11 +7834,8 @@ class MainWindow(QMainWindow):
                     self.card_labels["desa"].setText(f"{stats['desa_distinct']:,}".replace(",", "."))
                 if "tps" in self.card_labels:
                     self.card_labels["tps"].setText(f"{stats['tps']:,}".replace(",", "."))
-                #print("[Dashboard Header] card_labels diperbarui sukses.")
-            else:
-                print("[Dashboard Header] card_labels tidak ditemukan.")
-        except Exception as e:
-            print(f"[Dashboard Header Refresh Error] {e}")
+            except Exception as e:
+                print(f"[Dashboard Header Refresh Error] {e}")
 
         #print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
 
@@ -9144,11 +9224,7 @@ class MainWindow(QMainWindow):
 
 
     def cek_potensi_dibawah_umur(self):
-        """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB)."""
-        from db_manager import get_connection
-        from datetime import datetime
-        from PyQt6.QtCore import QTimer
-
+        """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB, super-kilat & hasil identik)."""
         target_date = datetime(2029, 6, 26)
 
         try:
@@ -9167,31 +9243,52 @@ class MainWindow(QMainWindow):
                     self._refresh_table_with_new_data([])
                 return
 
-            all_data = [{col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))} for r in rows]
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
             hasil_data = []
 
             for d in all_data:
                 tgl = d.get("TGL_LHR", "").strip()
                 ket = d.get("KET", "").strip().upper()
                 sts = d.get("STS", "").strip().upper()
-                if ket in ("1","2","3","4","5","6","7","8"):
+
+                # 🚫 Abaikan data dengan KET 1–8
+                if ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
                     continue
                 if not tgl:
                     continue
 
-                for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-                    try:
-                        tgl_lhr = datetime.strptime(tgl, fmt)
-                        break
-                    except Exception:
-                        tgl_lhr = None
-                if not tgl_lhr:
+                # ⚡ Parsing super-kilat: pilih format berdasarkan pemisah
+                try:
+                    if "|" in tgl:
+                        tgl_lhr = datetime.strptime(tgl, "%d|%m|%Y")
+                    elif "/" in tgl:
+                        tgl_lhr = datetime.strptime(tgl, "%d/%m/%Y")
+                    elif "-" in tgl:
+                        # deteksi apakah format YYYY-MM-DD
+                        if len(tgl.split("-")[0]) == 4:
+                            tgl_lhr = datetime.strptime(tgl, "%Y-%m-%d")
+                        else:
+                            tgl_lhr = datetime.strptime(tgl, "%d-%m-%Y")
+                    else:
+                        continue
+                except Exception:
                     continue
 
+                # 💡 Hitung umur (tepat hingga pecahan tahun)
                 umur = (target_date - tgl_lhr).days / 365.25
-                if umur < 13 or (umur < 17 and sts == "B"):
+
+                # ✅ Logika final
+                # 1️⃣ Umur < 13  → selalu potensi
+                # 2️⃣ Umur 13–17 → potensi hanya jika STS = B/b
+                if umur < 13:
+                    hasil_data.append(d)
+                elif 13 <= umur < 17 and sts in ("B", "b"):
                     hasil_data.append(d)
 
+            # 🔄 Tampilkan hasil
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
@@ -13215,7 +13312,7 @@ class UnggahRegulerWindow(QWidget):
                 if col == 0:
                     item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
                 if col in left_indexes:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignLeft)
                 else:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
@@ -13397,13 +13494,25 @@ class UnggahRegulerWindow(QWidget):
                 if jk not in ("L", "P"): err.append("Jenis Kelamin Invalid")
 
                 try:
+                    # 🔹 Pecah tanggal berdasarkan tanda "|"
                     dd, mm, yyyy = map(int, tgl.split("|"))
                     lahir = datetime(yyyy, mm, dd)
+
+                    # 🔹 Hitung umur per 26 Juni 2029
                     umur = (datetime(2029, 6, 26) - lahir).days / 365.25
-                    if umur < 17 and sts.upper() == "B":
+
+                    # 🔹 Logika validasi umur
+                    if umur < 0 or umur < 5:
+                        # Tahun lahir lebih dari 2029 atau terlalu muda → tidak valid
+                        err.append("Tanggal Lahir Invalid")
+                    elif umur < 17 and sts.upper() == "B":
+                        # Umur valid tapi masih di bawah 17 tahun dan status 'B' → pemilih di bawah umur
                         err.append("Pemilih Dibawah Umur")
+
                 except Exception:
+                    # Format salah, nilai bukan angka, atau tanggal tidak valid
                     err.append("Tanggal Lahir Invalid")
+
 
                 sts = sts.upper()
                 if sts not in ("B", "S", "P"): err.append("Status Invalid")
