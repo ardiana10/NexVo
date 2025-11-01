@@ -1,34 +1,51 @@
 # -*- coding: utf-8 -*-
 """
 init_db.py – Inisialisasi tabel 'kecamatan' di NexVo.
-Jalankan otomatis dari db_manager.py atau manual 1x saja.
+Dipanggil otomatis dari db_manager.py atau manual via terminal.
 """
 
 import os
 import sys
 import sqlite3
 from pathlib import Path
-from db_manager import DB_PATH, load_or_create_key
+
+try:
+    # 🔹 Jika dijalankan dari dalam NexVo (sudah ada db_manager)
+    from db_manager import DB_PATH, load_or_create_key, get_connection
+    USE_GLOBAL_CONN = True
+except ImportError:
+    # 🔹 Jika dijalankan manual (tanpa NexVo)
+    from db_manager import DB_PATH, load_or_create_key
+    USE_GLOBAL_CONN = False
+
 
 def init_kecamatan():
-    """Isi tabel 'kecamatan' hanya jika kosong."""
-    print("[INFO] Membuka database terenkripsi (nexvo.db)...")
+    """Isi tabel 'kecamatan' hanya jika kosong (adaptif: global atau lokal)."""
+    print("[INFO] Inisialisasi tabel 'kecamatan'...")
 
     try:
-        # --- Gunakan koneksi langsung ke SQLCipher ---
-        try:
-            from sqlcipher3 import dbapi2 as sqlcipher
-            conn = sqlcipher.connect(DB_PATH)
-            hexkey = load_or_create_key().hex()
-            conn.execute(f"PRAGMA key = \"x'{hexkey}'\";")
-            print("[INFO] Menggunakan database terenkripsi SQLCipher3.")
-        except ImportError:
-            conn = sqlite3.connect(DB_PATH)
-            print("[WARN] sqlcipher3 tidak ditemukan, fallback ke SQLite biasa.")
+        # ===============================================================
+        # 🔐 1. Dapatkan koneksi
+        # ===============================================================
+        if USE_GLOBAL_CONN:
+            conn = get_connection()  # gunakan koneksi global aktif
+            print("[INFO] Menggunakan koneksi global dari db_manager.")
+        else:
+            try:
+                from sqlcipher3 import dbapi2 as sqlcipher
+                conn = sqlcipher.connect(DB_PATH)
+                hexkey = load_or_create_key().hex()
+                conn.execute(f"PRAGMA key = \"x'{hexkey}'\";")
+                print("[INFO] Menggunakan koneksi SQLCipher3 lokal.")
+            except ImportError:
+                conn = sqlite3.connect(DB_PATH)
+                print("[WARN] sqlcipher3 tidak ditemukan, fallback ke SQLite biasa.")
 
         cur = conn.cursor()
 
-        # --- Pastikan tabel 'kecamatan' ada ---
+        # ===============================================================
+        # 🧱 2. Pastikan tabel ada
+        # ===============================================================
         cur.execute("""
             CREATE TABLE IF NOT EXISTS kecamatan (
                 kecamatan TEXT,
@@ -36,16 +53,19 @@ def init_kecamatan():
             )
         """)
 
-        # --- Cek apakah sudah ada data ---
         cur.execute("SELECT COUNT(*) FROM kecamatan")
         count = cur.fetchone()[0]
         if count > 0:
             print(f"[INFO] Tabel 'kecamatan' sudah berisi {count} data. Tidak ada yang ditambahkan.")
-            conn.close()
+            if not USE_GLOBAL_CONN:
+                conn.close()
             return
 
         print("[INFO] Mengisi tabel 'kecamatan'...")
 
+        # ===============================================================
+        # 📋 3. Data kecamatan
+        # ===============================================================
         data = [
             ("CIPATUJAH","CIHERAS"),
             ("CIPATUJAH","CIPATUJAH"),
@@ -402,14 +422,19 @@ def init_kecamatan():
 
         cur.executemany("INSERT INTO kecamatan (kecamatan, desa) VALUES (?, ?)", data)
         conn.commit()
-        conn.close()
 
         print("[✅] Data kecamatan berhasil dimasukkan ke nexvo.db")
 
+        if not USE_GLOBAL_CONN:
+            conn.close()
+
     except Exception as e:
         print(f"[ERROR] Gagal inisialisasi tabel kecamatan: {e}")
-        sys.exit(1)
+        if not USE_GLOBAL_CONN:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
+    print("[RUN] Menjalankan init_kecamatan() manual...")
     init_kecamatan()
+    print("[DONE] Selesai.")
