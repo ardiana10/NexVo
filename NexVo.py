@@ -9225,6 +9225,7 @@ class MainWindow(QMainWindow):
 
     def cek_potensi_dibawah_umur(self):
         """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB, super-kilat & hasil identik)."""
+        ##### Ubah jadi tanggal Pemilu #####
         target_date = datetime(2029, 6, 26)
 
         try:
@@ -13647,6 +13648,7 @@ class UnggahRegulerWindow(QWidget):
                     lahir = datetime(yyyy, mm, dd)
 
                     # 🔹 Hitung umur per 26 Juni 2029
+                    ##### Ubah jadi tanggal Pemilu #####
                     umur = (datetime(2029, 6, 26) - lahir).days / 365.25
 
                     # 🔹 Logika validasi umur
