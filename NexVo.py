@@ -9850,151 +9850,229 @@ class MainWindow(QMainWindow):
                 return i
         return -1
 
-    # =================================================
-    # Import CSV Function
+
+    # Import CSV Function (OTP + Progress Bar NexVo)
     # =================================================
     def import_csv(self):
+        from PyQt6.QtWidgets import QProgressBar, QLabel, QVBoxLayout, QDialog, QWidget, QLineEdit, QPushButton
+        from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
+        from PyQt6.QtGui import QFont
+        import csv
+        from datetime import datetime
+        import pyotp
+
+        # ============================================================
+        # 🧩 1️⃣ Pilih File CSV
+        # ============================================================
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Pilih File CSV", "", "CSV Files (*.csv)"
         )
         if not file_path:
             return
 
+        # ============================================================
+        # 🧩 2️⃣ Ambil secret OTP dari database
+        # ============================================================
+        try:
+            from db_manager import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT otp_secret FROM users LIMIT 1")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                show_modern_error(self, "OTP Tidak Ditemukan", "Kode OTP belum dikonfigurasi di sistem.")
+                return
+            otp_secret = row[0].strip()
+        except Exception as e:
+            show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
+            return
+
+        # ============================================================
+        # 🧩 3️⃣ Verifikasi OTP Modern sebelum import
+        # ============================================================
+        overlay = self.buat_overlay(18)
+        otp_dialog = QDialog(self)
+        otp_dialog.setWindowTitle("Verifikasi OTP")
+        otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        otp_dialog.setStyleSheet("""
+            QDialog {
+                background-color: #dddddd;
+                color: black;
+                border-radius: 10px;
+            }
+            QLabel { color: black; font-size: 12pt; }
+            QLineEdit {
+                border: 2px solid #555;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 16pt;
+                letter-spacing: 4px;
+                background-color: #666666;
+                color: #ffffff;
+                qproperty-alignment: AlignCenter;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
+        layout = QVBoxLayout(otp_dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 25, 25, 25)
+        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+        otp_input = QLineEdit()
+        otp_input.setMaxLength(6)
+        otp_input.setPlaceholderText("••••••")
+        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        layout.addWidget(otp_input)
+        btn_verify = QPushButton("Verifikasi")
+        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_verify)
+
+        # 🔹 Efek getar khas NexVo
+        def shake_widget(widget):
+            anim = QPropertyAnimation(widget, b"pos", widget)
+            anim.setDuration(280)
+            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            start_pos = widget.pos()
+            offset = 6
+            for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
+                anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+        def do_verify():
+            code = otp_input.text().strip()
+            if not code:
+                overlay_warn = self.buat_overlay(16)
+                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                self.hapus_overlay(overlay_warn)
+                otp_input.setFocus()
+                return
+            totp = pyotp.TOTP(otp_secret)
+            if not totp.verify(code):
+                overlay_err = self.buat_overlay(16)
+                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                self.hapus_overlay(overlay_err)
+                shake_widget(otp_input)
+                otp_input.setFocus()
+                otp_input.selectAll()
+                return
+            otp_dialog.accept()
+
+        btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+        otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
+        if otp_dialog.exec() != QDialog.DialogCode.Accepted:
+            show_modern_info(self, "Dibatalkan", "Proses import CSV dibatalkan oleh pengguna.")
+            return
+
+        # ============================================================
+        # 🧩 4️⃣ OTP valid → tampilkan progress bar khas NexVo
+        # ============================================================
+        progress_overlay = QWidget(self)
+        progress_overlay.setGeometry(0, 0, self.width(), self.height())
+        progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
+        layout = QVBoxLayout(progress_overlay)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_status = QLabel("Mengimpor data CSV...")
+        lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_status.setStyleSheet("color: black; font-size: 13pt; font-weight: 600;")
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setFixedWidth(int(self.width() * 0.4))
+        progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #e0e0e0;
+                border: 1px solid #999;
+                border-radius: 10px;
+                text-align: center;
+                height: 24px;
+                color: black;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #ff6600;
+                border-radius: 10px;
+            }
+        """)
+        layout.addWidget(lbl_status)
+        layout.addSpacing(10)
+        layout.addWidget(progress_bar)
+        progress_overlay.show()
+        QApplication.processEvents()
+
+        # ============================================================
+        # 🧩 5️⃣ Proses Import CSV (100% logika asli)
+        # ============================================================
         try:
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
-                if len(reader) < 15:
+                total_rows = len(reader)
+                if total_rows < 15:
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
+                    progress_overlay.hide()
                     return
 
-                # 🔹 Verifikasi kecamatan & desa di baris ke-15 (berdasarkan nama kolom, bukan index tetap)
                 header = [h.strip().upper() for h in reader[0]]
                 header_idx = {col: i for i, col in enumerate(header)}
-
-                # Cari posisi kolom "KECAMATAN" dan "KELURAHAN"
                 idx_kec = header_idx.get("KECAMATAN")
                 idx_kel = header_idx.get("KELURAHAN")
-
                 if idx_kec is None or idx_kel is None:
-                    show_modern_warning(
-                        self, "Error",
-                        "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan di header CSV."
-                    )
+                    show_modern_warning(self, "Error", "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan.")
+                    progress_overlay.hide()
                     return
 
-                try:
-                    # Ambil baris ke-15 (index 14) sesuai format Sidalih
-                    kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
-                    desa_csv = (reader[14][idx_kel] or "").strip().upper()
-                except Exception:
-                    show_modern_warning(self, "Error", "Format CSV tidak sesuai, gagal membaca KECAMATAN/KELURAHAN.")
-                    return
-
+                kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
+                desa_csv = (reader[14][idx_kel] or "").strip().upper()
                 if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
-                    show_modern_warning(
-                        self, "Error",
-                        f"Import CSV gagal!\n"
-                        f"Harap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
-                    )
+                    show_modern_warning(self, "Error",
+                        f"Import CSV gagal!\nHarap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih.")
+                    progress_overlay.hide()
                     return
 
-                # 🔹 Tentukan nama tabel berdasarkan tahapan login
                 tahap = self._tahapan.strip().upper()
                 tabel_map = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}
                 tbl_name = tabel_map.get(tahap)
                 if not tbl_name:
                     show_modern_warning(self, "Error", f"Tahapan tidak dikenal: {tahap}")
+                    progress_overlay.hide()
                     return
 
-                # ================================================================
-                # 🔸 Mapping header CSV → kolom tabel
-                # ================================================================
-                header = [h.strip().upper() for h in reader[0]]
                 mapping = {
-                    "KECAMATAN": "KECAMATAN",
-                    "KELURAHAN": "DESA",
-                    "DPID": "DPID",
-                    "NKK": "NKK",
-                    "NIK": "NIK",
-                    "NAMA": "NAMA",
-                    "KELAMIN": "JK",  # nanti juga akan diisi ke JK_ASAL
-                    "TEMPAT LAHIR": "TMPT_LHR",
-                    "TANGGAL LAHIR": "TGL_LHR",
-                    "STS KAWIN": "STS",
-                    "ALAMAT": "ALAMAT",
-                    "RT": "RT",
-                    "RW": "RW",
-                    "DISABILITAS": "DIS",
-                    "EKTP": "KTPel",
-                    "SUMBER": "SUMBER",
-                    "KETERANGAN": "KET",
-                    "TPS": "TPS",  # nanti juga akan diisi ke TPS_ASAL
+                    "KECAMATAN": "KECAMATAN", "KELURAHAN": "DESA", "DPID": "DPID",
+                    "NKK": "NKK", "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK",
+                    "TEMPAT LAHIR": "TMPT_LHR", "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS",
+                    "ALAMAT": "ALAMAT", "RT": "RT", "RW": "RW", "DISABILITAS": "DIS",
+                    "EKTP": "KTPel", "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS",
                     "UPDATED_AT": "LastUpdate",
                 }
-
-                header_idx = {col: i for i, col in enumerate(header)}
                 idx_status = header_idx.get("STATUS", None)
                 if idx_status is None:
                     show_modern_warning(self, "Error", "Kolom STATUS tidak ditemukan di CSV.")
+                    progress_overlay.hide()
                     return
 
-                from db_manager import get_connection
                 conn = get_connection()
                 cur = conn.cursor()
                 cur.execute("PRAGMA busy_timeout = 8000")
                 cur.execute("PRAGMA synchronous = OFF")
                 cur.execute("PRAGMA temp_store = 2")
                 cur.execute("PRAGMA journal_mode = WAL")
-
-                # ================================================================
-                # 🔸 Siapkan tabel data_awal
-                # ================================================================
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS data_awal (
-                        TPS TEXT PRIMARY KEY,
-                        L INTEGER DEFAULT 0,
-                        P INTEGER DEFAULT 0,
-                        LP INTEGER DEFAULT 0
-                    )
-                """)
                 cur.execute("DELETE FROM data_awal")
+                cur.execute(f"DELETE FROM {tbl_name}")
 
-                # ================================================================
-                # 🔸 Pastikan tabel utama ada
-                # ================================================================
-                cur.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {tbl_name} (
-                        KECAMATAN TEXT,
-                        DESA TEXT,
-                        DPID TEXT,
-                        NKK TEXT,
-                        NIK TEXT,
-                        NAMA TEXT,
-                        JK TEXT,
-                        TMPT_LHR TEXT,
-                        TGL_LHR TEXT,
-                        STS TEXT,
-                        ALAMAT TEXT,
-                        RT TEXT,
-                        RW TEXT,
-                        DIS TEXT,
-                        KTPel TEXT,
-                        SUMBER TEXT,
-                        KET TEXT,
-                        TPS TEXT,
-                        LastUpdate TEXT,
-                        CEK_DATA TEXT,
-                        JK_ASAL TEXT,
-                        TPS_ASAL TEXT
-                    )
-                """)
-
-                # ================================================================
-                # 🔸 Batch insert cepat
-                # ================================================================
-                from datetime import datetime
                 batch_values = []
-                for row in reader[1:]:
+                step = max(1, total_rows // 100)  # update progress tiap sekian baris
+                for i, row in enumerate(reader[1:], start=1):
                     if not row or len(row) < len(header):
                         continue
                     status_val = row[idx_status].strip().upper()
@@ -10005,19 +10083,10 @@ class MainWindow(QMainWindow):
                     for csv_col, app_col in mapping.items():
                         if csv_col in header_idx:
                             val = row[header_idx[csv_col]].strip()
-
-                            # 🔹 Normalisasi khusus kolom RT, RW, TPS → hilangkan nol di depan
-                            if app_col in ("RT", "RW", "TPS"):
-                                if val.isdigit():  # hanya ubah kalau memang angka
-                                    val = str(int(val))
-                                elif val == "":
-                                    val = ""  # biarkan kosong jika memang kosong
-
-                            # 🔹 Set default KET = "0"
+                            if app_col in ("RT", "RW", "TPS") and val.isdigit():
+                                val = str(int(val))
                             if app_col == "KET":
                                 val = "0"
-
-                            # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
                                 for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                                     try:
@@ -10025,94 +10094,55 @@ class MainWindow(QMainWindow):
                                         break
                                     except Exception:
                                         pass
-
                             data[app_col] = val
-
-                    # 🔹 Kolom tambahan
-                    data["checked"] = 0  # ✅ default untuk checkbox
+                    data["checked"] = 0
                     data["JK_ASAL"] = data.get("JK", "")
                     data["TPS_ASAL"] = data.get("TPS", "")
-
-                    # Urutan kolom harus sesuai struktur tabel (termasuk checked)
                     ordered_cols = [
                         "checked", "KECAMATAN", "DESA", "DPID", "NKK", "NIK", "NAMA", "JK",
                         "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel",
                         "SUMBER", "KET", "TPS", "LastUpdate", "CEK_DATA", "JK_ASAL", "TPS_ASAL"
                     ]
+                    batch_values.append(tuple(data.get(c, "") for c in ordered_cols))
 
-                    values = [data.get(c, "") for c in ordered_cols]
-                    batch_values.append(tuple(values))
+                    # update progress bar tiap beberapa langkah
+                    if i % step == 0:
+                        progress_bar.setValue(min(100, int(i / total_rows * 100)))
+                        QApplication.processEvents()
 
-                if not batch_values:
-                    show_modern_warning(self, "Kosong", "Tidak ada data aktif untuk diimport.")
-                    return
-
-                # ================================================================
-                # ⚡ Eksekusi ultra cepat
-                # ================================================================
-                cur.execute(f"DELETE FROM {tbl_name}")
-                placeholders = ",".join(["?"] * 23)  # ✅ 23 kolom sesuai tabel
-                cur.executemany(
-                    f"INSERT INTO {tbl_name} VALUES ({placeholders})",
-                    batch_values
-                )
+                placeholders = ",".join(["?"] * 23)
+                cur.executemany(f"INSERT INTO {tbl_name} VALUES ({placeholders})", batch_values)
                 cur.execute(f"UPDATE {tbl_name} SET KET='0'")
                 conn.commit()
 
-                # ================================================================
-                # ✅ Bangun ulang data_awal
-                # ================================================================
                 cur.execute(f"""
                     INSERT INTO data_awal (TPS, L, P, LP)
-                    SELECT 
-                        TPS,
-                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END) AS L,
-                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END) AS P,
-                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END) AS LP
-                    FROM {tbl_name}
-                    GROUP BY TPS
-                    ORDER BY CAST(TPS AS INTEGER)
+                    SELECT TPS,
+                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END)
+                    FROM {tbl_name} GROUP BY TPS ORDER BY CAST(TPS AS INTEGER)
                 """)
                 conn.commit()
+                progress_bar.setValue(100)
+                QApplication.processEvents()
 
-                # ================================================================
-                # 🔸 Refresh UI
-                # ================================================================
-                try:
-                    with self.freeze_ui():
-                        self.load_data_from_db()
-                        self.update_pagination()
-                        self.show_page(1)
-                        self.connect_header_events()
-                        self.sort_data(auto=True)
+                with self.freeze_ui():
+                    self.load_data_from_db()
+                    self.update_pagination()
+                    self.show_page(1)
+                    self.connect_header_events()
+                    self.sort_data(auto=True)
 
-                        if self.filter_sidebar is None:
-                            self.filter_sidebar = FilterSidebar(self)
-                            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=320)
-                            self.filter_dock.setWidget(self.filter_sidebar)
-                            self.filter_sidebar.apply_theme()
-                            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
-                            self.filter_dock.hide()
-
-                        try:
-                            self.filter_sidebar._populate_sumber_from_mainwindow()
-                        except Exception as e:
-                            print(f"[Warning] Gagal refresh sumber di FilterSidebar: {e}")
-
-                    show_modern_info(
-                        self, "Sukses",
-                        f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
-                        f"{len(batch_values)} baris berhasil dimuat."
-                    )
-
-                except Exception as e:
-                    show_modern_error(
-                        self, "Error",
-                        f"Data tersimpan tapi gagal dimuat ke tabel:\n{e}"
-                    )
-
+                show_modern_info(self, "Sukses",
+                                f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
+                                f"{len(batch_values)} baris berhasil dimuat.")
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal import CSV:\n{e}")
+        finally:
+            progress_overlay.hide()
+            QApplication.processEvents()
+
 
     def import_baruecoklit(self):
         """
@@ -11069,15 +11099,34 @@ class MainWindow(QMainWindow):
     def load_theme(self):
         return "light"
 
+
+    # ============================================================
+    # 🔹 Overlay Blur / Gelap — khas NexVo
+    # ============================================================
+    def buat_overlay(self, opacity=18):
+        app = QApplication.instance()
+        overlay = QWidget(self)
+        overlay.setStyleSheet(f"background-color: rgba(0,0,0,{opacity * 10}); border-radius: 8px;")
+        overlay.setGeometry(self.rect())
+        overlay.show()
+        overlay.raise_()
+        QApplication.processEvents()
+        return overlay
+
+    def hapus_overlay(self, overlay):
+        if overlay and isinstance(overlay, QWidget):
+            overlay.hide()
+            overlay.deleteLater()
+
     # =================================================
     # Hapus Seluruh Data Pemilih (sub-menu Help)
     # =================================================
     def hapus_data_pemilih(self):
         """
         🧹 Menghapus seluruh isi tabel aktif (sesuai tahapan saat ini) dengan aman.
-        SQLCipher-safe.
+        SQLCipher-safe + verifikasi OTP modern (dengan blur overlay).
         """
-        # 🔸 Konfirmasi pengguna
+        # 🔸 Konfirmasi awal
         if not show_modern_question(
             self,
             "Konfirmasi",
@@ -11089,59 +11138,158 @@ class MainWindow(QMainWindow):
             show_modern_info(self, "Dibatalkan", "Proses penghapusan data dibatalkan.")
             return
 
-        # 🔹 Langkah awal: pastikan semua data tampil (jangan dalam keadaan terfilter)
+        # ============================================================
+        # 🧩 1️⃣ Ambil secret OTP dari database
+        # ============================================================
         try:
-            with self.freeze_ui():  # 🧊 sama seperti Application.EnableEvents = False
-                pass  # tidak melakukan reset tampilan apa pun
-        except Exception as e:
-            print(f"[Warning] Gagal freeze sebelum hapus: {e}")
-
-        try:
-            # 🔸 Koneksi aman ke database terenkripsi
+            from db_manager import get_connection
             conn = get_connection()
             cur = conn.cursor()
+            cur.execute("SELECT otp_secret FROM users LIMIT 1")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                show_modern_error(self, "OTP Tidak Ditemukan", "Kode OTP belum dikonfigurasi di sistem.")
+                return
+            otp_secret = row[0].strip()
+        except Exception as e:
+            show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
+            return
 
-            # 🔸 Ambil nama tabel aktif (otomatis tergantung tahapan)
-            tbl = self._active_table()  # contoh: 'dphp', 'dpshp', atau 'dpshpa'
+        # ============================================================
+        # 2️⃣ Verifikasi OTP Modern (pakai dialog kamu sendiri)
+        # ============================================================
+        overlay = self.buat_overlay(18)
 
-            # 🔸 Hapus seluruh data di tabel aktif
-            cur.execute(f"DELETE FROM {tbl}")
-            conn.commit()
+        otp_dialog = QDialog(self)
+        otp_dialog.setWindowTitle("Verifikasi OTP")
+        otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        otp_dialog.setStyleSheet("""
+            QDialog {
+                background-color: #dddddd;
+                color: black;
+                border-radius: 10px;
+            }
+            QLabel { color: black; font-size: 12pt; }
+            QLineEdit {
+                border: 2px solid #555;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 16pt;
+                letter-spacing: 4px;
+                background-color: #666666;
+                color: #ffffff;
+                qproperty-alignment: AlignCenter;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
 
-            # 🔸 Kosongkan data di memori dan tabel GUI
-            self.all_data.clear()
-            self.table.setRowCount(0)
+        layout = QVBoxLayout(otp_dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 25, 25, 25)
 
-            # 🔸 Reset label status
-            if hasattr(self, "lbl_total"):
-                self.lbl_total.setText("0 total")
-            if hasattr(self, "lbl_selected"):
-                self.lbl_selected.setText("0 selected")
+        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
 
-            # 🔸 Reset pagination
-            self.total_pages = 1
-            self.current_page = 1
-            if hasattr(self, "update_pagination"):
-                self.update_pagination()
-            if hasattr(self, "show_page"):
-                self.show_page(1)
+        otp_input = QLineEdit()
+        otp_input.setMaxLength(6)
+        otp_input.setPlaceholderText("••••••")
+        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        layout.addWidget(otp_input)
 
-            # 🔸 Refresh Dashboard (kalau sedang di dashboard)
-            if hasattr(self, "refresh_dashboard_on_show"):
-                try:
-                    self.refresh_dashboard_on_show()
-                except Exception as e:
-                    print(f"[Dashboard Refresh Error after delete] {e}")
+        btn_verify = QPushButton("Verifikasi")
+        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_verify)
 
-            # 🔸 Notifikasi sukses
-            show_modern_info(
-                self,
-                "Selesai",
-                f"Seluruh data telah dihapus dari tabel <b>{tbl}</b>!"
-            )
+        def shake_widget(widget):
+            anim = QPropertyAnimation(widget, b"pos", widget)
+            anim.setDuration(280)
+            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            start_pos = widget.pos()
+            offset = 6
+            for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
+                anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+
+        def do_verify():
+            import pyotp
+            code = otp_input.text().strip()
+            if not code:
+                overlay_warn = self.buat_overlay(16)
+                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                self.hapus_overlay(overlay_warn)
+                otp_input.setFocus()
+                return
+
+            totp = pyotp.TOTP(otp_secret)
+            if not totp.verify(code):
+                overlay_err = self.buat_overlay(16)
+                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                self.hapus_overlay(overlay_err)
+                shake_widget(otp_input)
+                otp_input.setFocus()
+                otp_input.selectAll()
+                return
+
+            otp_dialog.accept()
+
+        btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+        otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
+
+        if otp_dialog.exec() != QDialog.DialogCode.Accepted:
+            show_modern_info(self, "Dibatalkan", "Proses penghapusan dibatalkan oleh pengguna.")
+            return
+
+        # ============================================================
+        # 3️⃣ OTP valid → lanjut hapus seluruh data
+        # ============================================================
+        try:
+            with self.freeze_ui():
+                conn = get_connection()
+                cur = conn.cursor()
+                tbl = self._active_table()
+
+                cur.execute(f"DELETE FROM {tbl}")
+                conn.commit()
+
+                self.all_data.clear()
+                self.table.setRowCount(0)
+
+                if hasattr(self, "lbl_total"):
+                    self.lbl_total.setText("0 total")
+                if hasattr(self, "lbl_selected"):
+                    self.lbl_selected.setText("0 selected")
+
+                self.total_pages = 1
+                self.current_page = 1
+                if hasattr(self, "update_pagination"):
+                    self.update_pagination()
+                if hasattr(self, "show_page"):
+                    self.show_page(1)
+
+                if hasattr(self, "refresh_dashboard_on_show"):
+                    try:
+                        self.refresh_dashboard_on_show()
+                    except Exception as e:
+                        print(f"[Dashboard Refresh Error after delete] {e}")
+
+            show_modern_info(self, "Selesai", f"Seluruh data telah dihapus dari tabel <b>{tbl}</b>!")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+
 
     def _refresh_table_with_new_data(self, new_data: list[dict]):
         """Memperbarui tabel dan pagination setelah self.all_data diganti."""
