@@ -1,0 +1,40 @@
+==========================================
+Kode bila ingin aplikasi dalam satu folder
+==========================================
+pyinstaller --noconfirm --clean ^
+    --onedir ^
+    --name "NexVo" ^
+    --icon "icons\iconKPU.ico" ^
+    --version-file "version.txt" ^
+    --hidden-import=sqlcipher3.dbapi2 ^
+    --collect-all sqlcipher3 ^
+    --add-data "fonts;fonts" ^
+    --add-data "icons;icons" ^
+    --add-data "KPU.png;." ^
+    --add-data "note.png;." ^
+    --add-data "db_manager.py;." ^
+    --add-data "app_utils.py;." ^
+    --add-data "init_db.py;." ^
+    NexVo.py
+
+
+====================================
+Kode bila ingin satu file installer
+====================================
+
+pyinstaller --noconfirm --clean ^
+    --onefile ^
+    --noconsole ^
+    --name "NexVo" ^
+    --icon "icons\\iconKPU.ico" ^
+    --version-file "version.txt" ^
+    --hidden-import=sqlcipher3.dbapi2 ^
+    --collect-all sqlcipher3 ^
+    --add-data "fonts;fonts" ^
+    --add-data "icons;icons" ^
+    --add-data "KPU.png;." ^
+    --add-data "note.png;." ^
+    --add-data "db_manager.py;." ^
+    --add-data "app_utils.py;." ^
+    --add-data "init_db.py;." ^
+    NexVo.py

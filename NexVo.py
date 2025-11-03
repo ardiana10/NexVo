@@ -40,18 +40,20 @@ except Exception as e:
     print("[ERROR] sqlcipher3 belum terpasang. Install: pip install sqlcipher3-wheels (Windows) atau sqlcipher3.")
     raise
 
+from app_utils import resource_path, app_icon
+
 # =========================
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
     Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData,
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QEventLoop
 )
 
 from PyQt6.QtGui import (
     QIcon, QFont, QColor, QPixmap, QPainter, QAction, QKeySequence, QMouseEvent,
     QPalette, QBrush, QPen, QRegularExpressionValidator, QGuiApplication, QClipboard,
-    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut
+    QRadialGradient, QPolygon, QKeyEvent, QTextCursor, QPageLayout, QShortcut, QCursor
 )
 
 from PyQt6.QtCharts import QChart, QChartView, QPieSeries, QLegend
@@ -60,7 +62,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QStatusBar, QToolBar, QToolButton, QHeaderView, QTableWidget,
     QTableWidgetItem, QStyledItemDelegate, QAbstractItemView, QStyle, QStyleOptionViewItem,
     QFileDialog, QScrollArea, QFormLayout, QInputDialog, QSlider, QGridLayout, QProgressBar,
-    QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox,
+    QVBoxLayout, QHBoxLayout, QFrame, QLabel, QLineEdit, QPushButton, QComboBox, QGraphicsBlurEffect,
     QCheckBox, QRadioButton, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QDialogButtonBox,
     QGraphicsSimpleTextItem, QSizePolicy, QSpacerItem, QStyleOptionButton, QDateEdit, QTextEdit, QStyleFactory, QCalendarWidget
 )
@@ -361,19 +363,8 @@ def cleanup_badan_adhoc():
 atexit.register(cleanup_badan_adhoc)
 
 
-def show_modern_warning(parent, title, text):
-    msg = QMessageBox(parent)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    msg.setIcon(QMessageBox.Icon.Warning)
-    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-    _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
-
-    # (opsional) fade-in
+def _fade_in_dialog(msg):
+    """Efek fade-in halus khas NexVo (non-blocking tapi aman)."""
     anim = QPropertyAnimation(msg, b"windowOpacity")
     anim.setDuration(150)
     anim.setStartValue(0.0)
@@ -382,6 +373,9 @@ def show_modern_warning(parent, title, text):
     anim.start()
     msg.anim = anim
 
+# ============================================================
+# 🔹 INFO
+# ============================================================
 def show_modern_info(parent, title, text):
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
@@ -389,19 +383,33 @@ def show_modern_info(parent, title, text):
     msg.setIcon(QMessageBox.Icon.Information)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ ganti NonModal → ApplicationModal
     msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
 
-    anim = QPropertyAnimation(msg, b"windowOpacity")
-    anim.setDuration(150)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-    anim.start()
-    msg.anim = anim
+    _fade_in_dialog(msg)
+    msg.exec()  # ✅ sinkron – tunggu klik OK
 
+# ============================================================
+# 🔹 WARNING
+# ============================================================
+def show_modern_warning(parent, title, text):
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#ff6600")
+
+    _fade_in_dialog(msg)
+    msg.exec()
+
+# ============================================================
+# 🔹 ERROR
+# ============================================================
 def show_modern_error(parent, title, text):
     msg = QMessageBox(parent)
     msg.setWindowTitle(title)
@@ -409,18 +417,12 @@ def show_modern_error(parent, title, text):
     msg.setIcon(QMessageBox.Icon.Critical)
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    msg.setWindowModality(Qt.WindowModality.NonModal)              # ✅ perbaikan
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)
     msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     _apply_modern_style(msg, accent="#ff6600")
-    msg.show()
 
-    anim = QPropertyAnimation(msg, b"windowOpacity")
-    anim.setDuration(150)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-    anim.start()
-    msg.anim = anim
+    _fade_in_dialog(msg)
+    msg.exec()
 
 def show_modern_question(parent, title, text):
     msg = QMessageBox(parent)
@@ -430,38 +432,18 @@ def show_modern_question(parent, title, text):
     msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
     msg.setDefaultButton(QMessageBox.StandardButton.No)
 
-    msg.setStyleSheet("""
-        QMessageBox {
-            background-color: #EFEFEF;
-            color: black;
-            font-family: 'Segoe UI';
-            font-size: 11pt;
-            border-radius: 12px;
-        }
-        QLabel {
-            background: transparent;     /* ✅ Hilangkan background hitam */
-            color: black;
-            font-size: 11pt;
-            padding: 4px 2px;
-        }
-        QPushButton {
-            background-color: #ff6600;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 8px 20px;
-            font-weight: bold;
-            font-size: 10.5pt;
-            min-width: 120px;
-        }
-        QPushButton:hover {
-            background-color: #d71d1d;
-        }
-    """)
+    msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ modal sinkron
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    _apply_modern_style(msg, accent="#ff6600")
 
-    msg.button(QMessageBox.StandardButton.Yes).setText("Ya")
-    msg.button(QMessageBox.StandardButton.No).setText("Tidak")
+    # 🔹 Ganti teks tombol ke Bahasa Indonesia
+    yes_btn = msg.button(QMessageBox.StandardButton.Yes)
+    no_btn = msg.button(QMessageBox.StandardButton.No)
+    if yes_btn and no_btn:
+        yes_btn.setText("Ya")
+        no_btn.setText("Tidak")
 
+    _fade_in_dialog(msg)
     result = msg.exec()
     return result == QMessageBox.StandardButton.Yes
 
@@ -2540,14 +2522,14 @@ class FilterSidebar(QWidget):
         nik_nkk_row.addWidget(self.nik)
         nik_nkk_row.addWidget(self.nkk)
         layout.addLayout(nik_nkk_row)
-        
-        self.tgl_lahir = QLineEdit()
-        self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
-        layout.addWidget(self.tgl_lahir)
 
         self.alamat = QLineEdit()
         self.alamat.setPlaceholderText("Alamat")
         layout.addWidget(self.alamat)
+        
+        self.tgl_lahir = QLineEdit()
+        self.tgl_lahir.setPlaceholderText("Tanggal Lahir (Format : DD|MM|YYYY)")
+        layout.addWidget(self.tgl_lahir)
     
     def _setup_age_slider(self, layout, gap):
         # ... (Metode ini tetap sama, dengan perbaikan dari respons sebelumnya) ...
@@ -2582,8 +2564,8 @@ class FilterSidebar(QWidget):
         self.disabilitas = CustomComboBox()
         self.ktp_el = CustomComboBox()
         self.sumber = CustomComboBox()
-        self.rank = CustomComboBox()
         self.tps = CustomComboBox()
+        self.rank = CustomComboBox()
         
         self._populate_dropdown_options()
         
@@ -2601,7 +2583,7 @@ class FilterSidebar(QWidget):
         grid_layout.addLayout(tps_rank_layout, 2, 0, 1, 3)
     
     def _populate_dropdown_options(self):
-        # ... (Metode ini tetap sama) ...
+        """Isi semua dropdown di sidebar filter, ambil TPS langsung dari MainWindow."""
         self.keterangan.addItems([
             "Keterangan", "1 (Meninggal)", "2 (Ganda)", "3 (Di Bawah Umur)",
             "4 (Pindah Domisili)", "5 (WNA)", "6 (TNI)", "7 (Polri)",
@@ -2618,6 +2600,28 @@ class FilterSidebar(QWidget):
         self._populate_sumber_from_mainwindow()
         self._populate_tps_from_mainwindow()
         self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
+
+        # ==========================================================
+        # 🔹 Ambil TPS langsung dari MainWindow
+        # ==========================================================
+        try:
+            main = self._get_main_window()
+            self.tps.clear()
+            if main and hasattr(main, "get_distinct_tps"):
+                tps_list = main.get_distinct_tps()
+                # pastikan hasilnya benar-benar list dengan lebih dari 1 elemen
+                if isinstance(tps_list, list) and len(tps_list) > 1:
+                    self.tps.addItems(tps_list)
+                else:
+                    # fallback jika query belum jalan atau tabel belum siap
+                    self.tps.addItems(["TPS"])
+            else:
+                self.tps.addItems(["TPS"])
+        except Exception as e:
+            print(f"[FilterSidebar] Gagal ambil TPS: {e}")
+            self.tps.clear()
+            self.tps.addItems(["TPS"])
+
 
     def _populate_sumber_from_mainwindow(self):
         """Populate dropdown Sumber dari MainWindow"""
@@ -2685,30 +2689,74 @@ class FilterSidebar(QWidget):
             layout.addWidget(radio_button)
     
     def _setup_action_buttons(self, layout):
-        # ... (Metode ini tetap sama) ...
+        """Setup tombol aksi Filter dan Reset dengan gaya khas NexVo."""
+        # === Tombol Reset ===
         self.btn_reset = QPushButton("Reset")
         self.btn_reset.setObjectName("resetBtn")
         self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reset.clicked.connect(self.reset_filters)
-        
+
+        # === Tombol Filter ===
         self.btn_filter = QPushButton("Filter")
         self.btn_filter.setObjectName("filterBtn")
         self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_filter.clicked.connect(self._apply_filters)
-        
+
+        # === Tambahkan ke layout ===
         layout.addStretch()
         layout.addWidget(self.btn_reset)
         layout.addWidget(self.btn_filter)
         layout.addStretch()
+
+        # === Gaya khas NexVo ===
+        self.btn_reset.setStyleSheet("""
+            QPushButton#resetBtn {
+                background-color: #d71d1d;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-family: 'Segoe UI';
+                font-size: 8pt;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+            }
+            QPushButton#resetBtn:hover {
+                background-color: #b01515;    /* lebih gelap saat hover */
+            }
+            QPushButton#resetBtn:pressed {
+                background-color: #8c1010;    /* warna tekan */
+            }
+        """)
+
+        self.btn_filter.setStyleSheet("""
+            QPushButton#filterBtn {
+                background-color: #ff6600;     /* oranye khas NexVo */
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-family: 'Segoe UI';
+                font-size: 8pt;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+            }
+            QPushButton#filterBtn:hover {
+                background-color: #e65c00;    /* oranye gelap hover */
+            }
+            QPushButton#filterBtn:pressed {
+                background-color: #cc5200;    /* oranye pekat tekan */
+            }
+        """)
+
     
     def _apply_consistent_sizing(self):
         # ... (Metode ini tetap sama) ...
-        desired_height = 34
+        desired_height = 28
         input_widgets = [
             self.tgl_update, self.nama, self.nik, self.nkk, self.tgl_lahir, 
             self.alamat, self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber, self.rank,
-            self.tps
+            self.disabilitas, self.ktp_el, self.sumber, self.tps, self.rank
         ]
         for widget in input_widgets:
             widget.setFixedHeight(desired_height)
@@ -2730,7 +2778,7 @@ class FilterSidebar(QWidget):
         
         grid_fields = [
             self.keterangan, self.kelamin, self.kawin, 
-            self.disabilitas, self.ktp_el, self.sumber
+            self.disabilitas, self.ktp_el, self.sumber, self.tps, self.rank
         ]
         for field in grid_fields:
             field.setFixedWidth(column_width)
@@ -2774,7 +2822,7 @@ class FilterSidebar(QWidget):
         
         dropdown_fields = [
             self.keterangan, self.kelamin, self.kawin, self.disabilitas, 
-            self.ktp_el, self.sumber, self.rank, self.tps
+            self.ktp_el, self.sumber, self.rank
         ]
         for dropdown in dropdown_fields:
             dropdown.setCurrentIndex(0)
@@ -3533,7 +3581,6 @@ class FloatingLabelComboBox(QWidget):
         else:
             self.label.setStyleSheet(self.label_stylesheet_light)
 
-
 class DetailInformasiPemilihDialog(QDialog):
     """Dialog detail pemilih dari data tabel"""
     def __init__(self, data_dict=None, main_window_ref=None, parent=None):
@@ -3546,6 +3593,7 @@ class DetailInformasiPemilihDialog(QDialog):
         # === MAPPING UNTUK DROPDOWN ===
         self.ket_mapping = {
             "0": "0",
+            "U": "U (Ubah)",
             "1": "1 (Meninggal)",
             "2": "2 (Ganda)",
             "3": "3 (Di Bawah Umur)",
@@ -3553,8 +3601,7 @@ class DetailInformasiPemilihDialog(QDialog):
             "5": "5 (WNA)",
             "6": "6 (TNI)",
             "7": "7 (Polri)",
-            "8": "8 (Salah TPS)",
-            "U": "U (Ubah)"
+            "8": "8 (Salah TPS)"
         }
         
         self.dis_mapping = {
@@ -3569,6 +3616,81 @@ class DetailInformasiPemilihDialog(QDialog):
         
         self.init_ui()
 
+    # ============================================================
+    # 🔹 FUNGSI BARU UNTUK UPDATE OTOMATIS KETERANGAN
+    # ============================================================
+    def _mark_as_ubah(self):
+        """Tandai kolom KET = 'U' di tampilan saja (tanpa simpan ke database)."""
+        try:
+            current_ket = str(self.get_value("KET", default="")).upper()
+            if current_ket != "U":
+                self._data["KET"] = "U"
+
+                if hasattr(self, "ubah_widget") and hasattr(self.ubah_widget, "combo"):
+                    cb = self.ubah_widget.combo
+
+                    # set nilainya
+                    if hasattr(cb, "setCurrentCode"):
+                        cb.setCurrentCode("U")
+                    elif hasattr(cb, "setCurrentText"):
+                        cb.setCurrentText("U")
+
+                    # 🟠 panggil simulasi klik agar label internalnya ikut berubah
+                    self._simulate_combo_activation()
+
+        except Exception as e:
+            print(f"[WARN] Gagal menandai KET jadi U: {e}")
+
+
+    def _simulate_combo_activation(self):
+        """Fungsi bantuan untuk memicu event klik/aktivasi pada combobox 'Keterangan Ubah' tanpa ganggu fokus."""
+        try:
+            if hasattr(self, "ubah_widget") and hasattr(self.ubah_widget, "combo"):
+                cb = self.ubah_widget.combo
+                if not cb:
+                    return
+
+                # 🧠 Simpan widget yang sedang aktif (supaya fokus bisa dikembalikan)
+                previous_focus = QApplication.focusWidget()
+
+                # Jalankan trigger internal combobox
+                cb.showPopup()
+                QApplication.processEvents()
+                cb.hidePopup()
+
+                # Paksa refresh tampilannya
+                cb.repaint()
+                QApplication.processEvents()
+
+                # 🔙 Kembalikan fokus ke widget sebelumnya (kalau masih ada)
+                if previous_focus and previous_focus != cb:
+                    previous_focus.setFocus()
+                    QApplication.processEvents()
+
+        except Exception as e:
+            print(f"[WARN] Gagal simulasi klik combobox: {e}")
+
+
+    def _force_update_ubah_combo(self):
+        """Paksa tampilan combobox 'Keterangan Ubah' sinkron dengan nilai saat ini."""
+        try:
+            if hasattr(self, "ubah_widget") and hasattr(self.ubah_widget, "combo"):
+                cb = self.ubah_widget.combo
+
+                # 🔹 Jika FloatingLabelComboBox punya metode sinkronisasi tampilan
+                if hasattr(self.ubah_widget, "update_display"):
+                    self.ubah_widget.update_display()
+                elif hasattr(self.ubah_widget, "refresh_display"):
+                    self.ubah_widget.refresh_display()
+                else:
+                    # 🔹 Lakukan repaint manual
+                    cb.update()
+                    cb.repaint()
+                    QApplication.processEvents()
+        except Exception as e:
+            print(f"[DEBUG] Gagal paksa refresh ubah combo: {e}")
+
+                
     def get_value(self, *keys, default=""):
         """Mengambil nilai dari dictionary dengan berbagai variasi key"""
         for k in keys:
@@ -3662,7 +3784,7 @@ class DetailInformasiPemilihDialog(QDialog):
         right_layout.setSpacing(12)
 
         # Untuk Keterangan Ubah (dengan deskripsi)
-        current_ket = self.get_value("KET", "0")
+        current_ket = self.get_value("KET", default="U")
         self.ubah_widget = FloatingLabelComboBox(
             "Keterangan Ubah",
             [],
@@ -3750,6 +3872,38 @@ class DetailInformasiPemilihDialog(QDialog):
         # Isi dropdown dan field langsung editable
         self._populate_dropdowns()
 
+        # ========================================================
+        # ✅ Sambungkan semua field ke detektor perubahan
+        # ========================================================
+        try:
+            # 🔹 Untuk semua input teks
+            for w in [
+                self.nkk_widget,
+                self.nik_widget,
+                self.nama_widget,
+                self.tempat_widget,
+                self.tanggal_widget,
+                self.alamat_widget,
+                self.rt_widget,
+                self.rw_widget
+            ]:
+                if hasattr(w, "line_edit"):
+                    w.line_edit.textEdited.connect(self._mark_as_ubah)
+
+            # 🔹 Untuk semua combo box
+            for c in [
+                self.jk_widget,
+                self.kawin_widget,
+                self.dis_widget,
+                self.ktp_widget,
+                self.sumber_widget
+            ]:
+                if hasattr(c, "combo"):
+                    c.combo.currentIndexChanged.connect(self._mark_as_ubah)
+                    c.combo.editTextChanged.connect(self._mark_as_ubah)
+        except Exception as e:
+            print(f"[INIT WARN] gagal sambung sinyal realtime ubah: {e}")
+
     def toggle_edit_mode(self):
         """Simpan perubahan data ke database"""
         try:
@@ -3758,13 +3912,13 @@ class DetailInformasiPemilihDialog(QDialog):
             dis_value = self.dis_widget.combo.currentCode()
             ktp_value = self.ktp_widget.combo.currentText().strip()
 
-            print(f"[DEBUG] KET code: {ket_value}")
-            print(f"[DEBUG] DIS code: {dis_value}")
-            print(f"[DEBUG] KTP value: {ktp_value}")
+            #print(f"[DEBUG] KET code: {ket_value}")
+            #print(f"[DEBUG] DIS code: {dis_value}")
+            #print(f"[DEBUG] KTP value: {ktp_value}")
 
             # === Beri default untuk nilai kosong ===
             if not ket_value:
-                ket_value = "0"
+                ket_value = "U"
             if not dis_value:
                 dis_value = "0"
             if not ktp_value or ktp_value == "Status KTP-El (B/S)":
@@ -4018,6 +4172,7 @@ class LoginWindow(QMainWindow):
         super().__init__()
         self.conn = conn
         self.setWindowTitle("Login Akun")
+        self.setWindowIcon(app_icon())
 
         # === Logo aplikasi di title bar ===
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -4256,17 +4411,45 @@ class LoginWindow(QMainWindow):
         pw = self.pass_input.text().strip()
         tahapan = self.tahapan_combo.currentText()
 
+        # ============================================================
+        # 🌫️ Helper overlay blur khas NexVo
+        # ============================================================
+        def buat_overlay(blur_radius=16, color="rgba(255,255,255,180)"):
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet(f"background-color: {color};")
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur)
+            return overlay
+
+        def hapus_overlay(overlay):
+            if overlay:
+                overlay.hide()
+                overlay.deleteLater()
+            self.setGraphicsEffect(None)
+
+        # ============================================================
+        # 🧱 Validasi awal
+        # ============================================================
         if not email or not pw or tahapan == "-- Pilih Tahapan --":
+            overlay = buat_overlay(20)
             show_modern_warning(self, "Login Gagal", "Semua field harus diisi!")
+            hapus_overlay(overlay)
             return
 
+        # ============================================================
+        # 🔐 Login ke database terenkripsi
+        # ============================================================
         try:
-            # 🔒 Gunakan koneksi SQLCipher terenkripsi dari db_manager
             from db_manager import connect_encrypted
             conn = connect_encrypted()
             cur = conn.cursor()
 
-            # Pastikan tabel users ada (jika belum)
+            # Pastikan tabel users ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4279,7 +4462,6 @@ class LoginWindow(QMainWindow):
                 )
             """)
 
-            # 🔹 Hitung hash dengan salt (email)
             salted_input = (pw + email).encode("utf-8")
             hashed_pw = hashlib.sha256(salted_input).hexdigest()
 
@@ -4290,7 +4472,9 @@ class LoginWindow(QMainWindow):
             row = cur.fetchone()
 
             if not row:
+                overlay = buat_overlay(20)
                 show_modern_warning(self, "Login Gagal", "Email atau password salah!")
+                hapus_overlay(overlay)
                 conn.commit()
                 return
 
@@ -4298,34 +4482,28 @@ class LoginWindow(QMainWindow):
             conn.commit()
 
         except Exception as e:
+            overlay = buat_overlay(20)
             show_modern_error(self, "Error", f"Terjadi kesalahan saat login:\n{e}")
+            hapus_overlay(overlay)
             return
 
-
-
         # ============================================================
-        # 1️⃣ Jika OTP belum dibuat (login pertama)
+        # 1️⃣ Login pertama (belum ada OTP)
         # ============================================================
         if not otp_secret:
-            import pyotp, qrcode  # type: ignore
+            import pyotp, qrcode
             from io import BytesIO
 
             otp_secret = pyotp.random_base32()
-
-            # 🔹 Simpan secret baru tanpa menutup koneksi
             cur.execute("UPDATE users SET otp_secret=? WHERE id=?", (otp_secret, user_id))
             conn.commit()
 
-            # 🔹 Buat QR Code OTP dengan label NexVo: email
             totp = pyotp.TOTP(otp_secret)
             account_label = f"NexVo: {email}"
-
-            # Gunakan parameter 'name' yang sudah diformat penuh, dan issuer_name terpisah
             totp_uri = totp.provisioning_uri(
                 name=account_label,
                 issuer_name="NexVo KPU Kab. Tasikmalaya"
             )
-
 
             qr = qrcode.make(totp_uri)
             buffer = BytesIO()
@@ -4333,10 +4511,12 @@ class LoginWindow(QMainWindow):
             pixmap = QPixmap()
             pixmap.loadFromData(buffer.getvalue())
 
-            # 🔹 Tampilkan QR code untuk aktivasi OTP
+            overlay = buat_overlay(20)
+
             qr_dialog = QDialog(self)
             qr_dialog.setWindowTitle("Aktivasi OTP Pertama")
             qr_dialog.setFixedSize(340, 420)
+            qr_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
             qr_dialog.setStyleSheet("""
                 QDialog {
                     background-color: #1e1e1e;
@@ -4374,19 +4554,21 @@ class LoginWindow(QMainWindow):
             ok_btn.clicked.connect(qr_dialog.accept)
             vbox.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+            qr_dialog.finished.connect(lambda: hapus_overlay(overlay))
             qr_dialog.exec()
 
         else:
-            # ❌ Jangan tutup koneksi manual di sini
             conn.commit()
 
+        # ============================================================
+        # 2️⃣ Verifikasi OTP Modern (dengan blur)
+        # ============================================================
+        overlay = buat_overlay(18)
 
-        # ============================================================
-        # 2️⃣ Verifikasi OTP Modern
-        # ============================================================
         otp_dialog = QDialog(self)
         otp_dialog.setWindowTitle("Verifikasi OTP")
         otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         otp_dialog.setStyleSheet("""
             QDialog {
                 background-color: #dddddd;
@@ -4435,53 +4617,129 @@ class LoginWindow(QMainWindow):
         layout.addWidget(btn_verify)
 
         def do_verify():
-            import pyotp # type: ignore
+            import pyotp
             code = otp_input.text().strip()
             if not code:
+                overlay_warn = buat_overlay(16)
                 show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                hapus_overlay(overlay_warn)
+                otp_input.setFocus()
                 return
+
             totp = pyotp.TOTP(otp_secret)
             if not totp.verify(code):
+                overlay_err = buat_overlay(16)
                 show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                hapus_overlay(overlay_err)
+                otp_input.setFocus()
+                otp_input.selectAll()
                 return
+
             otp_dialog.accept()
 
         btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+
+        otp_dialog.finished.connect(lambda: hapus_overlay(overlay))
 
         if otp_dialog.exec() == QDialog.DialogCode.Accepted:
             self.accept_login(nama, kecamatan, desa, tahapan)
+
             
     # Konfirmasi Pembuatan akun
     def konfirmasi_buat_akun(self):
-        # 🔹 Dialog konfirmasi modern
-        if not show_modern_question(
-            self,
-            "Konfirmasi",
-            "Apakah Anda yakin ingin membuat akun baru?<br>"
-            "Seluruh data lama akan <b>dihapus permanen</b>!"
-        ):
+        """Konfirmasi pembuatan akun baru dengan efek blur khas NexVo."""
+
+        def buat_overlay(blur_radius=15):
+            """Buat overlay putih lembut dengan efek blur nyata (tanpa CSS error)."""
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet("""
+                QWidget {
+                    background-color: rgba(255, 255, 255, 180);
+                }
+            """)
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur_effect = QGraphicsBlurEffect()
+            blur_effect.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur_effect)   # << efek blur nempel di self
+            return overlay
+
+        # ==========================================================
+        # 🌫️ Overlay pertama
+        # ==========================================================
+        overlay = buat_overlay(15)
+
+        try:
+            ok = show_modern_question(
+                self,
+                "Konfirmasi",
+                "Apakah Anda yakin ingin membuat akun baru?<br>"
+                "Seluruh data lama akan <b>dihapus permanen</b>!"
+            )
+        finally:
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ bersihkan blur window utama
+
+        if not ok:
+            overlay = buat_overlay(20)
             show_modern_info(self, "Dibatalkan", "Proses pembuatan akun dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ bersihkan blur
             return
 
-        # 🔹 Input kode konfirmasi (password style)
+        # ==========================================================
+        # 🌫️ Overlay untuk input kode konfirmasi
+        # ==========================================================
+        overlay = buat_overlay(18)
+
         dlg = ModernInputDialog("Kode Konfirmasi", "Masukkan kode konfirmasi:", self, is_password=True)
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        dlg.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                border: 2px solid #d71d1d;
+                border-radius: 10px;
+            }
+        """)
+
         kode, ok = dlg.getText()
+
+        overlay.hide()
+        overlay.deleteLater()
+        self.setGraphicsEffect(None)   # ✅ hapus blur setelah dialog
+
         if not ok:
+            overlay = buat_overlay(20)
+            show_modern_info(self, "Dibatalkan", "Proses pembuatan akun dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ hapus blur
             return
 
         if kode.strip() != "KabTasik3206":
+            overlay = buat_overlay(12)
             show_modern_warning(self, "Salah", "Kode konfirmasi salah. Proses dibatalkan.")
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)   # ✅ hapus blur
             return
 
         # ✅ Kode benar → hapus semua data lama
         hapus_semua_data(self.conn)
 
-        # ✅ Tampilkan form RegisterWindow sebagai window utama
+        # ✅ Buka form RegisterWindow
         self.register_window = RegisterWindow(None)
         self.register_window.show()
 
-        # ✅ Tutup login window setelah register window muncul
+        # ✅ Tutup login window
         self.close()
+
 
     # === Masuk ke MainWindow ===
     def accept_login(self, nama, kecamatan, desa, tahapan):
@@ -4541,20 +4799,81 @@ class LoginWindow(QMainWindow):
             )
             self.main_window.show()
 
-            #self.main_window.create_filter_sidebar()
-
-            # ✅ Tunda sedikit agar fullscreen bekerja sempurna di Windows
+            # ✅ Tunda sedikit agar fullscreen dan tabel stabil
             QTimer.singleShot(100, self.main_window.showMaximized)
 
+            # ✅ Jalankan setup load/fit kolom
+            QTimer.singleShot(600, self._setup_column_widths_after_login)
+
+            # ✅ Tutup login window
             self.close()
+
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka halaman utama:\n{e}")
+
+
+
+    def _setup_column_widths_after_login(self):
+        """Jalankan load_column_widths(), dan jika belum ada → auto_fit_visible_columns()."""
+        try:
+            if not hasattr(self, "main_window") or not self.main_window:
+                return
+
+            mw = self.main_window
+
+            # Pastikan dua fungsi itu ada di class MainWindow
+            if hasattr(mw, "load_column_widths") and hasattr(mw, "auto_fit_visible_columns"):
+                path = mw._get_column_config_path()
+                profile_key = f"{mw._nama}_{mw._desa}_{mw._tahapan}".lower().replace(" ", "_")
+
+                has_existing_config = False
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            has_existing_config = profile_key in data and bool(data[profile_key])
+                    except Exception as e:
+                        print(f"[ColumnConfig] ⚠️ Tidak bisa baca konfigurasi kolom: {e}")
+
+                # 1️⃣ Muat dulu kalau sudah ada
+                mw.load_column_widths()
+
+                # 2️⃣ Kalau belum ada → auto-fit otomatis
+                if not has_existing_config:
+                    #print(f"[ColumnConfig] ℹ️ Belum ada konfigurasi kolom untuk {profile_key}, auto-fit...")
+                    QTimer.singleShot(300, mw.auto_fit_visible_columns)
+                else:
+                    print(f"[ColumnConfig] ✅ Konfigurasi kolom ditemukan untuk {profile_key}, skip auto-fit.")
+        except Exception as e:
+            print(f"[ColumnConfig] ❌ Gagal setup lebar kolom: {e}")
+
 
 class ResetPasswordDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowIcon(app_icon())
+
+        # ============================================================
+        # 🌫️ Overlay blur khas NexVo — aktif otomatis saat dialog dibuka
+        # ============================================================
+        self.overlay = QWidget(parent)
+        self.overlay.setGeometry(parent.rect())
+        self.overlay.setStyleSheet("background-color: rgba(255,255,255,180);")
+        self.overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.overlay.show()
+        self.overlay.raise_()
+
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        parent.setGraphicsEffect(blur)
+        self._parent_blur = blur
+
+        # ============================================================
+        # 🪟 Setup UI
+        # ============================================================
         self.setWindowTitle("Reset Password")
-        self.setFixedSize(420, 520)
+        self.setFixedSize(420, 560)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setStyleSheet("""
             QDialog { background-color: #f2f2f2; color: black; border-radius: 10px; }
             QLabel { font-size: 11pt; }
@@ -4585,28 +4904,52 @@ class ResetPasswordDialog(QDialog):
         self.email_input.setPlaceholderText("Masukkan email Anda")
         layout.addWidget(self.email_input)
 
-        # === Password baru ===
+        # === Password Baru (dengan ikon mata) ===
         layout.addWidget(QLabel("Password Baru:"))
+        pw_layout = QHBoxLayout()
         self.new_pw = QLineEdit()
         self.new_pw.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self.new_pw)
+        self.new_pw.setPlaceholderText("Masukkan password baru")
+        self.btn_toggle_pw = QPushButton("👁️")
+        self.btn_toggle_pw.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_pw.setFixedWidth(36)
+        self.btn_toggle_pw.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 13pt;
+            }
+            QPushButton:hover { color: #ff6600; }
+        """)
+        self.btn_toggle_pw.clicked.connect(lambda: self.toggle_password_visibility(self.new_pw))
+        pw_layout.addWidget(self.new_pw)
+        pw_layout.addWidget(self.btn_toggle_pw)
+        layout.addLayout(pw_layout)
 
-        # === Ulangi Password ===
+        # === Ulangi Password Baru (dengan ikon mata) ===
         layout.addWidget(QLabel("Ulangi Password Baru:"))
+        re_layout = QHBoxLayout()
         self.re_pw = QLineEdit()
         self.re_pw.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self.re_pw)
+        self.re_pw.setPlaceholderText("Ulangi password baru")
+        self.btn_toggle_re_pw = QPushButton("👁️")
+        self.btn_toggle_re_pw.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_re_pw.setFixedWidth(36)
+        self.btn_toggle_re_pw.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 13pt;
+            }
+            QPushButton:hover { color: #ff6600; }
+        """)
+        self.btn_toggle_re_pw.clicked.connect(lambda: self.toggle_password_visibility(self.re_pw))
+        re_layout.addWidget(self.re_pw)
+        re_layout.addWidget(self.btn_toggle_re_pw)
+        layout.addLayout(re_layout)
 
-        # === OTP ===
-        layout.addWidget(QLabel("Kode OTP (6 digit dari aplikasi Authenticator):"))
-        self.otp_input = QLineEdit()
-        self.otp_input.setMaxLength(6)
-        self.otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.otp_input)
-
-        # === Captcha (bergaya seperti RegisterWindow, dengan jarak rapi) ===
+        # === Captcha ===
         layout.addWidget(QLabel("Captcha Keamanan:"))
-
         self.captcha_code = self.generate_captcha()
         self.captcha_label = QLabel()
         self.captcha_label.setFixedHeight(60)
@@ -4637,22 +4980,53 @@ class ResetPasswordDialog(QDialog):
         captcha_layout.addWidget(self.refresh_btn)
         layout.addLayout(captcha_layout)
 
-        # 🔹 Tambahkan jarak bawah agar tidak menempel ke field input
-        spacer = QWidget()
-        spacer.setFixedHeight(10)
-        layout.addWidget(spacer)
+        #spacer = QWidget()
+        #spacer.setFixedHeight(10)
+        #layout.addWidget(spacer)
 
         self.captcha_input = QLineEdit()
         self.captcha_input.setPlaceholderText("Tulis ulang captcha di atas")
         layout.addWidget(self.captcha_input)
+        self.captcha_input.textChanged.connect(
+            lambda t: self.captcha_input.setText(t.upper())
+        )
+
+        # === OTP (pindah ke paling bawah) ===
+        layout.addWidget(QLabel("Kode OTP (6 digit dari aplikasi Authenticator):"))
+        self.otp_input = QLineEdit()
+        self.otp_input.setMaxLength(6)
+        self.otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.otp_input)
 
         # === Tombol Reset ===
         btn_reset = QPushButton("Reset Password")
         btn_reset.clicked.connect(self.reset_password)
         layout.addWidget(btn_reset, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Bersihkan overlay saat keluar
+        self.finished.connect(self._hapus_overlay)
+
     # ===================================================
-    # 🔹 Captcha generator bergaya RegisterWindow
+    # 🌫️ Hapus efek blur dari parent
+    # ===================================================
+    def _hapus_overlay(self):
+        if hasattr(self, "overlay") and self.overlay:
+            self.overlay.hide()
+            self.overlay.deleteLater()
+        if hasattr(self, "_parent_blur") and self._parent_blur:
+            self.parent().setGraphicsEffect(None)
+
+    # ===================================================
+    # 👁️ Toggle visibility password field
+    # ===================================================
+    def toggle_password_visibility(self, field):
+        if field.echoMode() == QLineEdit.EchoMode.Password:
+            field.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+
+    # ===================================================
+    # 🔹 Captcha generator
     # ===================================================
     def generate_captcha(self, length=5):
         import random, string
@@ -4681,7 +5055,6 @@ class ResetPasswordDialog(QDialog):
             painter.drawText(0, 0, ch)
             painter.restore()
 
-        # Noise garis acak
         for _ in range(6):
             pen = QColor(random.randint(120, 200), random.randint(120, 200), random.randint(120, 200))
             painter.setPen(pen)
@@ -4697,7 +5070,7 @@ class ResetPasswordDialog(QDialog):
         self.captcha_label.setPixmap(pixmap)
 
     # ===================================================
-    # 🔐 Validasi & Reset Password Aman (SHA256 + salt)
+    # 🔐 Validasi & Reset Password Aman
     # ===================================================
     def reset_password(self):
         email = self.email_input.text().strip()
@@ -4706,14 +5079,28 @@ class ResetPasswordDialog(QDialog):
         otp_code = self.otp_input.text().strip()
         captcha_in = self.captcha_input.text().strip().upper()
 
+        def pop_with_overlay(func, *args, **kwargs):
+            ov = QWidget(self)
+            ov.setGeometry(self.rect())
+            ov.setStyleSheet("background-color: rgba(255,255,255,180);")
+            ov.show()
+            ov.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(14)
+            self.setGraphicsEffect(blur)
+            func(*args, **kwargs)
+            ov.hide()
+            ov.deleteLater()
+            self.setGraphicsEffect(None)
+
         if not email or not new_pw or not re_pw or not otp_code or not captcha_in:
-            show_modern_warning(self, "Gagal", "Semua field harus diisi.")
+            pop_with_overlay(show_modern_warning, self, "Gagal", "Semua field harus diisi.")
             return
         if new_pw != re_pw:
-            show_modern_error(self, "Gagal", "Password baru tidak sama.")
+            pop_with_overlay(show_modern_error, self, "Gagal", "Password baru tidak sama.")
             return
         if captcha_in != self.captcha_code:
-            show_modern_error(self, "Gagal", "Captcha salah, reset ditolak.")
+            pop_with_overlay(show_modern_error, self, "Gagal", "Captcha salah, reset ditolak.")
             self.refresh_captcha_image()
             return
 
@@ -4724,27 +5111,28 @@ class ResetPasswordDialog(QDialog):
             cur.execute("SELECT otp_secret FROM users WHERE email=?", (email,))
             row = cur.fetchone()
             if not row:
-                show_modern_error(self, "Gagal", "Email tidak terdaftar.")
+                pop_with_overlay(show_modern_error, self, "Gagal", "Email tidak terdaftar.")
                 return
 
             otp_secret = row[0]
-            import pyotp, hashlib  # type: ignore
+            import pyotp, hashlib
             totp = pyotp.TOTP(otp_secret)
             if not totp.verify(otp_code):
-                show_modern_error(self, "Gagal", "Kode OTP salah atau sudah kedaluwarsa.")
+                pop_with_overlay(show_modern_error, self, "Gagal", "Kode OTP salah atau sudah kedaluwarsa.")
                 return
 
-            # 🔒 Hash password baru + salt (email)
             salted_input = (new_pw + email).encode("utf-8")
             hashed_pw = hashlib.sha256(salted_input).hexdigest()
 
             cur.execute("UPDATE users SET password=? WHERE email=?", (hashed_pw, email))
             conn.commit()
-            show_modern_info(self, "Berhasil", "Reset password berhasil dilakukan!")
+
+            pop_with_overlay(show_modern_info, self, "Berhasil", "Reset password berhasil dilakukan!")
             self.accept()
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Terjadi kesalahan:\n{e}")
+            pop_with_overlay(show_modern_error, self, "Error", f"Terjadi kesalahan:\n{e}")
+
 
 class HoverDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -5000,6 +5388,7 @@ class MainWindow(QMainWindow):
     """Halaman utama sederhana sementara (dengan ikon di title bar bawaan)."""
     def __init__(self, nama, kecamatan, desa, db_name, tahapan):
         super().__init__()
+        self.setWindowIcon(app_icon())
 
         self._nama = nama
         self._kecamatan = kecamatan
@@ -5030,7 +5419,7 @@ class MainWindow(QMainWindow):
             print(f"[PERINGATAN] File ikon tidak ditemukan: {icon_path}")
         else:
             # ✅ Set icon ke title bar bawaan Windows
-            self.setWindowIcon(QIcon(icon_path))
+            self.setWindowIcon(app_icon())
 
         # Title bar default bawaan
         self.setWindowTitle(f"Desa {desa.title()} – Tahap {tahapan.upper()}")
@@ -5167,21 +5556,21 @@ class MainWindow(QMainWindow):
         action_bulk_sidalih.triggered.connect(self.bulk_sidalih)
         generate_menu.addAction(action_bulk_sidalih)
 
-        view_menu = menubar.addMenu("View")
+        #view_menu = menubar.addMenu("View")
         # Actual Size (reset zoom)
-        self.act_zoom_reset = QAction(" Actual Size", self)
-        self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
-        view_menu.addAction(self.act_zoom_reset)
+        #self.act_zoom_reset = QAction(" Actual Size", self)
+        #self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
+        #view_menu.addAction(self.act_zoom_reset)
 
         # Zoom In
-        self.act_zoom_in = QAction(" Zoom In", self)
-        self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
-        view_menu.addAction(self.act_zoom_in)
+        #self.act_zoom_in = QAction(" Zoom In", self)
+        #self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
+        #view_menu.addAction(self.act_zoom_in)
 
         # Zoom Out
-        self.act_zoom_out = QAction(" Zoom Out", self)
-        self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
-        view_menu.addAction(self.act_zoom_out)
+        #self.act_zoom_out = QAction(" Zoom Out", self)
+        #self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
+        #view_menu.addAction(self.act_zoom_out)
 
         self._zoom_shortcuts = []
 
@@ -5218,6 +5607,183 @@ class MainWindow(QMainWindow):
 
         help_menu.addAction(QAction(" About", self))
 
+        # === Toolbar ===
+        toolbar = QToolBar("Toolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        # fungsi bantu jarak antar tombol
+        def add_spacer(width=6):
+            spacer = QWidget()
+            spacer.setFixedWidth(width)
+            toolbar.addWidget(spacer)
+
+        # === Banner kiri ===
+        banner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "note.png")
+        self.banner_label = QLabel()
+        self.banner_label.setToolTip("Kerahasiaan dan Keamanan Data Pribadi adalah Komitmen Kita Bersama")
+        pixmap = QPixmap(banner_path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaledToHeight(36, Qt.TransformationMode.SmoothTransformation)
+            self.banner_label.setPixmap(scaled)
+            self.banner_label.setFixedSize(scaled.size())
+        toolbar.addWidget(self.banner_label)
+        add_spacer(10)
+
+        # === Label user (akan kita posisikan manual) ===
+        self.user_label = QLabel(nama)
+        self.user_label.setStyleSheet("""
+            font-family: 'Segoe UI';
+            font-weight: bold;
+            font-size: 15px;
+        """)
+        self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        toolbar.addWidget(self.user_label)
+
+        # === Spacer kanan ===
+        spacer_right = QWidget()
+        spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer_right)
+
+        # ==============================================================
+        # 🧭 Center sejati + auto kalibrasi global + adaptasi lintas monitor (dynamic DPI)
+        # ==============================================================
+
+        if not hasattr(self, "_debug_center_line"):
+            self._debug_center_line = QLabel(self)
+            self._debug_center_line.setStyleSheet("background-color: rgba(255,0,0,100);")
+            self._debug_center_line.setFixedWidth(1)
+            self._debug_center_line.setVisible(False)  # ubah ke True kalau mau lihat garis tengah
+
+        self._auto_offset = 0
+        self._calibration_done = False
+        self._last_screen = None
+        self._last_dpi = None
+
+        @with_safe_db
+        def _save_offset_to_db(offset_value, conn=None):
+            """Simpan offset global (1 tabel untuk semua tahapan)."""
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                cur.execute("INSERT OR REPLACE INTO setting_aplikasi_global (key, value) VALUES (?, ?)",
+                            ("offset_user_label", str(offset_value)))
+                conn.commit()
+                #print(f"[CALIBRATION] Offset user_label tersimpan (global): {offset_value}")
+            except Exception as e:
+                print(f"[CALIBRATION ERROR] Gagal simpan offset global: {e}")
+
+        @with_safe_db
+        def _load_offset_from_db(conn=None):
+            """Ambil offset global tersimpan (jika ada)."""
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS setting_aplikasi_global (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                cur.execute("SELECT value FROM setting_aplikasi_global WHERE key = 'offset_user_label'")
+                row = cur.fetchone()
+                if row:
+                    self._auto_offset = int(float(row[0]))
+                    #print(f"[CALIBRATION] Offset global dimuat: {self._auto_offset}")
+                else:
+                    self._auto_offset = 0
+            except Exception as e:
+                print(f"[CALIBRATION ERROR] Gagal baca offset global: {e}")
+                self._auto_offset = 0
+
+        def center_user_label(force_recalibrate=False):
+            """Tempatkan user_label tepat di tengah jendela utama (multi-monitor aware)."""
+            if not self.isVisible():
+                return
+
+            win_w = self.width()
+            current_screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+            dpi_now = current_screen.logicalDotsPerInch() if current_screen else 96
+
+            # Jika berpindah layar (atau DPI berubah), rekalibrasi ringan
+            if force_recalibrate or (self._last_screen != current_screen) or (self._last_dpi != dpi_now):
+                self._calibration_done = False
+                self._last_screen = current_screen
+                self._last_dpi = dpi_now
+
+            banner_w = self.banner_label.width() if hasattr(self, "banner_label") else 0
+
+            # hitung total lebar tombol kanan
+            right_w = 0
+            for b in toolbar.findChildren(QPushButton) + toolbar.findChildren(QToolButton):
+                if b.isVisible():
+                    right_w += b.width()
+
+            # posisi tengah sejati (koreksi selisih kiri-kanan)
+            correction = (banner_w - right_w) / 2
+            mid_x = (win_w / 2) - correction
+
+            # offset visual proporsional terhadap DPI dan kalibrasi global
+            base_offset = 96
+            visual_offset = int((base_offset / 96) * (dpi_now / 96) * 96) + self._auto_offset
+            mid_x += visual_offset
+
+            # pusatkan label
+            label_w = self.user_label.width()
+            self.user_label.move(int(mid_x - (label_w / 2)), self.user_label.y())
+
+            # garis bantu tengah
+            self._debug_center_line.setFixedHeight(self.height())
+            self._debug_center_line.move(int(win_w / 2), 0)
+            self._debug_center_line.raise_()
+
+            # =========================================================
+            # 🧠 Auto kalibrasi ringan (1–2 kali saja tiap pindah layar)
+            # =========================================================
+            if not self._calibration_done:
+                label_center = self.user_label.x() + (self.user_label.width() / 2)
+                center_line = win_w / 2
+                diff = int(center_line - label_center)
+
+                if abs(diff) <= 1:
+                    self._calibration_done = True
+                    _save_offset_to_db(self._auto_offset)
+                    self._debug_center_line.setVisible(False)
+                else:
+                    self._auto_offset += diff
+                    QTimer.singleShot(60, lambda: center_user_label(force_recalibrate))
+
+        # === Event binding ===
+        old_resize = self.resizeEvent if hasattr(self, "resizeEvent") else None
+        def resizeEvent(event):
+            center_user_label()
+            if old_resize:
+                old_resize(event)
+        self.resizeEvent = resizeEvent
+
+        old_show = self.showEvent if hasattr(self, "showEvent") else None
+        def showEvent(event):
+            _load_offset_from_db()
+            center_user_label(force_recalibrate=True)
+
+            # deteksi otomatis kalau window pindah ke layar lain (multi-monitor)
+            if self.windowHandle():
+                self.windowHandle().screenChanged.connect(
+                    lambda scr: QTimer.singleShot(150, lambda: center_user_label(force_recalibrate=True))
+                )
+            if old_show:
+                old_show(event)
+        self.showEvent = showEvent
+        self.user_label.adjustSize()
+        QApplication.processEvents()
+        center_user_label(force_recalibrate=True)
+
         # ==========================================================
         # ✅ Tampilkan menu "Import Ecoklit" hanya jika tahapan = DPHP
         # ==========================================================
@@ -5235,31 +5801,12 @@ class MainWindow(QMainWindow):
             import_ecoklit_menu.addAction(action_import_tms)
             import_ecoklit_menu.addAction(action_import_ubah)
 
-        # === Toolbar ===
-        toolbar = QToolBar("Toolbar")
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
-
-        # fungsi bantu untuk bikin jarak antar tombol
-        def add_spacer(width=4):
-            spacer = QWidget()
-            spacer.setFixedWidth(width)
-            toolbar.addWidget(spacer)
 
         # === Tombol Rekap (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_rekap = QToolButton()
         btn_rekap.setText(" Rekap ")
         btn_rekap.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn_rekap.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-
-        # === Tombol kiri ===
-        btn_baru = QPushButton("Export")
-        self.style_button(btn_baru, bg="#d71d1d", fg="white", bold=True)
-        btn_baru.clicked.connect(self.export_filtered_data_to_excel)
-        toolbar.addWidget(btn_baru)
-        add_spacer()
 
         # Gunakan stylesheet yang sama dengan tombol lain (style_button)
         btn_rekap.setStyleSheet(f"""
@@ -5338,22 +5885,6 @@ class MainWindow(QMainWindow):
                 margin: 4px 10px;
             }
         """)
-
-        # === Spacer kiri ke tengah ===
-        spacer_left = QWidget()
-        spacer_left.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer_left)
-
-        # === Label User di tengah ===
-        self.user_label = QLabel(nama)
-        self.user_label.setStyleSheet("font-family: Segoe UI; font-weight: bold; font-size: 14px;")
-        self.user_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        toolbar.addWidget(self.user_label)
-
-        # === Spacer tengah ke kanan ===
-        spacer_right = QWidget()
-        spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer_right)
 
         # === Tombol Cek Data (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_cekdata = QToolButton()
@@ -5680,38 +6211,107 @@ class MainWindow(QMainWindow):
 
     def reset_tampilkan_semua_data(self, silent=False):
         """
-        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF.
-        Penting: muat juga ROWID agar aksi hapus berikutnya tetap spesifik ke baris.
-        Setelah reset, fungsi-fungsi pagination, sorting, dan pewarnaan juga dijalankan ulang.
+        🔁 Tampilkan kembali seluruh data dari TABEL AKTIF tanpa flicker.
+        Menampilkan progress overlay putih di tengah layar.
         """
         from db_manager import get_connection
-        from PyQt6.QtCore import QTimer
+        from PyQt6.QtCore import QTimer, Qt
+        from PyQt6.QtWidgets import QApplication, QFrame, QVBoxLayout, QLabel, QProgressBar
+
         try:
-            # Tutup sidebar filter jika ada
+            # =========================================================
+            # 🧭 Overlay putih kecil di tengah layar
+            # =========================================================
+            overlay = QFrame(self)
+            overlay.setObjectName("overlayProgress")
+            overlay.setStyleSheet("""
+                QFrame#overlayProgress {
+                    background-color: rgba(255, 255, 255, 240);
+                    border: 2px solid #dddddd;
+                    border-radius: 12px;
+                }
+            """)
+
+            # Ukuran proporsional di tengah (misal 320x120)
+            ow, oh = 320, 120
+            pw, ph = self.width(), self.height()
+            overlay.setGeometry(
+                int((pw - ow) / 2),
+                int((ph - oh) / 2),
+                ow,
+                oh
+            )
+            overlay.setVisible(True)
+            overlay.raise_()
+
+            layout = QVBoxLayout(overlay)
+            layout.setContentsMargins(25, 20, 25, 20)
+            layout.setSpacing(10)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            label = QLabel("🔄 Memuat ulang data...")
+            label.setStyleSheet("color: black; font-size: 12pt; font-family: Segoe UI;")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            progress = QProgressBar()
+            progress.setRange(0, 100)
+            progress.setValue(0)
+            progress.setTextVisible(True)
+            progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress.setStyleSheet("""
+                QProgressBar {
+                    background-color: #f0f0f0;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    border-radius: 8px;
+                    text-align: center;
+                    height: 18px;
+                    font-family: Segoe UI;
+                    font-size: 10pt;
+                }
+                QProgressBar::chunk {
+                    background-color: #ff6600;
+                    border-radius: 8px;
+                }
+            """)
+
+            layout.addWidget(label)
+            layout.addWidget(progress)
+
+            QApplication.processEvents()
+
+            # =========================================================
+            # 🧹 Tutup sidebar filter & inisialisasi koneksi
+            # =========================================================
             try:
                 if hasattr(self, "filter_dock") and self.filter_dock and self.filter_dock.isVisible():
                     self.filter_dock.hide()
-            except Exception as e:
-                print("[UI WARNING] Gagal menutup sidebar filter:", e)
+            except Exception:
+                pass
 
             tbl_name = self._active_table()
             if not tbl_name:
+                overlay.deleteLater()
                 show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
             conn = get_connection()
             conn.row_factory = sqlcipher.Row
-
-            # Pastikan sinkronisasi dari koneksi lain
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             conn.commit()
-            #print("[DEBUG RESET] database_list =", conn.execute("PRAGMA database_list;").fetchall())
 
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            # =========================================================
+            # 📦 Ambil data dari database
+            # =========================================================
             cur = conn.cursor()
             cur.execute(f"SELECT rowid, * FROM {tbl_name}")
             rows = cur.fetchall()
 
             if not rows:
+                overlay.deleteLater()
                 if not silent:
                     show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk ditampilkan.")
                 self.all_data = []
@@ -5719,36 +6319,63 @@ class MainWindow(QMainWindow):
                 self.show_page(1)
                 return
 
-            # === Bangun ulang data dengan rowid
             headers = [col[1] for col in cur.execute(f"PRAGMA table_info({tbl_name})").fetchall()]
             all_data = []
-            for r in rows:
+            total = len(rows)
+            step = max(1, total // 40)  # update progress setiap 2.5%
+
+            for i, r in enumerate(rows):
                 d = {c: ("" if r[c] is None else str(r[c])) for c in headers if c in r.keys()}
                 d["rowid"] = r["rowid"]
                 all_data.append(d)
+                if i % step == 0:
+                    progress.setValue(min(80, int(i / total * 80)))
+                    QApplication.processEvents()
+
             self.all_data = all_data
+            progress.setValue(85)
+            QApplication.processEvents()
 
-            # === Tampilkan ulang tabel dengan freeze_ui untuk mencegah flicker
+            # =========================================================
+            # 🧊 Freeze UI & tampilkan ulang tabel (tanpa flicker)
+            # =========================================================
             with self.freeze_ui():
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+                self.table.setVisible(False)
+
                 self._refresh_table_with_new_data(self.all_data)
+                self.update_pagination()
+                self.show_page(1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
+                self._warnai_baris_berdasarkan_ket()
+                self._terapkan_warna_ke_tabel_aktif()
 
-            # === Jalankan seluruh fungsi pendukung pasca-reset
-            self.update_pagination()
-            self.show_page(1)
-            self.connect_header_events()
-            self.sort_data(auto=True)
-            self._warnai_baris_berdasarkan_ket()
+                self.table.setVisible(True)
+                self.table.setUpdatesEnabled(True)
+                self.table.viewport().update()
+                QApplication.processEvents()
+                self.table.blockSignals(False)
 
-            # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
-            QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+            progress.setValue(100)
+            QApplication.processEvents()
 
-            #print("[RESET] Data tabel berhasil dimuat ulang dan tampilan diperbarui ✅")
+            # =========================================================
+            # ✨ Hilangkan overlay setelah 0.3 detik
+            # =========================================================
+            QTimer.singleShot(300, overlay.deleteLater)
 
         except Exception as e:
+            try:
+                overlay.deleteLater()
+            except Exception:
+                pass
             if not silent:
                 show_modern_error(self, "Error", f"Gagal menampilkan ulang data:\n{e}")
             else:
                 print(f"[Silent Reset Warning] {e}")
+
 
     def reset_tampilan_setelah_hapus(self, silent=False):
         """
@@ -5979,36 +6606,95 @@ class MainWindow(QMainWindow):
 
     @with_safe_db
     def apply_column_visibility(self, *args, conn=None):
-        """Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi_<tahapan>."""
-        cur = conn.cursor()
+        """
+        Terapkan visibilitas kolom sesuai pengaturan di tabel setting_aplikasi_<tahapan>
+        dan otomatis sesuaikan lebar hanya untuk kolom yang baru ditampilkan.
+        """
+        try:
+            cur = conn.cursor()
 
-        # Gunakan tabel setting berdasarkan tahapan aktif
-        tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
+            # Gunakan tabel setting berdasarkan tahapan aktif
+            tbl_name = f"setting_aplikasi_{self._tahapan.lower()}"
 
-        # Pastikan tabel ada
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {tbl_name} (
-                nama_kolom TEXT PRIMARY KEY,
-                tampil INTEGER
-            )
-        """)
+            # Pastikan tabel ada
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {tbl_name} (
+                    nama_kolom TEXT PRIMARY KEY,
+                    tampil INTEGER
+                )
+            """)
 
-        # Ambil semua pengaturan visibilitas
-        cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
-        settings = dict(cur.fetchall())
+            # Ambil semua pengaturan visibilitas
+            cur.execute(f"SELECT nama_kolom, tampil FROM {tbl_name}")
+            settings = dict(cur.fetchall())
 
-        # Terapkan ke tabel tampilan
-        for i in range(self.table.columnCount()):
-            header_item = self.table.horizontalHeaderItem(i)
-            if not header_item:
-                continue  # skip kolom tanpa header label
-            col_name = header_item.text().strip()
-            if col_name in settings:
-                hidden = (settings[col_name] == 0)
+            newly_shown_cols = []  # daftar kolom yang baru muncul
+
+            # Terapkan visibilitas & deteksi kolom yang baru ditampilkan
+            for i in range(self.table.columnCount()):
+                header_item = self.table.horizontalHeaderItem(i)
+                if not header_item:
+                    continue  # skip kolom tanpa header label
+
+                col_name = header_item.text().strip()
+                # status visibilitas sebelumnya
+                was_hidden = self.table.isColumnHidden(i)
+                # status baru (berdasarkan setting di DB)
+                hidden = (settings.get(col_name, 1) == 0)
+
+                # ubah visibilitas kolom
                 self.table.setColumnHidden(i, hidden)
-            else:
-                # default: kolom terlihat
-                self.table.setColumnHidden(i, False)
+
+                # jika sebelumnya tersembunyi dan sekarang tampil → tandai untuk auto-fit
+                if was_hidden and not hidden:
+                    newly_shown_cols.append(i)
+
+            # =====================================================
+            # 🧩 AUTO FIT HANYA UNTUK KOLOM YANG BARU DITAMPILKAN
+            # =====================================================
+            if newly_shown_cols:
+                self.table.setUpdatesEnabled(False)
+                for col in newly_shown_cols:
+                    self.table.resizeColumnToContents(col)
+                    # tambahkan sedikit ruang biar tidak rapat
+                    new_width = self.table.columnWidth(col)
+                    self.table.setColumnWidth(col, new_width)
+
+                self.table.setUpdatesEnabled(True)
+
+                # Refresh tampilan supaya efek langsung terlihat
+                self.table.viewport().update()
+                QApplication.processEvents()
+
+        except Exception as e:
+            print(f"[ERROR] apply_column_visibility gagal: {e}")
+
+
+    def auto_fit_visible_columns(self):
+        """Atur otomatis lebar kolom yang tampil berdasarkan konten terpanjangnya."""
+        try:
+            if not hasattr(self, "table") or self.table is None:
+                return
+            
+            header = self.table.horizontalHeader()
+            visible_columns = []
+
+            for col in range(self.table.columnCount()):
+                if not self.table.isColumnHidden(col):
+                    visible_columns.append(col)
+
+            # Fit to content hanya untuk kolom yang terlihat
+            for col in visible_columns:
+                self.table.resizeColumnToContents(col)
+
+            # Sedikit buffer supaya teks tidak terlalu mepet
+            for col in visible_columns:
+                width = self.table.columnWidth(col)
+                self.table.setColumnWidth(col, width + 20)
+
+        except Exception as e:
+            print(f"[WARN] Gagal auto-fit kolom: {e}")
+
 
     def showEvent(self, event):
         """Otomatis maximize saat pertama kali tampil."""
@@ -6129,6 +6815,8 @@ class MainWindow(QMainWindow):
             conditions.append("KTPel = ?");    params.append(filters["ktpel"])
         if filters.get("sumber"):
             conditions.append("SUMBER = ?");   params.append(filters["sumber"])
+        if filters.get("tps"):
+            conditions.append("TPS = ?");      params.append(filters["tps"])
 
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         # Sertakan rowid supaya baris tetap punya identitas unik
@@ -6426,30 +7114,28 @@ class MainWindow(QMainWindow):
         import os
         from PyQt6.QtGui import QIcon
 
-        # === Pastikan self.stack masih valid ===
+        # === Pastikan stack masih valid ===
         if not hasattr(self, "stack") or self.stack is None:
             show_modern_error(self, "Error", "Elemen utama (stack) telah dihapus. Mohon restart aplikasi.")
             return
 
-        # === Pastikan ikon aplikasi (KPU.png) muncul di kiri atas ===
+        # === Ikon kiri atas ===
         icon_path = os.path.join(os.path.dirname(__file__), "KPU.png")
         if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+            self.setWindowIcon(app_icon())
 
-        # === Siapkan dashboard (bangun baru atau refresh jika sudah ada) ===
+        # === Siapkan dashboard ===
         if hasattr(self, "dashboard_page") and self.dashboard_page is not None:
-            # Dashboard sudah pernah dibuat → cukup refresh saja
             if hasattr(self, "refresh_dashboard_on_show"):
                 try:
                     self.refresh_dashboard_on_show()
                 except Exception as e:
                     print(f"[Dashboard Refresh Error] {e}")
         else:
-            # Dashboard belum pernah dibuat → bangun baru
             self.dashboard_page = self._build_dashboard_widget()
             self.stack.addWidget(self.dashboard_page)
 
-        # === Ambil ulang data dari DB aktif (pasti sinkron dengan tabel utama) ===
+        # === Ambil ulang data utama header ===
         @with_safe_db
         def _get_header_stats(self, conn=None):
             cur = conn.cursor()
@@ -6475,7 +7161,7 @@ class MainWindow(QMainWindow):
 
         stats = _get_header_stats(self)
 
-        # === Update label atas (pastikan sesuai nama label yang anda gunakan) ===
+        # === Update label atas ===
         try:
             if hasattr(self, "lbl_total_pemilih"):
                 self.lbl_total_pemilih.setText(f"{stats['total']:,}".replace(",", "."))
@@ -6487,16 +7173,12 @@ class MainWindow(QMainWindow):
                 self.lbl_total_desa.setText(f"{stats['desa']:,}".replace(",", "."))
             if hasattr(self, "lbl_total_tps"):
                 self.lbl_total_tps.setText(f"{stats['tps']:,}".replace(",", "."))
-            #print("[Dashboard Header] Label atas diperbarui sukses.")
         except Exception as e:
             print(f"[Dashboard Header Error] {e}")
 
-        # === Pastikan sudah terdaftar di stack ===
+        # === Pastikan sudah di stack ===
         if self.stack.indexOf(self.dashboard_page) == -1:
             self.stack.addWidget(self.dashboard_page)
-
-        # Tandai bahwa posisi user sedang di dashboard
-        self._is_on_dashboard = True
 
         # === Sembunyikan toolbar & filter ===
         for tb in self.findChildren(QToolBar):
@@ -6504,17 +7186,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, "filter_dock") and self.filter_dock:
             self.filter_dock.hide()
 
-        # === Status bar tetap ada tapi hanya menampilkan versi NexVo ===
+        # === Status bar tetap tampil versi ===
         if self.statusBar():
             self.statusBar().showMessage("NexVo v1.0")
 
-        # === Tampilkan dashboard dengan animasi Fade-in ===
+        # === Animasi masuk dashboard ===
         self._stack_fade_to(self.dashboard_page, duration=600)
-
 
     def _build_dashboard_widget(self) -> QWidget:
         """Bangun halaman Dashboard modern dinamis dari database aktif."""
-        # === Widget utama ===
         dash_widget = QWidget()
         dash_layout = QVBoxLayout(dash_widget)
         dash_layout.setContentsMargins(30, 0, 30, 10)
@@ -6548,7 +7228,7 @@ class MainWindow(QMainWindow):
         dash_layout.addWidget(header_frame)
         dash_layout.addSpacing(-50)
 
-        # === Fade-in ===
+        # === Fade-in efek ===
         header_effect = QGraphicsOpacityEffect(header_frame)
         header_frame.setGraphicsEffect(header_effect)
         header_anim = QPropertyAnimation(header_effect, b"opacity")
@@ -6558,91 +7238,80 @@ class MainWindow(QMainWindow):
         header_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         header_anim.start()
 
-        # ======================================================
-        # 🧮 Ambil Data Statistik dari Database Aktif
-        # ======================================================
+        # === Ambil data dashboard ===
         @with_safe_db
         def get_dashboard_data(self, conn=None):
             cur = conn.cursor()
             tbl = self._active_table()
-
             where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
 
-            # Total pemilih
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
             total = cur.fetchone()[0] or 0
 
-            # 🧩 Jika tabel kosong, langsung kembalikan nilai 0 semua
             if total == 0:
                 return {
                     "desa": self._desa.title(),
-                    "total": 0,
-                    "laki": 0,
-                    "perempuan": 0,
-                    "desa_distinct": 0,
-                    "tps": 0,
-                    "bars": {
-                        "MENINGGAL": 0,
-                        "GANDA": 0,
-                        "DI BAWAH UMUR": 0,
-                        "PINDAH DOMISILI": 0,
-                        "WNA": 0,
-                        "TNI": 0,
-                        "POLRI": 0,
-                        "SALAH TPS": 0,
-                    },
+                    "total": 0, "laki": 0, "perempuan": 0,
+                    "desa_distinct": 0, "tps": 0,
+                    "bars": {k: 0 for k in ["MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI", "WNA", "TNI", "POLRI", "SALAH TPS"]},
+                    "baru_l": 0, "baru_p": 0, "baru_total": 0,
+                    "ubah_l": 0, "ubah_p": 0, "ubah_total": 0
                 }
 
-            # Laki-laki & Perempuan
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
             laki = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
 
-            # Distinct desa & TPS
             cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
             desa_distinct = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
-            # Status-statistik (KET 1–8)
             bars = {}
             kode_map = {
-                1: "MENINGGAL",
-                2: "GANDA",
-                3: "DI BAWAH UMUR",
-                4: "PINDAH DOMISILI",
-                5: "WNA",
-                6: "TNI",
-                7: "POLRI",
-                8: "SALAH TPS"
+                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR",
+                4: "PINDAH DOMISILI", 5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
             }
             for kode, label in kode_map.items():
                 cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
                 bars[label] = cur.fetchone()[0] or 0
 
+            # Statistik tambahan
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('L','l'))")
+            baru_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('P','p'))")
+            baru_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b'))")
+            baru_total = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('L','l'))")
+            ubah_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('P','p'))")
+            ubah_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u'))")
+            ubah_total = cur.fetchone()[0] or 0
+
             return {
                 "desa": self._desa.title(),
-                "total": total,
-                "laki": laki,
-                "perempuan": perempuan,
-                "desa_distinct": desa_distinct,
-                "tps": tps_distinct,
+                "total": total, "laki": laki, "perempuan": perempuan,
+                "desa_distinct": desa_distinct, "tps": tps_distinct,
                 "bars": bars,
+                "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
+                "ubah_l": ubah_l, "ubah_p": ubah_p, "ubah_total": ubah_total
             }
 
         stats = get_dashboard_data(self)
 
         # ======================================================
-        # 🪪 Kartu Ringkasan
+        # 🪪 KARTU RINGKASAN
         # ======================================================
         top_row = QHBoxLayout()
         top_row.setSpacing(15)
 
         def make_card(icon, title, value):
             card = QFrame()
-            card.setMinimumWidth(150)
-            card.setMaximumWidth(220)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             lay = QVBoxLayout(card)
             lay.setContentsMargins(10, 8, 10, 8)
             lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -6685,7 +7354,7 @@ class MainWindow(QMainWindow):
 
         # === PIE DONUT + BAR ===
         middle_row = QHBoxLayout()
-        middle_row.setSpacing(40)
+        middle_row.setSpacing(60)
 
         # === PIE DONUT ===
         total = max(stats["total"], 1)
@@ -6882,19 +7551,19 @@ class MainWindow(QMainWindow):
 
             bg = QFrame()
             bg.setFixedHeight(8)
-            bg.setMaximumWidth(280)
+            bg.setMaximumWidth(420)
             bg.setStyleSheet("background:#eee; border-radius:2px;")
 
             inner = QHBoxLayout(bg)
-            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setContentsMargins(6, 0, 0, 0)
             inner.setSpacing(0)
 
             fg = QFrame()
             fg.setFixedHeight(8)
             fg.setStyleSheet("background:#ff6600; border-radius:2px;")
 
-            base_ratio = 0.9
-            stretch_val = max(1, min(int(ratio * 100 * base_ratio), 80))
+            base_ratio = 1.3
+            stretch_val = max(5, min(int(ratio * 100 * base_ratio), 95))
             inner.addWidget(fg, stretch_val)
             inner.addStretch(100 - stretch_val)
 
@@ -6916,7 +7585,83 @@ class MainWindow(QMainWindow):
             bar_layout.addLayout(row)
 
         middle_row.addWidget(bar_frame, 2)
+        # ======================================================
+        # 📈 PANEL TAMBAHAN: Pemilih Baru & Ubah Data
+        # ======================================================
+        extra_frame = QFrame()
+        extra_layout = QVBoxLayout(extra_frame)
+        extra_layout.setSpacing(6)
+        extra_layout.setContentsMargins(35, 25, 35, 25)
+
+        # 🔹 Judul
+        judul_lbl = QLabel("🧾 Pemilih Baru & Ubah Data")
+        judul_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        judul_lbl.setStyleSheet("""
+            font-size:12pt;
+            font-weight:600;
+            color:#333;
+            margin-bottom:8px;
+        """)
+        extra_layout.addWidget(judul_lbl)
+
+        def make_stat_row(label, value, color="#6b4e71"):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+            lbl = QLabel(label)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setStyleSheet("font-size:10.5pt; color:#333;")
+
+            val_lbl = QLabel(f"{value:,}".replace(",", "."))
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            val_lbl.setStyleSheet(f"font-size:11pt; font-weight:600; color:{color}; min-width:55px;")
+
+            row.addWidget(lbl, 2)
+            row.addWidget(val_lbl, 1)
+            return row
+
+        # 🔸 Grup 1: Pemilih Baru
+        extra_layout.addLayout(make_stat_row("Pemilih Baru (L)", stats["baru_l"], "#6b4e71"))
+        extra_layout.addLayout(make_stat_row("Pemilih Baru (P)", stats["baru_p"], "#ff6600"))
+        extra_layout.addLayout(make_stat_row("Total Pemilih Baru", stats["baru_total"], "#444"))
+
+        # 🔹 Garis pemisah halus abu-abu
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("color:#ddd; background:#ddd; max-height:1px; margin-top:6px; margin-bottom:6px;")
+        extra_layout.addWidget(separator)
+
+        # 🔸 Grup 2: Ubah Data
+        extra_layout.addLayout(make_stat_row("Ubah Data (L)", stats["ubah_l"], "#6b4e71"))
+        extra_layout.addLayout(make_stat_row("Ubah Data (P)", stats["ubah_p"], "#ff6600"))
+        extra_layout.addLayout(make_stat_row("Total Ubah Data", stats["ubah_total"], "#444"))
+
+        # 🔹 Gaya & bayangan kartu
+        shadow_extra = QGraphicsDropShadowEffect()
+        shadow_extra.setBlurRadius(25)
+        shadow_extra.setOffset(0, 3)
+        shadow_extra.setColor(QColor(0, 0, 0, 50))
+        extra_frame.setGraphicsEffect(shadow_extra)
+        extra_frame.setStyleSheet("background:#fff; border-radius:14px;")
+
+        extra_frame.setMinimumWidth(260)
+        extra_frame.setMaximumWidth(310)
+
+        middle_row.addWidget(extra_frame, 1)
         dash_layout.addLayout(middle_row)
+
+        # === Simpan referensi untuk refresh cepat ===
+        self.extra_labels = {
+            "baru_l": extra_layout.itemAt(1).layout().itemAt(1).widget(),
+            "baru_p": extra_layout.itemAt(2).layout().itemAt(1).widget(),
+            "baru_total": extra_layout.itemAt(3).layout().itemAt(1).widget(),
+            "ubah_l": extra_layout.itemAt(5).layout().itemAt(1).widget(),
+            "ubah_p": extra_layout.itemAt(6).layout().itemAt(1).widget(),
+            "ubah_total": extra_layout.itemAt(7).layout().itemAt(1).widget(),
+        }
 
         # === STYLE GLOBAL ===
         dash_widget.setStyleSheet("""
@@ -6984,16 +7729,12 @@ class MainWindow(QMainWindow):
     def refresh_dashboard_on_show(self):
         """Refresh data dashboard setiap kali halaman dashboard ditampilkan."""
         try:
-            # Jika dashboard belum pernah dibuat, keluar diam-diam
+            # Dashboard belum siap? keluar diam-diam
             if not hasattr(self, "bar_labels") or not hasattr(self, "slice_laki") or not hasattr(self, "slice_perempuan"):
-                #print("[Dashboard Refresh] Dashboard belum siap → dilewati.")
                 return
-
-            if hasattr(self, "dashboard_page") and getattr(self, "current_page", "") == "dashboard":
-                if hasattr(self, "refresh_dashboard"):
-                    self.refresh_dashboard()
         except Exception as e:
             print(f"[Dashboard Refresh Error] {e}")
+            return
 
         # === Ambil ulang data dari DB aktif ===
         @with_safe_db
@@ -7002,50 +7743,80 @@ class MainWindow(QMainWindow):
             tbl = self._active_table()
             where_filter = "WHERE CAST(KET AS INTEGER) NOT IN (1,2,3,4,5,6,7,8)"
 
+            # Total pemilih
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter}")
             total = cur.fetchone()[0] or 0
 
             if total == 0:
-                bars = {
-                    "MENINGGAL": 0, "GANDA": 0, "DI BAWAH UMUR": 0, "PINDAH DOMISILI": 0,
-                    "WNA": 0, "TNI": 0, "POLRI": 0, "SALAH TPS": 0
+                return {
+                    "desa": self._desa.title(),
+                    "total": 0, "laki": 0, "perempuan": 0,
+                    "desa_distinct": 0, "tps": 0,
+                    "bars": {k: 0 for k in [
+                        "MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI",
+                        "WNA", "TNI", "POLRI", "SALAH TPS"
+                    ]},
+                    "baru_l": 0, "baru_p": 0, "baru_total": 0,
+                    "ubah_l": 0, "ubah_p": 0, "ubah_total": 0
                 }
-                return {"total": 0, "laki": 0, "perempuan": 0,
-                        "desa_distinct": 0, "tps": 0, "bars": bars}
 
-            # Data valid → lanjut hitung
+            # Laki-laki & Perempuan
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='L'")
             laki = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
+
+            # Distinct desa & TPS
             cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
             desa_distinct = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
-            kode_map = {
-                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR", 4: "PINDAH DOMISILI",
-                5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
-            }
+            # Status KET 1–8
             bars = {}
+            kode_map = {
+                1: "MENINGGAL", 2: "GANDA", 3: "DI BAWAH UMUR",
+                4: "PINDAH DOMISILI", 5: "WNA", 6: "TNI", 7: "POLRI", 8: "SALAH TPS"
+            }
             for kode, label in kode_map.items():
                 cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE CAST(KET AS INTEGER)=?", (kode,))
                 bars[label] = cur.fetchone()[0] or 0
 
-            return {"total": total, "laki": laki, "perempuan": perempuan,
-                    "desa_distinct": desa_distinct, "tps": tps_distinct, "bars": bars}
+            # Statistik tambahan
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('L','l'))")
+            baru_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b')) AND (JK IN ('P','p'))")
+            baru_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('B','b'))")
+            baru_total = cur.fetchone()[0] or 0
+
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('L','l'))")
+            ubah_l = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u')) AND (JK IN ('P','p'))")
+            ubah_p = cur.fetchone()[0] or 0
+            cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (KET IN ('U','u'))")
+            ubah_total = cur.fetchone()[0] or 0
+
+            return {
+                "desa": self._desa.title(),
+                "total": total, "laki": laki, "perempuan": perempuan,
+                "desa_distinct": desa_distinct, "tps": tps_distinct,
+                "bars": bars,
+                "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
+                "ubah_l": ubah_l, "ubah_p": ubah_p, "ubah_total": ubah_total
+            }
 
         stats = get_dashboard_data(self)
 
-        # === Kalau dashboard belum siap, keluar aman ===
-        if not hasattr(self, "bar_labels"):
-            #print("[Dashboard Refresh] Tidak ada bar_labels → dilewati.")
-            return
-        
+        # === Update statistik tambahan (panel kanan) ===
+        if hasattr(self, "extra_labels"):
+            for key in self.extra_labels:
+                val = stats.get(key, 0)
+                self.extra_labels[key].setText(f"{val:,}".replace(",", "."))
+
         # === Update bar chart ===
         total_safe = max(stats["total"], 1)
 
-        # === Helper untuk ubah panjang batang ===
         def _set_bar_stretch(ref, stretch_0_100: int):
             inner = ref["inner"]
             fg = ref["fg"]
@@ -7071,19 +7842,19 @@ class MainWindow(QMainWindow):
                 ref = self.bar_labels[key]
                 ref["value"].setText(f"{val:,}".replace(",", "."))
                 stretch = int((val / total_safe) * 100)
-                stretch = max(1, min(stretch, 90))
+                stretch = max(5, min(stretch, 95))
                 _set_bar_stretch(ref, stretch)
 
-        # === Update pie chart ===
+        # === Update pie chart (donut) ===
         total = max(stats["total"], 1)
         pct_laki = (stats["laki"] / total) * 100
         pct_perempuan = (stats["perempuan"] / total) * 100
         self.slice_laki.setValue(pct_laki)
         self.slice_perempuan.setValue(pct_perempuan)
 
-        # === Refresh label ringkasan atas (Pemilih, Laki-laki, Perempuan, Desa, TPS) ===
-        try:
-            if hasattr(self, "card_labels"):
+        # === Update kartu ringkasan atas ===
+        if hasattr(self, "card_labels"):
+            try:
                 if "total" in self.card_labels:
                     self.card_labels["total"].setText(f"{stats['total']:,}".replace(",", "."))
                 if "laki" in self.card_labels:
@@ -7094,11 +7865,8 @@ class MainWindow(QMainWindow):
                     self.card_labels["desa"].setText(f"{stats['desa_distinct']:,}".replace(",", "."))
                 if "tps" in self.card_labels:
                     self.card_labels["tps"].setText(f"{stats['tps']:,}".replace(",", "."))
-                #print("[Dashboard Header] card_labels diperbarui sukses.")
-            else:
-                print("[Dashboard Header] card_labels tidak ditemukan.")
-        except Exception as e:
-            print(f"[Dashboard Header Refresh Error] {e}")
+            except Exception as e:
+                print(f"[Dashboard Header Refresh Error] {e}")
 
         #print(f"[Dashboard Refresh] OK - total={stats['total']}, L={stats['laki']}, P={stats['perempuan']}")
 
@@ -7664,34 +8432,29 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_satu_pemilih(self, row, conn=None):
-        """Hapus satu baris data pemilih dengan konfirmasi dan freeze UI."""
+        """Hapus satu baris data pemilih dengan konfirmasi dan anti flicker."""
         try:
             tbl = self._active_table()
             if not tbl:
                 show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # --- Ambil data dari tabel UI
             def _val(col):
                 ci = self.col_index(col)
                 it = self.table.item(row, ci) if ci != -1 else None
                 return it.text().strip() if it else ""
 
-            nama = _val("NAMA")
-            nik = _val("NIK")
-            nkk = _val("NKK")
-            dpid = _val("DPID")
-            tgl = _val("TGL_LHR")
+            nama, nik, nkk, dpid, tgl, ket = map(_val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"])
 
-            # --- Proteksi: hanya DPID kosong / "0" yang bisa dihapus
-            if dpid and dpid != "0":
+            # ✅ Validasi hanya pemilih baru (DPID kosong/0 & KET=B/b)
+            if not ((not dpid or dpid == "0") and (ket or "").strip().lower() == "b"):
                 show_modern_warning(
-                    self, "Ditolak",
+                    self,
+                    "Ditolak",
                     f"{nama} tidak dapat dihapus.<br>Hanya pemilih baru di tahapan ini yang bisa dihapus!",
                 )
                 return
 
-            # --- Konfirmasi
             if not show_modern_question(
                 self,
                 "Konfirmasi Hapus",
@@ -7703,8 +8466,10 @@ class MainWindow(QMainWindow):
             # --- Eksekusi delete dengan UI freeze
             with self.freeze_ui():
                 conn = get_connection()
-                conn.execute("PRAGMA busy_timeout = 3000;")
-                conn.execute("PRAGMA journal_mode = WAL;")
+                conn.executescript("""
+                    PRAGMA busy_timeout = 3000;
+                    PRAGMA journal_mode = WAL;
+                """)
 
                 deleted = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl)
                 conn.commit()
@@ -7714,9 +8479,12 @@ class MainWindow(QMainWindow):
                 else:
                     show_modern_warning(self, "Info", f"Data {nama} tidak ditemukan di database.")
 
-                # --- Refresh tabel
+                # 🔹 Anti flicker: nonaktifkan repaint
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
@@ -7724,8 +8492,8 @@ class MainWindow(QMainWindow):
             try:
                 if conn:
                     conn.commit()
-                    self._clear_row_selection(row)
-                    self._reset_tabel_background()
+                self._clear_row_selection(row)
+                self._reset_tabel_background()
             except Exception:
                 pass
 
@@ -7734,7 +8502,7 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_banyak_pemilih(self, rows, conn=None):
-        """Menghapus banyak baris data sekaligus dengan freeze UI."""
+        """Hapus banyak baris data sekaligus dengan anti flicker & konfirmasi batch."""
         try:
             if not rows:
                 show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
@@ -7745,7 +8513,6 @@ class MainWindow(QMainWindow):
                 show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                 return
 
-            # --- Konfirmasi awal
             if not show_modern_question(
                 self,
                 "Konfirmasi Batch",
@@ -7753,7 +8520,6 @@ class MainWindow(QMainWindow):
             ):
                 return
 
-            # --- Jalankan batch dengan UI freeze
             with self.freeze_ui():
                 conn = get_connection()
                 cur = conn.cursor()
@@ -7772,13 +8538,10 @@ class MainWindow(QMainWindow):
                         it = self.table.item(row, ci) if ci != -1 else None
                         return it.text().strip() if it else ""
 
-                    nama = _val("NAMA")
-                    nik = _val("NIK")
-                    nkk = _val("NKK")
-                    dpid = _val("DPID")
-                    tgl = _val("TGL_LHR")
+                    nama, nik, nkk, dpid, tgl, ket = map(_val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"])
 
-                    if dpid and dpid != "0":
+                    # ✅ Hanya boleh hapus jika DPID kosong/0 dan KET = B/b
+                    if not ((not dpid or dpid == "0") and (ket or "").strip().lower() == "b"):
                         rejected += 1
                         continue
 
@@ -7793,20 +8556,20 @@ class MainWindow(QMainWindow):
 
                 conn.commit()
 
-                # --- Tampilkan ringkasan
-                total = ok + skipped + rejected
                 msg = f"✅ {ok} dihapus"
                 if rejected:
                     msg += f", ❌ {rejected} ditolak"
                 if skipped:
                     msg += f", ⏸️ {skipped} dilewati"
-                msg += f" (Total: {total})"
+                msg += f" (Total: {ok + skipped + rejected})"
                 show_modern_info(self, "Selesai", msg)
 
-                # --- Refresh tabel
+                # 🔹 Anti flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(250, lambda: self._refresh_setelah_hapus())
-                self._reset_tabel_background()
+                QTimer.singleShot(200, lambda: self._refresh_dan_buka_repaint())
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data batch:\n{e}")
@@ -7814,9 +8577,10 @@ class MainWindow(QMainWindow):
             try:
                 if conn:
                     conn.commit()
+                self._clear_row_selection(rows)
+                self._reset_tabel_background()
             except Exception:
                 pass
-
 
     # =========================================================
     # 🔹 ROUTER: otomatis pilih hapus satu / banyak
@@ -7885,9 +8649,7 @@ class MainWindow(QMainWindow):
     # 🔹 AKTIFKAN SATU PEMILIH
     # =========================================================
     def aktifkan_satu_pemilih(self, row):
-        """Aktifkan satu pemilih (KET → 0) dengan konfirmasi & freeze UI."""
-        from datetime import datetime
-
+        """Aktifkan satu pemilih (KET → 0) tanpa flicker dan tanpa error QTableWidget."""
         with self.freeze_ui():
             try:
                 tbl = self._active_table()
@@ -7895,7 +8657,6 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
-                # --- Ambil data baris
                 def _val(col):
                     ci = self.col_index(col)
                     it = self.table.item(row, ci) if ci != -1 else None
@@ -7915,7 +8676,7 @@ class MainWindow(QMainWindow):
                     f"Aktifkan kembali pemilih ini?<br><b>{nama}</b>"):
                     return
 
-                # --- Update DB & memori
+                # --- Update DB
                 today_str = datetime.now().strftime("%d/%m/%Y")
                 conn = get_connection()
                 cur = conn.cursor()
@@ -7923,42 +8684,50 @@ class MainWindow(QMainWindow):
                 cur.execute(f"UPDATE {tbl} SET KET = 0, LastUpdate = ? WHERE DPID = ?", (today_str, dpid))
                 conn.commit()
 
-                # --- Update UI
+                # --- Update data cache
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = "0"
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                last_update_col = self.col_index("LastUpdate")
-                if last_update_col != -1:
-                    lu_item = self.table.item(row, last_update_col)
-                    if not lu_item:
-                        lu_item = QTableWidgetItem()
-                        self.table.setItem(row, last_update_col, lu_item)
-                    lu_item.setText(today_str)
+                # --- Update tampilan langsung dengan aman
+                ket_col = self.col_index("KET")
+                if ket_col != -1:
+                    existing_item = self.table.item(row, ket_col)
+                    if existing_item:
+                        existing_item.setText("0")
+                    else:
+                        self.table.setItem(row, ket_col, QTableWidgetItem("0"))
 
-                #self._warnai_baris_berdasarkan_ket()
-                #self._terapkan_warna_ke_tabel_aktif()
+                lu_col = self.col_index("LastUpdate")
+                if lu_col != -1:
+                    existing_item = self.table.item(row, lu_col)
+                    if existing_item:
+                        existing_item.setText(today_str)
+                    else:
+                        self.table.setItem(row, lu_col, QTableWidgetItem(today_str))
 
+                # --- Nonaktifkan repaint sementara (anti flicker)
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                # --- Jalankan fungsi refresh wajib
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
                 show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
                 self._reset_tabel_background()
                 
-
-
     # =========================================================
     # 🔹 AKTIFKAN BANYAK PEMILIH (BATCH)
     # =========================================================
     def aktifkan_banyak_pemilih(self, rows):
-        """Aktifkan banyak pemilih (KET → 0) sekaligus, TANPA mengubah JK/TPS."""
+        """Aktifkan banyak pemilih (KET → 0) sekaligus, TANPA mengubah JK/TPS, tanpa flicker."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -7991,12 +8760,10 @@ class MainWindow(QMainWindow):
                     dpid = dpid_item.text().strip() if dpid_item else ""
                     ket  = ket_item.text().strip() if ket_item else ""
 
-                    # Hanya proses yang KET-nya 1–8 (sesuai aturan kamu)
                     if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8"):
                         rejected += 1
                         continue
 
-                    # ⛔ Tidak menyentuh JK/TPS sama sekali
                     batch_data.append((today_str, dpid))
                     ok += 1
 
@@ -8004,7 +8771,7 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
                     return
 
-                # Eksekusi batch cepat
+                # --- Eksekusi batch cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8021,19 +8788,51 @@ class MainWindow(QMainWindow):
                 """, batch_data)
                 conn.commit()
 
+                # --- Update cache di memori
+                dpid_map = {d for _, d in batch_data}
+                for rdata in self.all_data:
+                    if rdata.get("DPID") in dpid_map:
+                        rdata["KET"] = "0"
+                        rdata["LastUpdate"] = today_str
+
+                # --- Update tampilan langsung (tanpa flicker)
+                for row in rows:
+                    ci_ket = self.col_index("KET")
+                    ci_lu  = self.col_index("LastUpdate")
+
+                    if ci_ket != -1:
+                        item = self.table.item(row, ci_ket)
+                        if item:
+                            item.setText("0")
+                        else:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            self.table.setItem(row, ci_ket, QTableWidgetItem("0"))
+
+                    if ci_lu != -1:
+                        item = self.table.item(row, ci_lu)
+                        if item:
+                            item.setText(today_str)
+                        else:
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            self.table.setItem(row, ci_lu, QTableWidgetItem(today_str))
+
+                # --- Bekukan repaint selama reload untuk hilangkan flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                # --- Jalankan fungsi wajib
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+
                 msg = f"✅ {ok} diaktifkan"
                 if rejected:
                     msg += f", ❌ {rejected} dilewati"
                 show_modern_info(self, "Selesai", msg)
 
-                self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
-                self._clear_row_selection(row)
+                self._clear_row_selection(rows)
                 self._reset_tabel_background()
                 
     # =========================================================
@@ -8049,12 +8848,20 @@ class MainWindow(QMainWindow):
         else:
             self.aktifkan_banyak_pemilih(rows)
 
+    def _refresh_dan_buka_repaint(self):
+        """Lanjutkan refresh dan buka repaint tabel (anti flicker)."""
+        try:
+            self._refresh_setelah_hapus()
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            self.table.viewport().update()
 
     # =========================================================
     # 🔹 SET STATUS SATU (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_satu(self, row, new_value, label):
-        """Set status KET untuk satu baris dengan freeze & konfirmasi."""
+        """Set status KET untuk satu baris dengan freeze & konfirmasi — tanpa flicker."""
         with self.freeze_ui():
             try:
                 tbl = self._active_table()
@@ -8062,80 +8869,87 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
-                dpid = self.table.item(row, self.col_index("DPID")).text().strip()
-                nama = self.table.item(row, self.col_index("NAMA")).text().strip()
-                ket = self.table.item(row, self.col_index("KET")).text().strip() if self.col_index("KET") != -1 else ""
+                ci_dpid = self.col_index("DPID")
+                ci_nama = self.col_index("NAMA")
+                ci_ket  = self.col_index("KET")
 
-                # --- Validasi dasar
-                if not dpid or dpid == "0" or ket in ("1","2","3","4","5","6","7","8"):
-                    show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
+                dpid = self.table.item(row, ci_dpid).text().strip() if ci_dpid != -1 else ""
+                nama = self.table.item(row, ci_nama).text().strip() if ci_nama != -1 else ""
+                ket  = self.table.item(row, ci_ket).text().strip() if ci_ket != -1 and self.table.item(row, ci_ket) else ""
+
+                if not dpid or dpid == "0" or ket.lower() == "b":
+                    show_modern_warning(self, "Ditolak", f"{nama} Pemilih Baru di tahap ini tidak dapat di-TMS-kan.")
                     return
 
-                # 🔹 Tambahan logika: isi JK dan TPS dari *_ASAL
-                jk_asal_idx = self.col_index("JK_ASAL")
-                tps_asal_idx = self.col_index("TPS_ASAL")
-                jk_idx = self.col_index("JK")
-                tps_idx = self.col_index("TPS")
+                # 🔹 Salin nilai JK/TPS dari *_ASAL
+                jk_asal_idx, tps_asal_idx = self.col_index("JK_ASAL"), self.col_index("TPS_ASAL")
+                jk_idx, tps_idx = self.col_index("JK"), self.col_index("TPS")
 
                 if jk_asal_idx != -1 and jk_idx != -1:
-                    jk_asal = self.table.item(row, jk_asal_idx)
-                    if jk_asal:
-                        jk_value = jk_asal.text().strip()
-                        self.table.item(row, jk_idx).setText(jk_value)
-                if tps_asal_idx != -1 and tps_idx != -1:
-                    tps_asal = self.table.item(row, tps_asal_idx)
-                    if tps_asal:
-                        tps_value = tps_asal.text().strip()
-                        self.table.item(row, tps_idx).setText(tps_value)
+                    jk_asal_item = self.table.item(row, jk_asal_idx)
+                    if jk_asal_item:
+                        jk_value = jk_asal_item.text().strip()
+                        target_item = self.table.item(row, jk_idx)
+                        if target_item:
+                            target_item.setText(jk_value)
+                        else:
+                            self.table.setItem(row, jk_idx, QTableWidgetItem(jk_value))
 
-                # 🔹 Update juga ke database
+                if tps_asal_idx != -1 and tps_idx != -1:
+                    tps_asal_item = self.table.item(row, tps_asal_idx)
+                    if tps_asal_item:
+                        tps_value = tps_asal_item.text().strip()
+                        target_item = self.table.item(row, tps_idx)
+                        if target_item:
+                            target_item.setText(tps_value)
+                        else:
+                            self.table.setItem(row, tps_idx, QTableWidgetItem(tps_value))
+
+                # 🔹 Update database
                 conn = get_connection()
                 cur = conn.cursor()
+                conn.execute("PRAGMA busy_timeout = 3000;")
+
                 if jk_asal_idx != -1 and tps_asal_idx != -1:
-                    cur.execute(
-                        f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?",
-                        (dpid,)
-                    )
+                    cur.execute(f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?", (dpid,))
                     conn.commit()
 
-                # 🔹 Konfirmasi user
                 if not show_modern_question(
                     self, f"Tandai {label}",
                     f"Apakah Anda yakin ingin menandai <b>{nama}</b> sebagai Pemilih {label}?"):
                     return
 
-                # --- Update status dan waktu
                 today_str = datetime.now().strftime("%d/%m/%Y")
                 cur.execute(f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?", (new_value, today_str, dpid))
                 conn.commit()
 
-                # --- Update di memori
+                # 🔹 Update data cache
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = new_value
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                # --- Update tampilan tabel
-                last_col = self.col_index("LastUpdate")
-                if last_col != -1:
-                    lu_item = self.table.item(row, last_col)
-                    if not lu_item:
-                        lu_item = QTableWidgetItem()
-                        self.table.setItem(row, last_col, lu_item)
-                    lu_item.setText(today_str)
+                # 🔹 Update tampilan LastUpdate aman
+                ci_lu = self.col_index("LastUpdate")
+                if ci_lu != -1:
+                    lu_item = self.table.item(row, ci_lu)
+                    if lu_item:
+                        lu_item.setText(today_str)
+                    else:
+                        self.table.setItem(row, ci_lu, QTableWidgetItem(today_str))
 
-                #self._warnai_baris_berdasarkan_ket()
-                #self._terapkan_warna_ke_tabel_aktif()
+                # 🔹 Hindari flicker
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
 
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
                 show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal set status:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
                 self._clear_row_selection(row)
                 self._reset_tabel_background()
 
@@ -8143,7 +8957,7 @@ class MainWindow(QMainWindow):
     # 🔹 SET STATUS BANYAK (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_banyak(self, rows, new_value, label):
-        """Set status KET untuk banyak baris sekaligus (batch super kilat)."""
+        """Set status KET untuk banyak baris sekaligus — batch cepat tanpa flicker."""
         with self.freeze_ui():
             try:
                 if not rows:
@@ -8160,9 +8974,7 @@ class MainWindow(QMainWindow):
                     f"Tandai <b>{len(rows)}</b> pemilih sebagai {label}?"):
                     return
 
-                # --- Ambil indeks kolom (efisien)
                 ci_dpid = self.col_index("DPID")
-                ci_nama = self.col_index("NAMA")
                 ci_ket = self.col_index("KET")
                 ci_jk = self.col_index("JK")
                 ci_tps = self.col_index("TPS")
@@ -8173,36 +8985,35 @@ class MainWindow(QMainWindow):
                 batch_data = []
                 ok = rejected = 0
 
-                # --- Loop logika pemilihan data valid
                 for row in rows:
-                    # Pastikan semua index valid
-                    if ci_dpid == -1 or ci_nama == -1:
-                        continue
-
                     dpid_item = self.table.item(row, ci_dpid)
                     ket_item = self.table.item(row, ci_ket)
-                    nama_item = self.table.item(row, ci_nama)
 
                     dpid = dpid_item.text().strip() if dpid_item else ""
                     ket = ket_item.text().strip() if ket_item else ""
-                    nama = nama_item.text().strip() if nama_item else ""
 
-                    # --- Validasi (hanya KET 1–8)
-                    if not dpid or dpid == "0" or ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
+                    if not dpid or dpid == "0" or ket.lower() == "b":
                         rejected += 1
                         continue
 
-                    # --- Ambil nilai JK_ASAL dan TPS_ASAL
                     jk_asal = self.table.item(row, ci_jk_asal).text().strip() if ci_jk_asal != -1 and self.table.item(row, ci_jk_asal) else ""
                     tps_asal = self.table.item(row, ci_tps_asal).text().strip() if ci_tps_asal != -1 and self.table.item(row, ci_tps_asal) else ""
 
-                    # --- Update langsung di tabel (UI)
-                    if ci_jk != -1 and self.table.item(row, ci_jk):
-                        self.table.item(row, ci_jk).setText(jk_asal)
-                    if ci_tps != -1 and self.table.item(row, ci_tps):
-                        self.table.item(row, ci_tps).setText(tps_asal)
+                    # --- Update tampilan langsung
+                    if ci_jk != -1:
+                        jk_item = self.table.item(row, ci_jk)
+                        if jk_item:
+                            jk_item.setText(jk_asal)
+                        else:
+                            self.table.setItem(row, ci_jk, QTableWidgetItem(jk_asal))
 
-                    # --- Masukkan ke batch DB
+                    if ci_tps != -1:
+                        tps_item = self.table.item(row, ci_tps)
+                        if tps_item:
+                            tps_item.setText(tps_asal)
+                        else:
+                            self.table.setItem(row, ci_tps, QTableWidgetItem(tps_asal))
+
                     batch_data.append((new_value, today_str, jk_asal, tps_asal, dpid))
                     ok += 1
 
@@ -8210,7 +9021,6 @@ class MainWindow(QMainWindow):
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
                     return
 
-                # --- Eksekusi batch ultra cepat
                 conn = get_connection()
                 cur = conn.cursor()
                 conn.executescript("""
@@ -8231,20 +9041,22 @@ class MainWindow(QMainWindow):
                 """, batch_data)
                 conn.commit()
 
+                # 🔹 Nonaktifkan repaint (anti flicker)
+                self.table.blockSignals(True)
+                self.table.setUpdatesEnabled(False)
+
+                self.load_data_setelah_hapus()
+                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+
                 msg = f"✅ {ok} ditandai {label}"
                 if rejected:
                     msg += f", ❌ {rejected} dilewati"
                 show_modern_info(self, "Selesai", msg)
 
-                # --- Refresh tampilan tabel
-                self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_setelah_hapus())
-
             except Exception as e:
                 show_modern_error(self, "Error", f"Gagal set status:\n{e}")
             finally:
-                # ✅ Setelah proses apa pun (berhasil, tolak, batal) → hilangkan checkbox
-                self._clear_row_selection(row)
+                self._clear_row_selection(rows)
                 self._reset_tabel_background()
 
     # =========================================================
@@ -8443,11 +9255,8 @@ class MainWindow(QMainWindow):
 
 
     def cek_potensi_dibawah_umur(self):
-        """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB)."""
-        from db_manager import get_connection
-        from datetime import datetime
-        from PyQt6.QtCore import QTimer
-
+        """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB, super-kilat & hasil identik)."""
+        ##### Ubah jadi tanggal Pemilu #####
         target_date = datetime(2029, 6, 26)
 
         try:
@@ -8466,31 +9275,52 @@ class MainWindow(QMainWindow):
                     self._refresh_table_with_new_data([])
                 return
 
-            all_data = [{col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))} for r in rows]
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
             hasil_data = []
 
             for d in all_data:
                 tgl = d.get("TGL_LHR", "").strip()
                 ket = d.get("KET", "").strip().upper()
                 sts = d.get("STS", "").strip().upper()
-                if ket in ("1","2","3","4","5","6","7","8"):
+
+                # 🚫 Abaikan data dengan KET 1–8
+                if ket in ("1", "2", "3", "4", "5", "6", "7", "8"):
                     continue
                 if not tgl:
                     continue
 
-                for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
-                    try:
-                        tgl_lhr = datetime.strptime(tgl, fmt)
-                        break
-                    except Exception:
-                        tgl_lhr = None
-                if not tgl_lhr:
+                # ⚡ Parsing super-kilat: pilih format berdasarkan pemisah
+                try:
+                    if "|" in tgl:
+                        tgl_lhr = datetime.strptime(tgl, "%d|%m|%Y")
+                    elif "/" in tgl:
+                        tgl_lhr = datetime.strptime(tgl, "%d/%m/%Y")
+                    elif "-" in tgl:
+                        # deteksi apakah format YYYY-MM-DD
+                        if len(tgl.split("-")[0]) == 4:
+                            tgl_lhr = datetime.strptime(tgl, "%Y-%m-%d")
+                        else:
+                            tgl_lhr = datetime.strptime(tgl, "%d-%m-%Y")
+                    else:
+                        continue
+                except Exception:
                     continue
 
+                # 💡 Hitung umur (tepat hingga pecahan tahun)
                 umur = (target_date - tgl_lhr).days / 365.25
-                if umur < 13 or (umur < 17 and sts == "B"):
+
+                # ✅ Logika final
+                # 1️⃣ Umur < 13  → selalu potensi
+                # 2️⃣ Umur 13–17 → potensi hanya jika STS = B/b
+                if umur < 13:
+                    hasil_data.append(d)
+                elif 13 <= umur < 17 and sts in ("B", "b"):
                     hasil_data.append(d)
 
+            # 🔄 Tampilkan hasil
             with self.freeze_ui():
                 self._refresh_table_with_new_data(hasil_data)
                 self._warnai_baris_berdasarkan_ket()
@@ -9052,151 +9882,229 @@ class MainWindow(QMainWindow):
                 return i
         return -1
 
-    # =================================================
-    # Import CSV Function
+
+    # Import CSV Function (OTP + Progress Bar NexVo)
     # =================================================
     def import_csv(self):
+        from PyQt6.QtWidgets import QProgressBar, QLabel, QVBoxLayout, QDialog, QWidget, QLineEdit, QPushButton
+        from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
+        from PyQt6.QtGui import QFont
+        import csv
+        from datetime import datetime
+        import pyotp
+
+        # ============================================================
+        # 🧩 1️⃣ Pilih File CSV
+        # ============================================================
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Pilih File CSV", "", "CSV Files (*.csv)"
         )
         if not file_path:
             return
 
+        # ============================================================
+        # 🧩 2️⃣ Ambil secret OTP dari database
+        # ============================================================
+        try:
+            from db_manager import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT otp_secret FROM users LIMIT 1")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                show_modern_error(self, "OTP Tidak Ditemukan", "Kode OTP belum dikonfigurasi di sistem.")
+                return
+            otp_secret = row[0].strip()
+        except Exception as e:
+            show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
+            return
+
+        # ============================================================
+        # 🧩 3️⃣ Verifikasi OTP Modern sebelum import
+        # ============================================================
+        overlay = self.buat_overlay(18)
+        otp_dialog = QDialog(self)
+        otp_dialog.setWindowTitle("Verifikasi OTP")
+        otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        otp_dialog.setStyleSheet("""
+            QDialog {
+                background-color: #dddddd;
+                color: black;
+                border-radius: 10px;
+            }
+            QLabel { color: black; font-size: 12pt; }
+            QLineEdit {
+                border: 2px solid #555;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 16pt;
+                letter-spacing: 4px;
+                background-color: #666666;
+                color: #ffffff;
+                qproperty-alignment: AlignCenter;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
+        layout = QVBoxLayout(otp_dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 25, 25, 25)
+        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+        otp_input = QLineEdit()
+        otp_input.setMaxLength(6)
+        otp_input.setPlaceholderText("••••••")
+        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        layout.addWidget(otp_input)
+        btn_verify = QPushButton("Verifikasi")
+        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_verify)
+
+        # 🔹 Efek getar khas NexVo
+        def shake_widget(widget):
+            anim = QPropertyAnimation(widget, b"pos", widget)
+            anim.setDuration(280)
+            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            start_pos = widget.pos()
+            offset = 6
+            for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
+                anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+        def do_verify():
+            code = otp_input.text().strip()
+            if not code:
+                overlay_warn = self.buat_overlay(16)
+                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                self.hapus_overlay(overlay_warn)
+                otp_input.setFocus()
+                return
+            totp = pyotp.TOTP(otp_secret)
+            if not totp.verify(code):
+                overlay_err = self.buat_overlay(16)
+                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                self.hapus_overlay(overlay_err)
+                shake_widget(otp_input)
+                otp_input.setFocus()
+                otp_input.selectAll()
+                return
+            otp_dialog.accept()
+
+        btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+        otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
+        if otp_dialog.exec() != QDialog.DialogCode.Accepted:
+            show_modern_info(self, "Dibatalkan", "Proses import CSV dibatalkan oleh pengguna.")
+            return
+
+        # ============================================================
+        # 🧩 4️⃣ OTP valid → tampilkan progress bar khas NexVo
+        # ============================================================
+        progress_overlay = QWidget(self)
+        progress_overlay.setGeometry(0, 0, self.width(), self.height())
+        progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
+        layout = QVBoxLayout(progress_overlay)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_status = QLabel("Mengimpor data CSV...")
+        lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_status.setStyleSheet("color: black; font-size: 13pt; font-weight: 600;")
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setFixedWidth(int(self.width() * 0.4))
+        progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #e0e0e0;
+                border: 1px solid #999;
+                border-radius: 10px;
+                text-align: center;
+                height: 24px;
+                color: black;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #ff6600;
+                border-radius: 10px;
+            }
+        """)
+        layout.addWidget(lbl_status)
+        layout.addSpacing(10)
+        layout.addWidget(progress_bar)
+        progress_overlay.show()
+        QApplication.processEvents()
+
+        # ============================================================
+        # 🧩 5️⃣ Proses Import CSV (100% logika asli)
+        # ============================================================
         try:
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
-                if len(reader) < 15:
+                total_rows = len(reader)
+                if total_rows < 15:
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
+                    progress_overlay.hide()
                     return
 
-                # 🔹 Verifikasi kecamatan & desa di baris ke-15 (berdasarkan nama kolom, bukan index tetap)
                 header = [h.strip().upper() for h in reader[0]]
                 header_idx = {col: i for i, col in enumerate(header)}
-
-                # Cari posisi kolom "KECAMATAN" dan "KELURAHAN"
                 idx_kec = header_idx.get("KECAMATAN")
                 idx_kel = header_idx.get("KELURAHAN")
-
                 if idx_kec is None or idx_kel is None:
-                    show_modern_warning(
-                        self, "Error",
-                        "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan di header CSV."
-                    )
+                    show_modern_warning(self, "Error", "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan.")
+                    progress_overlay.hide()
                     return
 
-                try:
-                    # Ambil baris ke-15 (index 14) sesuai format Sidalih
-                    kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
-                    desa_csv = (reader[14][idx_kel] or "").strip().upper()
-                except Exception:
-                    show_modern_warning(self, "Error", "Format CSV tidak sesuai, gagal membaca KECAMATAN/KELURAHAN.")
-                    return
-
+                kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
+                desa_csv = (reader[14][idx_kel] or "").strip().upper()
                 if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
-                    show_modern_warning(
-                        self, "Error",
-                        f"Import CSV gagal!\n"
-                        f"Harap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
-                    )
+                    show_modern_warning(self, "Error",
+                        f"Import CSV gagal!\nHarap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih.")
+                    progress_overlay.hide()
                     return
 
-                # 🔹 Tentukan nama tabel berdasarkan tahapan login
                 tahap = self._tahapan.strip().upper()
                 tabel_map = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}
                 tbl_name = tabel_map.get(tahap)
                 if not tbl_name:
                     show_modern_warning(self, "Error", f"Tahapan tidak dikenal: {tahap}")
+                    progress_overlay.hide()
                     return
 
-                # ================================================================
-                # 🔸 Mapping header CSV → kolom tabel
-                # ================================================================
-                header = [h.strip().upper() for h in reader[0]]
                 mapping = {
-                    "KECAMATAN": "KECAMATAN",
-                    "KELURAHAN": "DESA",
-                    "DPID": "DPID",
-                    "NKK": "NKK",
-                    "NIK": "NIK",
-                    "NAMA": "NAMA",
-                    "KELAMIN": "JK",  # nanti juga akan diisi ke JK_ASAL
-                    "TEMPAT LAHIR": "TMPT_LHR",
-                    "TANGGAL LAHIR": "TGL_LHR",
-                    "STS KAWIN": "STS",
-                    "ALAMAT": "ALAMAT",
-                    "RT": "RT",
-                    "RW": "RW",
-                    "DISABILITAS": "DIS",
-                    "EKTP": "KTPel",
-                    "SUMBER": "SUMBER",
-                    "KETERANGAN": "KET",
-                    "TPS": "TPS",  # nanti juga akan diisi ke TPS_ASAL
+                    "KECAMATAN": "KECAMATAN", "KELURAHAN": "DESA", "DPID": "DPID",
+                    "NKK": "NKK", "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK",
+                    "TEMPAT LAHIR": "TMPT_LHR", "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS",
+                    "ALAMAT": "ALAMAT", "RT": "RT", "RW": "RW", "DISABILITAS": "DIS",
+                    "EKTP": "KTPel", "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS",
                     "UPDATED_AT": "LastUpdate",
                 }
-
-                header_idx = {col: i for i, col in enumerate(header)}
                 idx_status = header_idx.get("STATUS", None)
                 if idx_status is None:
                     show_modern_warning(self, "Error", "Kolom STATUS tidak ditemukan di CSV.")
+                    progress_overlay.hide()
                     return
 
-                from db_manager import get_connection
                 conn = get_connection()
                 cur = conn.cursor()
                 cur.execute("PRAGMA busy_timeout = 8000")
                 cur.execute("PRAGMA synchronous = OFF")
                 cur.execute("PRAGMA temp_store = 2")
                 cur.execute("PRAGMA journal_mode = WAL")
-
-                # ================================================================
-                # 🔸 Siapkan tabel data_awal
-                # ================================================================
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS data_awal (
-                        TPS TEXT PRIMARY KEY,
-                        L INTEGER DEFAULT 0,
-                        P INTEGER DEFAULT 0,
-                        LP INTEGER DEFAULT 0
-                    )
-                """)
                 cur.execute("DELETE FROM data_awal")
+                cur.execute(f"DELETE FROM {tbl_name}")
 
-                # ================================================================
-                # 🔸 Pastikan tabel utama ada
-                # ================================================================
-                cur.execute(f"""
-                    CREATE TABLE IF NOT EXISTS {tbl_name} (
-                        KECAMATAN TEXT,
-                        DESA TEXT,
-                        DPID TEXT,
-                        NKK TEXT,
-                        NIK TEXT,
-                        NAMA TEXT,
-                        JK TEXT,
-                        TMPT_LHR TEXT,
-                        TGL_LHR TEXT,
-                        STS TEXT,
-                        ALAMAT TEXT,
-                        RT TEXT,
-                        RW TEXT,
-                        DIS TEXT,
-                        KTPel TEXT,
-                        SUMBER TEXT,
-                        KET TEXT,
-                        TPS TEXT,
-                        LastUpdate TEXT,
-                        CEK_DATA TEXT,
-                        JK_ASAL TEXT,
-                        TPS_ASAL TEXT
-                    )
-                """)
-
-                # ================================================================
-                # 🔸 Batch insert cepat
-                # ================================================================
-                from datetime import datetime
                 batch_values = []
-                for row in reader[1:]:
+                step = max(1, total_rows // 100)  # update progress tiap sekian baris
+                for i, row in enumerate(reader[1:], start=1):
                     if not row or len(row) < len(header):
                         continue
                     status_val = row[idx_status].strip().upper()
@@ -9207,19 +10115,10 @@ class MainWindow(QMainWindow):
                     for csv_col, app_col in mapping.items():
                         if csv_col in header_idx:
                             val = row[header_idx[csv_col]].strip()
-
-                            # 🔹 Normalisasi khusus kolom RT, RW, TPS → hilangkan nol di depan
-                            if app_col in ("RT", "RW", "TPS"):
-                                if val.isdigit():  # hanya ubah kalau memang angka
-                                    val = str(int(val))
-                                elif val == "":
-                                    val = ""  # biarkan kosong jika memang kosong
-
-                            # 🔹 Set default KET = "0"
+                            if app_col in ("RT", "RW", "TPS") and val.isdigit():
+                                val = str(int(val))
                             if app_col == "KET":
                                 val = "0"
-
-                            # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
                                 for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                                     try:
@@ -9227,99 +10126,57 @@ class MainWindow(QMainWindow):
                                         break
                                     except Exception:
                                         pass
-
                             data[app_col] = val
-
-                    # 🔹 Kolom tambahan
-                    data["checked"] = 0  # ✅ default untuk checkbox
+                    data["checked"] = 0
                     data["JK_ASAL"] = data.get("JK", "")
                     data["TPS_ASAL"] = data.get("TPS", "")
-
-                    # Urutan kolom harus sesuai struktur tabel (termasuk checked)
                     ordered_cols = [
                         "checked", "KECAMATAN", "DESA", "DPID", "NKK", "NIK", "NAMA", "JK",
                         "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel",
                         "SUMBER", "KET", "TPS", "LastUpdate", "CEK_DATA", "JK_ASAL", "TPS_ASAL"
                     ]
+                    batch_values.append(tuple(data.get(c, "") for c in ordered_cols))
 
-                    values = [data.get(c, "") for c in ordered_cols]
-                    batch_values.append(tuple(values))
+                    # update progress bar tiap beberapa langkah
+                    if i % step == 0:
+                        progress_bar.setValue(min(100, int(i / total_rows * 100)))
+                        QApplication.processEvents()
 
-                if not batch_values:
-                    show_modern_warning(self, "Kosong", "Tidak ada data aktif untuk diimport.")
-                    return
-
-                # ================================================================
-                # ⚡ Eksekusi ultra cepat
-                # ================================================================
-                cur.execute(f"DELETE FROM {tbl_name}")
-                placeholders = ",".join(["?"] * 23)  # ✅ 23 kolom sesuai tabel
-                cur.executemany(
-                    f"INSERT INTO {tbl_name} VALUES ({placeholders})",
-                    batch_values
-                )
+                placeholders = ",".join(["?"] * 23)
+                cur.executemany(f"INSERT INTO {tbl_name} VALUES ({placeholders})", batch_values)
                 cur.execute(f"UPDATE {tbl_name} SET KET='0'")
                 conn.commit()
 
-                # ================================================================
-                # ✅ Bangun ulang data_awal
-                # ================================================================
                 cur.execute(f"""
                     INSERT INTO data_awal (TPS, L, P, LP)
-                    SELECT 
-                        TPS,
-                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END) AS L,
-                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END) AS P,
-                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END) AS LP
-                    FROM {tbl_name}
-                    GROUP BY TPS
-                    ORDER BY CAST(TPS AS INTEGER)
+                    SELECT TPS,
+                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END)
+                    FROM {tbl_name} GROUP BY TPS ORDER BY CAST(TPS AS INTEGER)
                 """)
                 conn.commit()
+                progress_bar.setValue(100)
+                QApplication.processEvents()
 
-                # ================================================================
-                # 🔸 Refresh UI
-                # ================================================================
-                try:
-                    with self.freeze_ui():
-                        self.load_data_from_db()
-                        self.update_pagination()
-                        self.show_page(1)
-                        self.connect_header_events()
-                        self.sort_data(auto=True)
+                with self.freeze_ui():
+                    self.load_data_from_db()
+                    self.update_pagination()
+                    self.show_page(1)
+                    self.connect_header_events()
+                    self.sort_data(auto=True)
 
-                        if self.filter_sidebar is None:
-                            self.filter_sidebar = FilterSidebar(self)
-                            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=320)
-                            self.filter_dock.setWidget(self.filter_sidebar)
-                            self.filter_sidebar.apply_theme()
-                            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
-                            self.filter_dock.hide()
 
-                        try:
-                            self.filter_sidebar._populate_sumber_from_mainwindow()
-                        except Exception as e:
-                            print(f"[Warning] Gagal refresh sumber di FilterSidebar: {e}")
-
-                        # try:
-                        #     self.filter_sidebar._populate_tps_from_mainwindow()
-                        # except Exception as e:
-                        #     print(f"[Warning] Gagal refresh TPS di FilterSidebar: {e}")
-
-                    show_modern_info(
-                        self, "Sukses",
-                        f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
-                        f"{len(batch_values)} baris berhasil dimuat."
-                    )
-
-                except Exception as e:
-                    show_modern_error(
-                        self, "Error",
-                        f"Data tersimpan tapi gagal dimuat ke tabel:\n{e}"
-                    )
+                show_modern_info(self, "Sukses",
+                                f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
+                                f"{len(batch_values)} baris berhasil dimuat.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal import CSV:\n{e}")
+        finally:
+            progress_overlay.hide()
+            QApplication.processEvents()
+
 
     def import_baruecoklit(self):
         """
@@ -10276,15 +11133,34 @@ class MainWindow(QMainWindow):
     def load_theme(self):
         return "light"
 
+
+    # ============================================================
+    # 🔹 Overlay Blur / Gelap — khas NexVo
+    # ============================================================
+    def buat_overlay(self, opacity=18):
+        app = QApplication.instance()
+        overlay = QWidget(self)
+        overlay.setStyleSheet(f"background-color: rgba(0,0,0,{opacity * 10}); border-radius: 8px;")
+        overlay.setGeometry(self.rect())
+        overlay.show()
+        overlay.raise_()
+        QApplication.processEvents()
+        return overlay
+
+    def hapus_overlay(self, overlay):
+        if overlay and isinstance(overlay, QWidget):
+            overlay.hide()
+            overlay.deleteLater()
+
     # =================================================
     # Hapus Seluruh Data Pemilih (sub-menu Help)
     # =================================================
     def hapus_data_pemilih(self):
         """
         🧹 Menghapus seluruh isi tabel aktif (sesuai tahapan saat ini) dengan aman.
-        SQLCipher-safe.
+        SQLCipher-safe + verifikasi OTP modern (dengan blur overlay).
         """
-        # 🔸 Konfirmasi pengguna
+        # 🔸 Konfirmasi awal
         if not show_modern_question(
             self,
             "Konfirmasi",
@@ -10296,59 +11172,158 @@ class MainWindow(QMainWindow):
             show_modern_info(self, "Dibatalkan", "Proses penghapusan data dibatalkan.")
             return
 
-        # 🔹 Langkah awal: pastikan semua data tampil (jangan dalam keadaan terfilter)
+        # ============================================================
+        # 🧩 1️⃣ Ambil secret OTP dari database
+        # ============================================================
         try:
-            with self.freeze_ui():  # 🧊 sama seperti Application.EnableEvents = False
-                pass  # tidak melakukan reset tampilan apa pun
-        except Exception as e:
-            print(f"[Warning] Gagal freeze sebelum hapus: {e}")
-
-        try:
-            # 🔸 Koneksi aman ke database terenkripsi
+            from db_manager import get_connection
             conn = get_connection()
             cur = conn.cursor()
+            cur.execute("SELECT otp_secret FROM users LIMIT 1")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                show_modern_error(self, "OTP Tidak Ditemukan", "Kode OTP belum dikonfigurasi di sistem.")
+                return
+            otp_secret = row[0].strip()
+        except Exception as e:
+            show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
+            return
 
-            # 🔸 Ambil nama tabel aktif (otomatis tergantung tahapan)
-            tbl = self._active_table()  # contoh: 'dphp', 'dpshp', atau 'dpshpa'
+        # ============================================================
+        # 2️⃣ Verifikasi OTP Modern (pakai dialog kamu sendiri)
+        # ============================================================
+        overlay = self.buat_overlay(18)
 
-            # 🔸 Hapus seluruh data di tabel aktif
-            cur.execute(f"DELETE FROM {tbl}")
-            conn.commit()
+        otp_dialog = QDialog(self)
+        otp_dialog.setWindowTitle("Verifikasi OTP")
+        otp_dialog.setFixedSize(340, 220)
+        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        otp_dialog.setStyleSheet("""
+            QDialog {
+                background-color: #dddddd;
+                color: black;
+                border-radius: 10px;
+            }
+            QLabel { color: black; font-size: 12pt; }
+            QLineEdit {
+                border: 2px solid #555;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 16pt;
+                letter-spacing: 4px;
+                background-color: #666666;
+                color: #ffffff;
+                qproperty-alignment: AlignCenter;
+            }
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #d71d1d; }
+        """)
 
-            # 🔸 Kosongkan data di memori dan tabel GUI
-            self.all_data.clear()
-            self.table.setRowCount(0)
+        layout = QVBoxLayout(otp_dialog)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 25, 25, 25)
 
-            # 🔸 Reset label status
-            if hasattr(self, "lbl_total"):
-                self.lbl_total.setText("0 total")
-            if hasattr(self, "lbl_selected"):
-                self.lbl_selected.setText("0 selected")
+        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
 
-            # 🔸 Reset pagination
-            self.total_pages = 1
-            self.current_page = 1
-            if hasattr(self, "update_pagination"):
-                self.update_pagination()
-            if hasattr(self, "show_page"):
-                self.show_page(1)
+        otp_input = QLineEdit()
+        otp_input.setMaxLength(6)
+        otp_input.setPlaceholderText("••••••")
+        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        layout.addWidget(otp_input)
 
-            # 🔸 Refresh Dashboard (kalau sedang di dashboard)
-            if hasattr(self, "refresh_dashboard_on_show"):
-                try:
-                    self.refresh_dashboard_on_show()
-                except Exception as e:
-                    print(f"[Dashboard Refresh Error after delete] {e}")
+        btn_verify = QPushButton("Verifikasi")
+        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_verify)
 
-            # 🔸 Notifikasi sukses
-            show_modern_info(
-                self,
-                "Selesai",
-                f"Seluruh data telah dihapus dari tabel <b>{tbl}</b>!"
-            )
+        def shake_widget(widget):
+            anim = QPropertyAnimation(widget, b"pos", widget)
+            anim.setDuration(280)
+            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            start_pos = widget.pos()
+            offset = 6
+            for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
+                anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
+            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+
+        def do_verify():
+            import pyotp
+            code = otp_input.text().strip()
+            if not code:
+                overlay_warn = self.buat_overlay(16)
+                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                self.hapus_overlay(overlay_warn)
+                otp_input.setFocus()
+                return
+
+            totp = pyotp.TOTP(otp_secret)
+            if not totp.verify(code):
+                overlay_err = self.buat_overlay(16)
+                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                self.hapus_overlay(overlay_err)
+                shake_widget(otp_input)
+                otp_input.setFocus()
+                otp_input.selectAll()
+                return
+
+            otp_dialog.accept()
+
+        btn_verify.clicked.connect(do_verify)
+        otp_input.returnPressed.connect(btn_verify.click)
+        otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
+
+        if otp_dialog.exec() != QDialog.DialogCode.Accepted:
+            show_modern_info(self, "Dibatalkan", "Proses penghapusan dibatalkan oleh pengguna.")
+            return
+
+        # ============================================================
+        # 3️⃣ OTP valid → lanjut hapus seluruh data
+        # ============================================================
+        try:
+            with self.freeze_ui():
+                conn = get_connection()
+                cur = conn.cursor()
+                tbl = self._active_table()
+
+                cur.execute(f"DELETE FROM {tbl}")
+                conn.commit()
+
+                self.all_data.clear()
+                self.table.setRowCount(0)
+
+                if hasattr(self, "lbl_total"):
+                    self.lbl_total.setText("0 total")
+                if hasattr(self, "lbl_selected"):
+                    self.lbl_selected.setText("0 selected")
+
+                self.total_pages = 1
+                self.current_page = 1
+                if hasattr(self, "update_pagination"):
+                    self.update_pagination()
+                if hasattr(self, "show_page"):
+                    self.show_page(1)
+
+                if hasattr(self, "refresh_dashboard_on_show"):
+                    try:
+                        self.refresh_dashboard_on_show()
+                    except Exception as e:
+                        print(f"[Dashboard Refresh Error after delete] {e}")
+
+            show_modern_info(self, "Selesai", f"Seluruh data telah dihapus dari tabel <b>{tbl}</b>!")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal menghapus data:\n{e}")
+
 
     def _refresh_table_with_new_data(self, new_data: list[dict]):
         """Memperbarui tabel dan pagination setelah self.all_data diganti."""
@@ -12097,7 +13072,7 @@ class MainWindow(QMainWindow):
             show_modern_error(self, "Error", f"Gagal memuat data Laporan Coklit:\n{e}")
 
     def export_filtered_data_to_excel(self):
-        """Export seluruh data yang sedang ditampilkan (hasil filter) ke Excel dengan format NexVo."""
+        """Export seluruh data hasil filter (semua halaman) ke Excel dengan format NexVo."""
 
         # =========================================================
         # 🔸 Konfirmasi modern NexVo
@@ -12105,32 +13080,22 @@ class MainWindow(QMainWindow):
         if not show_modern_question(
             self,
             "Konfirmasi Export Data",
-            "Apakah Anda yakin ingin melakukan Export Data?",
+            "Apakah Anda yakin ingin melakukan Export Data seluruh hasil filter?",
         ):
             show_modern_info(self, "Dibatalkan", "Proses Export Data dibatalkan.")
             return
 
         # =========================================================
-        # 🔹 Ambil data yang sedang ditampilkan di tabel
+        # 🔹 Gunakan seluruh data hasil filter (self.all_data)
         # =========================================================
         try:
-            visible_rows = []
-            for row in range(self.table.rowCount()):
-                row_data = {}
-                for col in range(self.table.columnCount()):
-                    header_item = self.table.horizontalHeaderItem(col)
-                    if not header_item:
-                        continue
-                    col_name = header_item.text()
-                    item = self.table.item(row, col)
-                    row_data[col_name] = item.text().strip() if item else ""
-                visible_rows.append(row_data)
-
-            if not visible_rows:
-                show_modern_warning(self, "Kosong", "Tidak ada data yang ditampilkan untuk diexport.")
+            if not hasattr(self, "all_data") or not self.all_data:
+                show_modern_warning(self, "Kosong", "Tidak ada data hasil filter untuk diexport.")
                 return
+
+            visible_rows = self.all_data  # semua data yang sudah difilter
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal membaca data dari tabel:\n{e}")
+            show_modern_error(self, "Error", f"Gagal membaca data hasil filter:\n{e}")
             return
 
         # =========================================================
@@ -12160,18 +13125,16 @@ class MainWindow(QMainWindow):
         ]
         ws.append(headers)
 
-        # Style header
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="4E4E4E")
         for cell in ws[1]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
-
         ws.freeze_panes = "A2"
 
         # =========================================================
-        # 🔹 Isi data baris demi baris
+        # 🔹 Isi data seluruh hasil filter
         # =========================================================
         for row_data in visible_rows:
             ws.append([
@@ -12197,22 +13160,18 @@ class MainWindow(QMainWindow):
             ])
 
         # =========================================================
-        # 🔹 Terapkan format kolom
+        # 🔹 Format kolom & border
         # =========================================================
         thin = Side(border_style="thin", color="CCCCCC")
 
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 col = ws.cell(row=1, column=cell.column).value
-
-                # --- Default: left align ---
                 align = Alignment(horizontal="left", vertical="center")
 
-                # --- Center align untuk kolom tertentu ---
                 if col in ("KELAMIN", "STATUS", "RT", "RW", "DIFABEL", "KTPel", "KETERANGAN", "TPS"):
                     align = Alignment(horizontal="center", vertical="center")
 
-                # --- Format angka untuk kolom numerik ---
                 if col in ("DPID", "RT", "RW", "DIFABEL", "TPS"):
                     try:
                         if str(cell.value).isdigit():
@@ -12221,7 +13180,6 @@ class MainWindow(QMainWindow):
                     except:
                         pass
 
-                # --- Kolom KETERANGAN (bisa 0–8 atau huruf B/U) ---
                 if col == "KETERANGAN":
                     val = str(cell.value).strip().upper()
                     if val in ("0","1","2","3","4","5","6","7","8"):
@@ -12233,7 +13191,6 @@ class MainWindow(QMainWindow):
                     else:
                         cell.value = val
 
-                # --- Terapkan alignment & border ---
                 cell.alignment = align
                 cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
 
@@ -12244,12 +13201,9 @@ class MainWindow(QMainWindow):
             max_length = 0
             column = col[0].column_letter
             for cell in col:
-                try:
-                    val = str(cell.value)
-                    if len(val) > max_length:
-                        max_length = len(val)
-                except:
-                    pass
+                val = str(cell.value)
+                if len(val) > max_length:
+                    max_length = len(val)
             ws.column_dimensions[column].width = max_length + 2
 
         # =========================================================
@@ -12269,30 +13223,7 @@ class MainWindow(QMainWindow):
             "Sukses",
             f"Export Data berhasil disimpan!\n\nLokasi file:\n{filepath}"
         )
-
-    def get_distinct_tps(self):
-        """Ambil daftar distinct TPS dari tabel aktif, abaikan baris dengan KET=0."""
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            tbl = self._active_table()
-
-            cur.execute(f"""
-                SELECT DISTINCT TPS FROM {tbl}
-                WHERE (KET IS NULL OR KET <> '0')
-                ORDER BY TPS ASC
-            """)
-            result = [str(r[0]) for r in cur.fetchall() if r[0] not in (None, "")]
-            conn.commit()
-
-            self._distinct_tps_list = result or ["-"]
-            self._current_tps_index = 0
-            #print(f"[TPS List] Ditemukan {len(result)} TPS aktif: {result}")
-            return result
-        except Exception as e:
-            print(f"[TPS Error] {e}")
-            return []
-        
+ 
 
     def bulk_sidalih(self):
         """Ekspor data tabel aktif ke Excel 'Bulk Sidalih' dengan format dan urutan kolom sesuai spesifikasi."""
@@ -12474,6 +13405,7 @@ class UnggahRegulerWindow(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.setPalette(QApplication.instance().palette())
+        self.setWindowIcon(app_icon())
         self.main_window = main_window
 
         # ==========================================
@@ -12496,7 +13428,7 @@ class UnggahRegulerWindow(QWidget):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base_dir, "KPU.png")
             if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
+                self.setWindowIcon(app_icon())
         except Exception as e:
             print(f"[Warning] Gagal memuat ikon KPU: {e}")
 
@@ -12562,7 +13494,7 @@ class UnggahRegulerWindow(QWidget):
                 if col == 0:
                     item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
                 if col in left_indexes:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignLeft)
                 else:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, col, item)
@@ -12744,13 +13676,26 @@ class UnggahRegulerWindow(QWidget):
                 if jk not in ("L", "P"): err.append("Jenis Kelamin Invalid")
 
                 try:
+                    # 🔹 Pecah tanggal berdasarkan tanda "|"
                     dd, mm, yyyy = map(int, tgl.split("|"))
                     lahir = datetime(yyyy, mm, dd)
+
+                    # 🔹 Hitung umur per 26 Juni 2029
+                    ##### Ubah jadi tanggal Pemilu #####
                     umur = (datetime(2029, 6, 26) - lahir).days / 365.25
-                    if umur < 17 and sts.upper() == "B":
+
+                    # 🔹 Logika validasi umur
+                    if umur < 0 or umur < 5:
+                        # Tahun lahir lebih dari 2029 atau terlalu muda → tidak valid
+                        err.append("Tanggal Lahir Invalid")
+                    elif umur < 17 and sts.upper() == "B":
+                        # Umur valid tapi masih di bawah 17 tahun dan status 'B' → pemilih di bawah umur
                         err.append("Pemilih Dibawah Umur")
+
                 except Exception:
+                    # Format salah, nilai bukan angka, atau tanggal tidak valid
                     err.append("Tanggal Lahir Invalid")
+
 
                 sts = sts.upper()
                 if sts not in ("B", "S", "P"): err.append("Status Invalid")
@@ -13125,6 +14070,7 @@ class SesuaiWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Sesuai")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -13382,6 +14328,7 @@ class RekapWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Aktif")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -13641,6 +14588,7 @@ class BaruWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -13900,6 +14848,7 @@ class PemulaWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru (non-DP4)")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14158,6 +15107,7 @@ class UbahWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Pemilih")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14416,6 +15366,7 @@ class SaringWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih TMS")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14647,6 +15598,7 @@ class KtpWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih KTPel")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -14875,6 +15827,7 @@ class DifabelWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Disabilitas")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15103,6 +16056,7 @@ class UbahKelaminWindow(QMainWindow):
         super().__init__()  # tidak pakai parent Qt
 
         self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Jenis Kelamin")
         self.setStyleSheet("background-color: #ffffff;")
 
@@ -15361,6 +16315,7 @@ class UbahTPSWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
 
         self.setWindowTitle("Rekap Ubah TPS Masuk dan Ubah TPS Keluar")
@@ -15634,6 +16589,7 @@ class BeritaAcara(QMainWindow):
     """Jendela Berita Acara lengkap sesuai template resmi (2 halaman, dengan logo, input, navigasi, dan viewer)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -17405,6 +18361,7 @@ class _DialogDataBA(QDialog):
 class _DialogMasukan(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowIcon(app_icon())
         self.setWindowTitle("Input Masukan / Tanggapan")
         self.setModal(True)
         self.setMinimumWidth(520)
@@ -17505,6 +18462,7 @@ class LampAdpp(QMainWindow):
     """Tampilan langsung Model A – Daftar Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -19165,6 +20123,7 @@ class LampArpp(QMainWindow):
     """Tampilan langsung Model A – Rekap Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -19875,6 +20834,7 @@ class LampRekapPps(QMainWindow):
     """Tampilan langsung Model A – Rekap Pemilih Aktif PPS (portrait, A4, Arial 12, lengkap fungsi simpan & print)."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -20414,6 +21374,7 @@ class LapCoklit(QMainWindow):
     """Tampilan langsung Model Laporan Hasil Coklit."""
     def __init__(self, parent_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
@@ -21481,6 +22442,7 @@ class Data_Pantarlih(QMainWindow):
     """Jendela pengisian data pantarlih per TPS — full SQLCipher native, cepat, dan stabil."""
     def __init__(self, lapcoklit_window):
         super().__init__()
+        self.setWindowIcon(app_icon())
         self.lapcoklit = lapcoklit_window
         self.setWindowTitle("Data Pantarlih")
         self.setStyleSheet("background-color: white;")
@@ -21496,7 +22458,7 @@ class Data_Pantarlih(QMainWindow):
             base_dir = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base_dir, "KPU.png")
             if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
+                self.setWindowIcon(app_icon())
         except Exception:
             pass
 
@@ -22198,44 +23160,6 @@ class CopyEventFilter(QObject):
 
         return super().eventFilter(obj, event)
 
-#####################################*************########################################
-#####################################*************########################################
-#####################################*************########################################
-def is_dev_mode_requested():
-    """Cek apakah mode Dev diaktifkan via environment variable atau argumen CLI."""
-    if os.getenv("NEXVO_DEV_MODE", "") == "1":
-        return True
-    if "--dev" in sys.argv:
-        return True
-    return False
-
-
-def confirm_dev_mode(parent=None):
-    """
-    Jika ada password dev di environment variable, minta password dulu.
-    Jika tidak, hanya tampilkan konfirmasi yes/no.
-    """
-    dev_pw = os.getenv("NEXVO_DEV_PASSWORD", "").strip()
-    if dev_pw:
-        pw, ok = QInputDialog.getText(
-            parent, "Dev Mode",
-            "Masukkan DEV password:",
-            echo=QInputDialog.EchoMode.Password
-        )
-        if not ok:
-            return False
-        return pw == dev_pw
-    else:
-        ans = QMessageBox.question(
-            parent, "Dev Mode",
-            "Jalankan aplikasi dalam MODE DEV (bypass login & OTP)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        return ans == QMessageBox.StandardButton.Yes
-#####################################*************########################################
-#####################################*************########################################
-#####################################*************########################################
-
 # =====================================================
 # FORM BUAT AKUN BARU (REGISTER)
 # =====================================================
@@ -22243,6 +23167,8 @@ class RegisterWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Buat Akun Baru")
+        self.setWindowIcon(app_icon())
+        self.setWindowIcon(app_icon())
         self.conn = get_connection()
         self.showMaximized()
 
@@ -22647,6 +23573,19 @@ class RegisterWindow(QMainWindow):
         pix = QPixmap(); pix.loadFromData(buf.getvalue())
 
         # === Dialog QR ===
+        # 🌫️ Tambahkan overlay semi-blur di belakang dialog
+        overlay = QWidget(self)
+        overlay.setGeometry(self.rect())
+        overlay.setStyleSheet("background-color: rgba(255, 255, 255, 180);")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        overlay.show()
+        overlay.raise_()
+
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        self.setGraphicsEffect(blur)
+
+        # === Dialog QR Asli ===
         qr_dialog = QDialog(self)
         qr_dialog.setWindowTitle("Aktivasi OTP")
         qr_dialog.setFixedSize(460, 600)
@@ -22693,46 +23632,89 @@ class RegisterWindow(QMainWindow):
         btn.setFixedSize(240, 46)
         vbox.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # klik tombol langsung lanjut ke input OTP
+        # Klik tombol → lanjut verifikasi, lalu hilangkan overlay
         def lanjut_verifikasi():
             qr_dialog.accept()
+            overlay.hide()
+            overlay.deleteLater()
             QTimer.singleShot(300, lambda: self._verify_otp_flow(otp_secret))
         btn.clicked.connect(lanjut_verifikasi)
 
+        # Kalau dialog ditutup manual (Alt+F4 / ESC) → overlay tetap dibersihkan
+        def bersihkan_overlay():
+            overlay.hide()
+            overlay.deleteLater()
+
+        qr_dialog.finished.connect(bersihkan_overlay)
         qr_dialog.exec()
 
     # =========================================================
     # 🔢 Alur Verifikasi OTP (tanpa popup ganda, UX halus)
     # =========================================================
     def _verify_otp_flow(self, otp_secret: str):
-        """
-        Menangani proses verifikasi OTP setelah user scan QR.
-        Anti-hang, popup tunggal, dan bisa retry 3x.
-        """
+        """Menangani proses verifikasi OTP setelah user scan QR (dengan overlay blur halus)."""
+
+        def buat_overlay(blur_radius=16, color="rgba(255,255,255,180)"):
+            """Buat overlay blur di belakang dialog (tanpa backdrop-filter)."""
+            overlay = QWidget(self)
+            overlay.setGeometry(self.rect())
+            overlay.setStyleSheet(f"background-color: {color};")
+            overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            overlay.show()
+            overlay.raise_()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(blur_radius)
+            self.setGraphicsEffect(blur)
+            return overlay
+
         totp = pyotp.TOTP(otp_secret)
 
         for attempt in range(3):
             code = self._prompt_otp_code_dialog()
             if code is None:
+                overlay = buat_overlay()
                 show_modern_warning(self, "Dibatalkan", "Verifikasi OTP dibatalkan.")
+                overlay.hide()
+                overlay.deleteLater()
+                self.setGraphicsEffect(None)  # ✅ hapus blur
                 return
 
             # ✅ OTP valid
             if totp.verify(code, valid_window=1):
+                overlay = buat_overlay()
+
                 show_modern_info(self, "Sukses", "Akun NexVo anda berhasil dibuat!")
+                overlay.hide()
+                overlay.deleteLater()
+                self.setGraphicsEffect(None)  # ✅ hapus blur
+
                 self.close()
                 self.login_window = LoginWindow()
                 self.login_window.show()
                 return
+
+        # ❌ Gagal 3 kali
+        overlay = buat_overlay()
         show_modern_error(self, "Gagal", "Verifikasi OTP gagal 3 kali. Silakan scan ulang QR dan coba lagi.")
+        overlay.hide()
+        overlay.deleteLater()
+        self.setGraphicsEffect(None)  # ✅ hapus blur
 
     # =========================================================
     # 🧾 Dialog Input OTP (fokus ulang saat salah)
     # =========================================================
     def _prompt_otp_code_dialog(self):
-        """
-        Dialog kecil untuk input OTP 6 digit, tanpa tumpang tindih popup.
-        """
+        """Dialog input OTP 6 digit dengan overlay blur lembut."""
+        overlay = QWidget(self)
+        overlay.setGeometry(self.rect())
+        overlay.setStyleSheet("background-color: rgba(255, 255, 255, 180);")
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        overlay.show()
+        overlay.raise_()
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(18)
+        self.setGraphicsEffect(blur)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Verifikasi OTP")
         dlg.setFixedSize(360, 190)
@@ -22787,7 +23769,6 @@ class RegisterWindow(QMainWindow):
                 code_holder["val"] = code
                 dlg.accept()
             else:
-                # ❗ Tidak munculkan popup baru, cukup 1 per dialog
                 show_modern_warning(dlg, "Format Salah", "Kode OTP harus 6 digit angka!")
                 otp_input.setFocus()
                 otp_input.selectAll()
@@ -22799,88 +23780,68 @@ class RegisterWindow(QMainWindow):
         btn_cancel.clicked.connect(do_cancel)
         otp_input.returnPressed.connect(btn_ok.click)
 
+        # 🌫️ Bersihkan overlay dan efek blur setelah dialog selesai
+        def bersihkan_overlay():
+            overlay.hide()
+            overlay.deleteLater()
+            self.setGraphicsEffect(None)  # ✅ hilangkan blur dari window utama
+
+        dlg.finished.connect(bersihkan_overlay)
+
         dlg.exec()
         return code_holder["val"]
-
-
-#if __name__ == "__main__":
-    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
-#    from db_manager import bootstrap, close_connection
-#    conn = bootstrap()
-
-#    if conn is None:
-#        QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
-#        sys.exit(1)
-
-    # 🔹 Jalankan aplikasi Qt
-#    app = QApplication(sys.argv)
-#    app.setStyle(QStyleFactory.create("Fusion"))
-#    apply_global_palette(app, mode="light")
-#    app.setApplicationName("NexVo")
-
-    # 🔹 Jalankan halaman login
-#    win = LoginWindow(conn)
-#    win.show()  # showMaximized sudah di dalam __init__
-
-    # 🔹 Tangani penutupan koneksi saat aplikasi ditutup
-#    exit_code = app.exec()
-#    close_connection()
-#    sys.exit(exit_code)
-
-
-
-# ==========================================================
-# 🚀 Entry point dengan Mode DEV opsional
-# ==========================================================
+    
 if __name__ == "__main__":
+    import os, sys, ctypes
     from db_manager import bootstrap, close_connection, DB_PATH
-    from PyQt6.QtWidgets import QApplication, QMessageBox
-    import sys
+    from PyQt6.QtWidgets import QApplication, QMessageBox, QStyleFactory
+    from app_utils import app_icon  # ← hanya app_icon, karena apply_global_palette sudah ada di NexVo.py
 
-    # 🔹 Inisialisasi database terenkripsi (hanya sekali)
-    conn = bootstrap()
-    if conn is None:
-        QMessageBox.critical(None, "Kesalahan Fatal", "Gagal inisialisasi database. Aplikasi akan keluar.")
-        sys.exit(1)
-
-    # 🔹 Bangun aplikasi Qt
+    # ============================================================
+    # 🔹 Buat QApplication lebih dulu
+    # ============================================================
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
-    apply_global_palette(app)
+    apply_global_palette(app)  # ini panggil fungsi yang sudah ada di NexVo.py
     app.setApplicationName("NexVo")
 
-    # ===================================================
-    # 🔹 Cek apakah mode DEV diaktifkan
-    # ===================================================
-    try:
-        if is_dev_mode_requested():
-            if confirm_dev_mode(None):
-                print("[DEV MODE] Melewati proses login & OTP...")
-                dev_nama = "ARI ARDIANA"
-                dev_kecamatan = "TANJUNGJAYA"
-                dev_desa = "SUKASENANG"
-                dev_tahapan = "DPHP"
+    # ============================================================
+    # 🔹 Set ikon global aplikasi
+    # ============================================================
+    app.setWindowIcon(app_icon())
 
-                mw = MainWindow(dev_nama, dev_kecamatan, dev_desa, str(DB_PATH), dev_tahapan)
-                mw.show()
+    # 🪟 FIX: Pastikan ikon taskbar ikut muncul di Windows
+    if os.name == "nt":
+        try:
+            myappid = "com.kpu.nexvo"  # ID unik bebas
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print(f"[WARN] Gagal set AppUserModelID: {e}")
 
-                # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
-                exit_code = app.exec()
-                close_connection()
-                sys.exit(exit_code)
-            else:
-                print("[INFO] Mode DEV dibatalkan oleh user.")
-    except NameError:
-        # fallback jika belum didefinisikan
-        print("[WARN] Fungsi is_dev_mode_requested() / confirm_dev_mode() belum didefinisikan.")
+    # ============================================================
+    # 🔹 Inisialisasi database terenkripsi
+    # ============================================================
+    conn = bootstrap()
+    if conn is None:
+        QMessageBox.critical(None, "Kesalahan Fatal",
+                             "Gagal inisialisasi database. Aplikasi akan keluar.")
+        sys.exit(1)
 
-    # ===================================================
-    # 🔹 Mode normal → tampilkan login
-    # ===================================================
+    # ============================================================
+    # 🔹 Jalankan halaman login utama
+    # ============================================================
     win = LoginWindow(conn)
     win.show()
 
-    # ✅ Tutup koneksi SQLCipher dengan aman saat keluar
+    # ============================================================
+    # 🔹 Jalankan event loop Qt & tutup koneksi saat keluar
+    # ============================================================
     exit_code = app.exec()
-    close_connection()
+
+    try:
+        close_connection()
+        print("[INFO] Koneksi database ditutup dengan aman.")
+    except Exception as e:
+        print(f"[WARN] Gagal menutup koneksi database: {e}")
+
     sys.exit(exit_code)
