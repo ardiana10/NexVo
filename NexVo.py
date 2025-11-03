@@ -4590,6 +4590,7 @@ class LoginWindow(QMainWindow):
         btn_verify = QPushButton("Verifikasi")
         btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(btn_verify)
+        verifying = {"in_progress": False}
 
         def do_verify():
             import pyotp
@@ -9855,22 +9856,12 @@ class MainWindow(QMainWindow):
     # Import CSV Function (OTP + Progress Bar NexVo)
     # =================================================
     def import_csv(self):
-        from PyQt6.QtWidgets import QProgressBar, QLabel, QVBoxLayout, QDialog, QWidget, QLineEdit, QPushButton
-        from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
-        from PyQt6.QtGui import QFont
-        import csv
-        from datetime import datetime
-        import pyotp
-
-        # ============================================================
-        # 🧩 1️⃣ Pilih File CSV
-        # ============================================================
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Pilih File CSV", "", "CSV Files (*.csv)"
         )
         if not file_path:
             return
-
+        
         # ============================================================
         # 🧩 2️⃣ Ambil secret OTP dari database
         # ============================================================
@@ -9950,6 +9941,7 @@ class MainWindow(QMainWindow):
                 anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
             anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
+        verifying = {"in_progress": False}
         def do_verify():
             code = otp_input.text().strip()
             if not code:
@@ -9979,16 +9971,19 @@ class MainWindow(QMainWindow):
         # ============================================================
         # 🧩 4️⃣ OTP valid → tampilkan progress bar khas NexVo
         # ============================================================
-        progress_overlay = QWidget(self)
-        progress_overlay.setGeometry(0, 0, self.width(), self.height())
-        progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
-        layout = QVBoxLayout(progress_overlay)
+        self.progress_overlay = QWidget(self)
+        self.progress_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
+
+        layout = QVBoxLayout(self.progress_overlay)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_status = QLabel("Mengimpor data CSV...")
+
+        lbl_status = QLabel("⏳ Mengimpor data CSV...")
         lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_status.setStyleSheet("color: black; font-size: 13pt; font-weight: 600;")
+
         progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
+        progress_bar.setRange(0, 0)  # mode indeterminate (tak tentu, biar animasi jalan)
         progress_bar.setFixedWidth(int(self.width() * 0.4))
         progress_bar.setStyleSheet("""
             QProgressBar {
@@ -10005,75 +10000,149 @@ class MainWindow(QMainWindow):
                 border-radius: 10px;
             }
         """)
+
         layout.addWidget(lbl_status)
         layout.addSpacing(10)
         layout.addWidget(progress_bar)
-        progress_overlay.show()
+
+        self.progress_overlay.show()
         QApplication.processEvents()
 
-        # ============================================================
-        # 🧩 5️⃣ Proses Import CSV (100% logika asli)
-        # ============================================================
         try:
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
-                total_rows = len(reader)
-                if total_rows < 15:
+                if len(reader) < 15:
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
-                    progress_overlay.hide()
                     return
 
+                # 🔹 Verifikasi kecamatan & desa di baris ke-15 (berdasarkan nama kolom, bukan index tetap)
                 header = [h.strip().upper() for h in reader[0]]
                 header_idx = {col: i for i, col in enumerate(header)}
+
+                # Cari posisi kolom "KECAMATAN" dan "KELURAHAN"
                 idx_kec = header_idx.get("KECAMATAN")
                 idx_kel = header_idx.get("KELURAHAN")
+
                 if idx_kec is None or idx_kel is None:
-                    show_modern_warning(self, "Error", "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan.")
-                    progress_overlay.hide()
+                    show_modern_warning(
+                        self, "Error",
+                        "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan di header CSV."
+                    )
                     return
 
-                kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
-                desa_csv = (reader[14][idx_kel] or "").strip().upper()
+                try:
+                    # Ambil baris ke-15 (index 14) sesuai format Sidalih
+                    kecamatan_csv = (reader[14][idx_kec] or "").strip().upper()
+                    desa_csv = (reader[14][idx_kel] or "").strip().upper()
+                except Exception:
+                    show_modern_warning(self, "Error", "Format CSV tidak sesuai, gagal membaca KECAMATAN/KELURAHAN.")
+                    return
+
                 if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
-                    show_modern_warning(self, "Error",
-                        f"Import CSV gagal!\nHarap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih.")
-                    progress_overlay.hide()
+                    show_modern_warning(
+                        self, "Error",
+                        f"Import CSV gagal!\n"
+                        f"Harap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
+                    )
                     return
 
+                # 🔹 Tentukan nama tabel berdasarkan tahapan login
                 tahap = self._tahapan.strip().upper()
                 tabel_map = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}
                 tbl_name = tabel_map.get(tahap)
                 if not tbl_name:
                     show_modern_warning(self, "Error", f"Tahapan tidak dikenal: {tahap}")
-                    progress_overlay.hide()
                     return
 
+                # ================================================================
+                # 🔸 Mapping header CSV → kolom tabel
+                # ================================================================
+                header = [h.strip().upper() for h in reader[0]]
                 mapping = {
-                    "KECAMATAN": "KECAMATAN", "KELURAHAN": "DESA", "DPID": "DPID",
-                    "NKK": "NKK", "NIK": "NIK", "NAMA": "NAMA", "KELAMIN": "JK",
-                    "TEMPAT LAHIR": "TMPT_LHR", "TANGGAL LAHIR": "TGL_LHR", "STS KAWIN": "STS",
-                    "ALAMAT": "ALAMAT", "RT": "RT", "RW": "RW", "DISABILITAS": "DIS",
-                    "EKTP": "KTPel", "SUMBER": "SUMBER", "KETERANGAN": "KET", "TPS": "TPS",
+                    "KECAMATAN": "KECAMATAN",
+                    "KELURAHAN": "DESA",
+                    "DPID": "DPID",
+                    "NKK": "NKK",
+                    "NIK": "NIK",
+                    "NAMA": "NAMA",
+                    "KELAMIN": "JK",  # nanti juga akan diisi ke JK_ASAL
+                    "TEMPAT LAHIR": "TMPT_LHR",
+                    "TANGGAL LAHIR": "TGL_LHR",
+                    "STS KAWIN": "STS",
+                    "ALAMAT": "ALAMAT",
+                    "RT": "RT",
+                    "RW": "RW",
+                    "DISABILITAS": "DIS",
+                    "EKTP": "KTPel",
+                    "SUMBER": "SUMBER",
+                    "KETERANGAN": "KET",
+                    "TPS": "TPS",  # nanti juga akan diisi ke TPS_ASAL
                     "UPDATED_AT": "LastUpdate",
                 }
+
+                header_idx = {col: i for i, col in enumerate(header)}
                 idx_status = header_idx.get("STATUS", None)
                 if idx_status is None:
                     show_modern_warning(self, "Error", "Kolom STATUS tidak ditemukan di CSV.")
-                    progress_overlay.hide()
                     return
 
+                from db_manager import get_connection
                 conn = get_connection()
                 cur = conn.cursor()
                 cur.execute("PRAGMA busy_timeout = 8000")
                 cur.execute("PRAGMA synchronous = OFF")
                 cur.execute("PRAGMA temp_store = 2")
                 cur.execute("PRAGMA journal_mode = WAL")
-                cur.execute("DELETE FROM data_awal")
-                cur.execute(f"DELETE FROM {tbl_name}")
 
+                # ================================================================
+                # 🔸 Siapkan tabel data_awal
+                # ================================================================
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS data_awal (
+                        TPS TEXT PRIMARY KEY,
+                        L INTEGER DEFAULT 0,
+                        P INTEGER DEFAULT 0,
+                        LP INTEGER DEFAULT 0
+                    )
+                """)
+                cur.execute("DELETE FROM data_awal")
+
+                # ================================================================
+                # 🔸 Pastikan tabel utama ada
+                # ================================================================
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {tbl_name} (
+                        KECAMATAN TEXT,
+                        DESA TEXT,
+                        DPID TEXT,
+                        NKK TEXT,
+                        NIK TEXT,
+                        NAMA TEXT,
+                        JK TEXT,
+                        TMPT_LHR TEXT,
+                        TGL_LHR TEXT,
+                        STS TEXT,
+                        ALAMAT TEXT,
+                        RT TEXT,
+                        RW TEXT,
+                        DIS TEXT,
+                        KTPel TEXT,
+                        SUMBER TEXT,
+                        KET TEXT,
+                        TPS TEXT,
+                        LastUpdate TEXT,
+                        CEK_DATA TEXT,
+                        JK_ASAL TEXT,
+                        TPS_ASAL TEXT
+                    )
+                """)
+
+                # ================================================================
+                # 🔸 Batch insert cepat
+                # ================================================================
+                from datetime import datetime
                 batch_values = []
-                step = max(1, total_rows // 100)  # update progress tiap sekian baris
-                for i, row in enumerate(reader[1:], start=1):
+                for row in reader[1:]:
                     if not row or len(row) < len(header):
                         continue
                     status_val = row[idx_status].strip().upper()
@@ -10084,10 +10153,19 @@ class MainWindow(QMainWindow):
                     for csv_col, app_col in mapping.items():
                         if csv_col in header_idx:
                             val = row[header_idx[csv_col]].strip()
-                            if app_col in ("RT", "RW", "TPS") and val.isdigit():
-                                val = str(int(val))
+
+                            # 🔹 Normalisasi khusus kolom RT, RW, TPS → hilangkan nol di depan
+                            if app_col in ("RT", "RW", "TPS"):
+                                if val.isdigit():  # hanya ubah kalau memang angka
+                                    val = str(int(val))
+                                elif val == "":
+                                    val = ""  # biarkan kosong jika memang kosong
+
+                            # 🔹 Set default KET = "0"
                             if app_col == "KET":
                                 val = "0"
+
+                            # 🔹 Format tanggal
                             if app_col == "LastUpdate" and val:
                                 for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                                     try:
@@ -10095,55 +10173,101 @@ class MainWindow(QMainWindow):
                                         break
                                     except Exception:
                                         pass
+
                             data[app_col] = val
-                    data["checked"] = 0
+
+                    # 🔹 Kolom tambahan
+                    data["checked"] = 0  # ✅ default untuk checkbox
                     data["JK_ASAL"] = data.get("JK", "")
                     data["TPS_ASAL"] = data.get("TPS", "")
+
+                    # Urutan kolom harus sesuai struktur tabel (termasuk checked)
                     ordered_cols = [
                         "checked", "KECAMATAN", "DESA", "DPID", "NKK", "NIK", "NAMA", "JK",
                         "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel",
                         "SUMBER", "KET", "TPS", "LastUpdate", "CEK_DATA", "JK_ASAL", "TPS_ASAL"
                     ]
-                    batch_values.append(tuple(data.get(c, "") for c in ordered_cols))
 
-                    # update progress bar tiap beberapa langkah
-                    if i % step == 0:
-                        progress_bar.setValue(min(100, int(i / total_rows * 100)))
-                        QApplication.processEvents()
+                    values = [data.get(c, "") for c in ordered_cols]
+                    batch_values.append(tuple(values))
 
-                placeholders = ",".join(["?"] * 23)
-                cur.executemany(f"INSERT INTO {tbl_name} VALUES ({placeholders})", batch_values)
+                if not batch_values:
+                    show_modern_warning(self, "Kosong", "Tidak ada data aktif untuk diimport.")
+                    return
+
+                # ================================================================
+                # ⚡ Eksekusi ultra cepat
+                # ================================================================
+                cur.execute(f"DELETE FROM {tbl_name}")
+                placeholders = ",".join(["?"] * 23)  # ✅ 23 kolom sesuai tabel
+                cur.executemany(
+                    f"INSERT INTO {tbl_name} VALUES ({placeholders})",
+                    batch_values
+                )
                 cur.execute(f"UPDATE {tbl_name} SET KET='0'")
                 conn.commit()
 
+                # ================================================================
+                # ✅ Bangun ulang data_awal
+                # ================================================================
                 cur.execute(f"""
                     INSERT INTO data_awal (TPS, L, P, LP)
-                    SELECT TPS,
-                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END)
-                    FROM {tbl_name} GROUP BY TPS ORDER BY CAST(TPS AS INTEGER)
+                    SELECT 
+                        TPS,
+                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END) AS L,
+                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END) AS P,
+                        SUM(CASE WHEN JK IN ('L','P') THEN 1 ELSE 0 END) AS LP
+                    FROM {tbl_name}
+                    GROUP BY TPS
+                    ORDER BY CAST(TPS AS INTEGER)
                 """)
                 conn.commit()
-                progress_bar.setValue(100)
-                QApplication.processEvents()
 
-                with self.freeze_ui():
-                    self.load_data_from_db()
-                    self.update_pagination()
-                    self.show_page(1)
-                    self.connect_header_events()
-                    self.sort_data(auto=True)
+                # ================================================================
+                # 🔸 Refresh UI
+                # ================================================================
+                try:
+                    with self.freeze_ui():
+                        self.load_data_from_db()
+                        self.update_pagination()
+                        self.show_page(1)
+                        self.connect_header_events()
+                        self.sort_data(auto=True)
 
-                show_modern_info(self, "Sukses",
-                                f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
-                                f"{len(batch_values)} baris berhasil dimuat.")
+                        if self.filter_sidebar is None:
+                            self.filter_sidebar = FilterSidebar(self)
+                            self.filter_dock = FixedDockWidget("Filter", self, fixed_width=320)
+                            self.filter_dock.setWidget(self.filter_sidebar)
+                            self.filter_sidebar.apply_theme()
+                            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.filter_dock)
+                            self.filter_dock.hide()
+
+                        try:
+                            self.filter_sidebar._populate_sumber_from_mainwindow()
+                        except Exception as e:
+                            print(f"[Warning] Gagal refresh sumber di FilterSidebar: {e}")
+
+                    show_modern_info(
+                        self, "Sukses",
+                        f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
+                        f"{len(batch_values)} baris berhasil dimuat."
+                    )
+
+                except Exception as e:
+                    show_modern_error(
+                        self, "Error",
+                        f"Data tersimpan tapi gagal dimuat ke tabel:\n{e}"
+                    )
+
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal import CSV:\n{e}")
+            
         finally:
-            progress_overlay.hide()
+            if hasattr(self, "progress_overlay") and self.progress_overlay:
+                self.progress_overlay.hide()
+                self.progress_overlay.deleteLater()
+                self.progress_overlay = None
             QApplication.processEvents()
-
 
     def import_baruecoklit(self):
         """
@@ -11223,6 +11347,7 @@ class MainWindow(QMainWindow):
             anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
 
+        verifying = {"in_progress": False}
         def do_verify():
             import pyotp
             code = otp_input.text().strip()
@@ -23730,6 +23855,7 @@ class RegisterWindow(QMainWindow):
 
         code_holder = {"val": None}
 
+        verifying = {"in_progress": False}
         def do_verify():
             code = otp_input.text().strip()
             if len(code) == 6 and code.isdigit():
