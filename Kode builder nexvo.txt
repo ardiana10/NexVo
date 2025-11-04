@@ -1,3 +1,11 @@
+===============================================
+JALANKAN KODE INI LEWAT CMD DI FOLDER NEXVO.PY
+===============================================
+
+python -m venv buildenv
+buildenv\Scripts\activate
+pip install --upgrade pip setuptools wheel
+
 ==========================================
 Kode bila ingin aplikasi dalam satu folder
 ==========================================
