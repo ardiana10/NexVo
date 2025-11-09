@@ -33,6 +33,8 @@ __pycache__/
 *.vscode
 *.build
 *.buildenv
+buildenv/
+.buildenv/
 *.dist
 *.Portable
 
