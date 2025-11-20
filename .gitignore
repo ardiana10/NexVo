@@ -86,8 +86,8 @@ htmlcov/
 
 # Local Git config
 .gitconfig
-NexVo
-NexVo.*
+#NexVo
+#NexVo.*
 
 # 🔍 Backup / temp / auto-save
 *.bak

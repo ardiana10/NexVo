@@ -4,7 +4,7 @@ NexVo 2.0 (SQLCipher edition)
 --------------------------------
 • Satu database terenkripsi penuh: nexvo.db
 • Lokasi DB: %APPDATA%\NexVo\nexvo.db (contoh: C:\\Users\\<nama_user>\\AppData\\Roaming\\NexVo)
-• Kunci unik per‑komputer: %APPDATA%\Aplikasi\nexvo.key (binary 32 byte)
+• Kunci unik per‑komputer: %APPDATA%\NexVo\nexvo.key (binary 32 byte)
 • 5 tabel: user, kecamatan, dphp, dpshp, dpshpa
 • UI: Form Login full screen, tema putih lembut + hover oranye
 
@@ -28,7 +28,9 @@ import contextlib
 import zipfile
 import shutil
 import json
+import time
 import gc
+import weakref
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from pathlib import Path
@@ -44,8 +46,12 @@ import pyotp, qrcode
 # Database / SQLCipher
 # =========================
 from db_manager import (
-    close_connection, get_connection, with_safe_db, bootstrap,
+    get_connection,
+    with_safe_db,
+    bootstrap,
     hapus_semua_data,
+    close_connection,
+    hapus_buat_akun,
 )
 
 try:
@@ -60,8 +66,8 @@ from app_utils import app_icon
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData,
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData, QObject, 
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QStringListModel
 )
 
 from PyQt6.QtGui import (
@@ -105,27 +111,26 @@ from PyPDF2 import PdfMerger
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
+from rapidfuzz import process
 # ==========================================================
 # Konstanta path Windows (AppData\Roaming)
 # ==========================================================
 APPDATA = os.getenv("APPDATA") or str(Path.home() / "AppData" / "Roaming")
 NEXVO_DIR = Path(APPDATA) / "NexVo"
-APLIKASI_DIR = Path(APPDATA) / "Aplikasi"
+APLIKASI_DIR = NEXVO_DIR / "Key"
 DB_PATH = NEXVO_DIR / "nexvo.db"
 KEY_PATH = APLIKASI_DIR / "nexvo.key"  # binary (32 byte)
-
-
 # ==========================================================
 # Util: Key management (kunci unik per-komputer)
 # ==========================================================
 def ensure_dirs() -> None:
-    r"""Pastikan folder NexVo dan Aplikasi ada di AppData\Roaming."""
+    r"""Pastikan folder NexVo ada di AppData\Roaming."""
     NEXVO_DIR.mkdir(parents=True, exist_ok=True)
     APLIKASI_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_or_create_key() -> bytes:
-    """Buat atau baca kunci biner 32-byte yang disimpan di %APPDATA%/Aplikasi/nexvo.key.
+    """Buat atau baca kunci biner 32-byte yang disimpan di %APPDATA%/NexVo/nexvo.key.
     Disimpan sebagai BINARY (bukan teks)."""
     ensure_dirs()
     if KEY_PATH.exists():
@@ -171,7 +176,6 @@ def connect_encrypted_db(db_path: Path, key_bytes: bytes):
     conn.execute("SELECT count(*) FROM sqlite_master;")
     return conn
 
-
 def init_schema(conn) -> None:
     """Membuat semua tabel utama dan tabel rekap jika belum ada (aman dijalankan berulang kali)."""
     cur = conn.cursor()
@@ -182,6 +186,7 @@ def init_schema(conn) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nama TEXT,
             email TEXT,
+            kabupaten TEXT,
             kecamatan TEXT,
             desa TEXT,
             password TEXT,
@@ -192,6 +197,7 @@ def init_schema(conn) -> None:
     # --- Tabel kecamatan ---
     cur.execute("""
         CREATE TABLE IF NOT EXISTS kecamatan (
+            kabupaten TEXT,
             kecamatan TEXT,
             desa TEXT
         );
@@ -200,29 +206,41 @@ def init_schema(conn) -> None:
     # --- Tabel tahapan utama ---
     common_schema = """
         (
-            checked     INTEGER DEFAULT 0,
-            KECAMATAN   TEXT,
-            DESA        TEXT,
-            DPID        TEXT,
-            NKK         TEXT,
-            NIK         TEXT,
-            NAMA        TEXT,
-            JK          TEXT,
-            TMPT_LHR    TEXT,
-            TGL_LHR     TEXT,
-            STS         TEXT,
-            ALAMAT      TEXT,
-            RT          TEXT,
-            RW          TEXT,
-            DIS         TEXT,
-            KTPel       TEXT,
-            SUMBER      TEXT,
-            KET         TEXT,
-            TPS         TEXT,
-            LastUpdate  DATETIME,
-            CEK_DATA    TEXT,
-            JK_ASAL     TEXT,
-            TPS_ASAL    TEXT
+            checked INTEGER DEFAULT 0,
+            KECAMATAN TEXT,
+            DESA TEXT,
+            DPID TEXT,
+            NKK TEXT,
+            NIK TEXT,
+            NAMA TEXT,
+            JK TEXT,
+            TMPT_LHR TEXT,
+            TGL_LHR TEXT,
+            STS TEXT,
+            ALAMAT TEXT,
+            RT TEXT,
+            RW TEXT,
+            DIS TEXT,
+            KTPel TEXT,
+            SUMBER TEXT,
+            KET TEXT,
+            TPS TEXT,
+            LastUpdate DATETIME,
+            CEK_DATA TEXT,
+            NKK_ASAL TEXT,
+            NIK_ASAL TEXT,
+            NAMA_ASAL TEXT,
+            JK_ASAL TEXT,
+            TMPT_LHR_ASAL TEXT,
+            TGL_LHR_ASAL TEXT,
+            STS_ASAL TEXT,
+            ALAMAT_ASAL TEXT,
+            RT_ASAL TEXT,
+            RW_ASAL TEXT,
+            DIS_ASAL TEXT,
+            KTPel_ASAL TEXT,
+            SUMBER_ASAL TEXT,
+            TPS_ASAL TEXT
         )
     """
     for tbl in ("dphp", "dpshp", "dpshpa"):
@@ -346,7 +364,6 @@ def hapus_semua_data(conn):
     except Exception as e:
         print(f"[PERINGATAN] Gagal hapus data: {e}")
 
-
 def cleanup_badan_adhoc():
     """Bersihkan isi tabel badan_adhoc saat aplikasi keluar (tanpa menghapus tabel)."""
     try:
@@ -373,7 +390,6 @@ def cleanup_badan_adhoc():
 
 # 🔹 Daftarkan agar otomatis dijalankan ketika program berakhir
 atexit.register(cleanup_badan_adhoc)
-
 
 def _fade_in_dialog(msg):
     """Efek fade-in halus khas NexVo (non-blocking tapi aman)."""
@@ -493,6 +509,39 @@ def _apply_modern_style(msg, accent="#d71d1d"):
             background-color: {lighter};
         }}
     """)
+
+def _get_user_kabupaten() -> str:
+    """Ambil nama kabupaten dari tabel users tanpa menutup koneksi global."""
+    try:
+        conn = get_connection()  # gunakan koneksi global aktif
+        cur = conn.cursor()
+        cur.execute("SELECT kabupaten FROM users LIMIT 1")
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0].strip()
+    except Exception as e:
+        print(f"[WARN] Gagal membaca kabupaten dari users: {e}")
+    return ""
+
+def KabKo() -> str:
+    """
+    Mengembalikan 'KOTA' jika kabupaten user mengandung kata 'KOTA',
+    selain itu 'KABUPATEN'.
+    """
+    nama_kabupaten = _get_user_kabupaten()
+    if not nama_kabupaten:
+        return "KABUPATEN"
+    return "KOTA" if "KOTA" in nama_kabupaten.upper() else "KABUPATEN"
+
+def DesaKel() -> str:
+    """
+    Mengembalikan 'KELURAHAN' jika kabupaten user mengandung kata 'KOTA',
+    selain itu 'DESA'.
+    """
+    nama_kabupaten = _get_user_kabupaten()
+    if not nama_kabupaten:
+        return "DESA"
+    return "KELURAHAN" if "KOTA" in nama_kabupaten.upper() else "DESA"
 
 def get_system_delimiter():
     """Deteksi delimiter berdasarkan locale Windows (Excel Indonesia pakai ';')."""
@@ -653,7 +702,7 @@ class ModernInputDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # 🌈 Style utama (tanpa warna hitam di luar)
+        # Style utama (tanpa warna hitam di luar)
         self.setStyleSheet("""
             QLabel {
                 color: black;
@@ -737,14 +786,19 @@ class ModernInputDialog(QDialog):
         """Kembalikan teks input jika OK ditekan."""
         if self.exec() == QDialog.DialogCode.Accepted:
             return self.line_edit.text(), True
-        return "", False    
+        return "", False
 
 @with_safe_db
-def get_kecamatan(conn=None):
+def get_kabupaten(conn=None):
     cur = conn.cursor()
-    cur.execute("SELECT DISTINCT kecamatan FROM kecamatan ORDER BY kecamatan")
-    return [row[0] for row in cur.fetchall()]
+    cur.execute("SELECT DISTINCT kabupaten FROM kecamatan ORDER BY kabupaten")
+    return [row[0] for row in cur.fetchall()]    
 
+@with_safe_db
+def get_kecamatan(kabupaten, conn=None):
+    cur = conn.cursor()
+    cur.execute("SELECT kecamatan FROM kecamatan WHERE kabupaten = ? ORDER BY kecamatan", (kabupaten,))
+    return [row[0] for row in cur.fetchall()]
 
 @with_safe_db
 def get_desa(kecamatan, conn=None):
@@ -831,6 +885,7 @@ class SettingDialog(QDialog):
         self.parent_window = parent
         self._tahapan = getattr(parent, "_tahapan", "DPHP")
         self._active_table = parent._active_table() if parent else "dphp"
+        label_wilayah = getattr(parent, "label_wilayah", "Desa")
 
         layout = QVBoxLayout(self)
 
@@ -863,7 +918,7 @@ class SettingDialog(QDialog):
         self.columns = [
             ("DPID", "DPID"),
             ("KECAMATAN", "Kecamatan"),
-            ("DESA", "Kelurahan/Desa"),
+            (label_wilayah.upper(), label_wilayah.title()),
             ("JK", "Jenis Kelamin"),
             ("TMPT_LHR", "Tempat Lahir"),
             ("ALAMAT", "Alamat"),
@@ -1282,7 +1337,7 @@ class RangeSlider(QWidget):
     # Signal yang dipancarkan saat nilai berubah
     valuesChanged = pyqtSignal(int, int)  # (min_age, max_age)
     
-    def __init__(self, minimum=0, maximum=100, parent=None):
+    def __init__(self, minimum=0, maximum=130, parent=None):
         super().__init__(parent)
         
         # === Pengaturan Nilai Rentang ===
@@ -2215,8 +2270,6 @@ class FilterSidebar(QWidget):
                 QTimer.singleShot(0, self._sync_preset_heights)
                 QTimer.singleShot(0, self._update_preset_highlight)
                 
-            # ... (Sisa metode _icon_label, _apply_preset, _clear, _apply, _build_month, dll.
-            # ...  TETAP SAMA seperti kode asli Anda) ...
             # ...
             def _icon_label(self):
                 lab = QLabel("\uD83D\uDCC5")
@@ -2556,7 +2609,7 @@ class FilterSidebar(QWidget):
         umur_layout.setContentsMargins(0, 0, 0, 0)
         umur_layout.setSpacing(0)
         
-        self.umur_slider = RangeSlider(0, 100, parent=self)
+        self.umur_slider = RangeSlider(0, 130, parent=self)
         
         from PyQt6.QtWidgets import QSizePolicy
         # HANYA setSizePolicy, setFixedHeight dihapus
@@ -2592,7 +2645,17 @@ class FilterSidebar(QWidget):
 
     
     def _populate_dropdown_options(self):
-        """Isi semua dropdown di sidebar filter, ambil TPS langsung dari MainWindow."""
+        """Isi semua dropdown di sidebar filter, termasuk SUMBER & TPS dari DB."""
+        self.keterangan.clear()
+        self.kelamin.clear()
+        self.kawin.clear()
+        self.disabilitas.clear()
+        self.ktp_el.clear()
+        self.rank.clear()
+        
+        # ============================================
+        # Static lists (tetap)
+        # ============================================
         self.keterangan.addItems([
             "Keterangan", "1 (Meninggal)", "2 (Ganda)", "3 (Di Bawah Umur)",
             "4 (Pindah Domisili)", "5 (WNA)", "6 (TNI)", "7 (Polri)",
@@ -2606,50 +2669,73 @@ class FilterSidebar(QWidget):
             "6 (Sensorik Netra)"
         ])
         self.ktp_el.addItems(["KTP-el", "B", "S"])
-        self._populate_sumber_from_mainwindow()
         self.rank.addItems(["Rank", "Aktif", "Ubah", "TMS", "Baru"])
 
-        # ==========================================================
-        # 🔹 Ambil TPS langsung dari MainWindow
-        # ==========================================================
+        # Ambil MainWindow sekali saja
+        main = self._get_main_window()
+
+        # ============================================
+        # 🔹 SUMBER
+        # ============================================
+        self.sumber.clear()
         try:
-            main = self._get_main_window()
-            self.tps.clear()
+            if main and hasattr(main, "get_distinct_sumber"):
+                sumber_list = main.get_distinct_sumber()
+                if sumber_list and len(sumber_list) > 1:
+                    self.sumber.addItems(sumber_list)
+                else:
+                    self.sumber.addItem("Sumber")
+            else:
+                self.sumber.addItem("Sumber")
+        except Exception as e:
+            print(f"[FilterSidebar] Gagal ambil Sumber Data: {e}")
+            self.sumber.addItem("Sumber")
+
+        # ============================================
+        # 🔹 TPS
+        # ============================================
+        self.tps.clear()
+        try:
             if main and hasattr(main, "get_distinct_tps"):
                 tps_list = main.get_distinct_tps()
-                # pastikan hasilnya benar-benar list dengan lebih dari 1 elemen
-                if isinstance(tps_list, list) and len(tps_list) > 1:
+                if tps_list and len(tps_list) > 1:
                     self.tps.addItems(tps_list)
                 else:
-                    # fallback jika query belum jalan atau tabel belum siap
-                    self.tps.addItems(["TPS"])
+                    self.tps.addItem("TPS")
             else:
-                self.tps.addItems(["TPS"])
+                self.tps.addItem("TPS")
         except Exception as e:
             print(f"[FilterSidebar] Gagal ambil TPS: {e}")
-            self.tps.clear()
-            self.tps.addItems(["TPS"])
-
+            self.tps.addItem("TPS")
 
     def _populate_sumber_from_mainwindow(self):
-        # ... (Metode ini tetap sama) ...
+        """Mengisi dropdown SUMBER di FilterSidebar hanya dari get_distinct_sumber()."""
         try:
             main = self._get_main_window()
+
             if not main:
                 print("[FilterSidebar] Tidak bisa menemukan MainWindow (get_distinct_sumber tidak ada).")
                 self.sumber.clear()
-                self.sumber.addItems(["Sumber"])
+                self.sumber.addItem("Sumber")
                 return
-            sumber_list = main.get_distinct_sumber()
+
+            # Ambil daftar persis seperti keluaran get_distinct_sumber
+            sumber_list = main.get_distinct_sumber() or []
+
+            # Isi combobox persis sesuai daftar
             self.sumber.clear()
             self.sumber.addItems(sumber_list)
+
+            # Disable pilihan pertama ("Sumber")
             if self.sumber.count() > 0:
-                self.sumber.model().item(0).setEnabled(False)
+                item0 = self.sumber.model().item(0)
+                if item0:
+                    item0.setEnabled(False)
+
         except Exception as e:
             print(f"[FilterSidebar._populate_sumber_from_mainwindow Error] {e}")
             self.sumber.clear()
-            self.sumber.addItems(["Sumber"])
-
+            self.sumber.addItem("Sumber")
     
     def _setup_checkboxes(self, layout):
         # ... (Metode ini tetap sama) ...
@@ -2790,6 +2876,7 @@ class FilterSidebar(QWidget):
     def reset_filters(self):
         """Reset semua field filter ke nilai default/kosong dan panggil reset_tampilan_filter di MainWindow."""
         self._reset_form_only()
+        self._populate_dropdown_options()
         main = self._get_main_window()
         if main and hasattr(main, "reset_tampilan_filter"):
             try:
@@ -2822,7 +2909,7 @@ class FilterSidebar(QWidget):
             checkbox.setChecked(False)
         
         self.rb_reguler_khusus.setChecked(True)
-        self.umur_slider.setValues(0, 100)
+        self.umur_slider.setValues(0, 130)
     
     def update_umur_label(self, value):
         # ... (Metode ini tetap sama) ...
@@ -2836,7 +2923,6 @@ class FilterSidebar(QWidget):
         if not main or not hasattr(main, "get_distinct_sumber"):
             return None
         return main
-
     
     def get_filters(self):
         # ... (Metode ini tetap sama) ...
@@ -2859,12 +2945,12 @@ class FilterSidebar(QWidget):
                 last_update_start = start_part
                 last_update_end = end_part
         
-        umur_min, umur_max = 0, 100
+        umur_min, umur_max = 0, 130
         if hasattr(self, "umur_slider") and self.umur_slider is not None:
             try:
                 umur_min, umur_max = self.umur_slider.getCurrentValues()
             except Exception:
-                umur_min, umur_max = 0, 100
+                umur_min, umur_max = 0, 130
         
         return {
             "nama": self.nama.text().strip(),
@@ -2896,6 +2982,7 @@ class FilterSidebar(QWidget):
     
     def _apply_filters(self):
         # ... (Metode ini tetap sama) ...
+        self._populate_dropdown_options
         main = self._get_main_window()
         if main and hasattr(main, "apply_filters"):
             try:
@@ -3592,7 +3679,7 @@ class DetailInformasiPemilihDialog(QDialog):
         # ============================================================
         self.ket_mapping = {
             "0": "0",
-            "U": "U (Ubah)",
+            "U": "U (Ubah Data)",
             "1": "1 (Meninggal)",
             "2": "2 (Ganda)",
             "3": "3 (Di Bawah Umur)",
@@ -3628,27 +3715,7 @@ class DetailInformasiPemilihDialog(QDialog):
     # 🔹 FUNGSI BARU UNTUK UPDATE OTOMATIS KETERANGAN
     # ============================================================
     def _mark_as_ubah(self):
-        """Tandai kolom KET = 'U' di tampilan saja (tanpa simpan ke database)."""
-        try:
-            current_ket = str(self.get_value("KET", default="")).upper()
-            if current_ket != "U":
-                self._data["KET"] = "U"
-
-                if hasattr(self, "ubah_widget") and hasattr(self.ubah_widget, "combo"):
-                    cb = self.ubah_widget.combo
-
-                    # set nilainya
-                    if hasattr(cb, "setCurrentCode"):
-                        cb.setCurrentCode("U")
-                    elif hasattr(cb, "setCurrentText"):
-                        cb.setCurrentText("U")
-
-                    # 🟠 panggil simulasi klik agar label internalnya ikut berubah
-                    self._simulate_combo_activation()
-
-        except Exception as e:
-            print(f"[WARN] Gagal menandai KET jadi U: {e}")
-
+        pass
 
     def _simulate_combo_activation(self):
         """Fungsi bantuan untuk memicu event klik/aktivasi pada combobox 'Keterangan Ubah' tanpa ganggu fokus."""
@@ -3712,6 +3779,24 @@ class DetailInformasiPemilihDialog(QDialog):
                 val = self._data[k.lower()]
                 return "" if val is None else str(val)
         return default
+
+    # ============================================================
+    # 🔧 NORMALIZER: AUTO UPPERCASE & NAMA SEBELUM KOMA
+    # ============================================================
+
+    def _auto_upper(self, txt: str) -> str:
+        """Return txt dalam huruf kapital penuh."""
+        return txt.upper() if txt else ""
+
+    def _auto_upper_before_comma(self, txt: str) -> str:
+        """Kapital otomatis hanya sebelum koma, setelah koma dibiarkan."""
+        if not txt:
+            return ""
+        if "," in txt:
+            before, after = txt.split(",", 1)
+            return before.strip().upper() + ", " + after.lstrip()
+        else:
+            return txt.upper()
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -3804,6 +3889,16 @@ class DetailInformasiPemilihDialog(QDialog):
         lahir_layout.setSpacing(12)
         self.tempat_widget = FloatingLabelLineEdit("Tempat Lahir", self.get_value("TMPT_LHR", "TEMPAT LAHIR"))
         self.tanggal_widget = FloatingLabelLineEdit("Tanggal Lahir", self.get_value("TGL_LHR", "TANGGAL LAHIR"))
+
+        # === AUTO FORMAT REALTIME UNTUK TANGGAL LAHIR ===
+        try:
+            le = self.tanggal_widget.line_edit
+            le.textEdited.connect(
+                lambda txt: le.setText(self._normalize_tgl_input(txt))
+            )
+        except:
+            print("[WARN] Tidak bisa sambungkan auto-format tanggal lahir")
+
         lahir_layout.addWidget(self.tempat_widget)
         lahir_layout.addWidget(self.tanggal_widget)
 
@@ -3840,14 +3935,14 @@ class DetailInformasiPemilihDialog(QDialog):
         right_layout.setSpacing(12)
 
         # Untuk Keterangan Ubah (dengan deskripsi)
-        current_ket = self.get_value("KET", default="U")
+        current_ket = self.get_value("KET") or "U"
         self.ubah_widget = FloatingLabelComboBox(
             "Keterangan Ubah",
             [],
-            current_ket,
+            current_ket,        # selalu punya nilai
             description_mode=True,
             mapping=self.ket_mapping,
-            locked_value="0"  # "0" tidak akan muncul di dropdown
+            locked_value=None   # JANGAN IZINKAN KOSONG
         )
 
         # === Disabilitas dan Status KTP-El ===
@@ -3873,8 +3968,7 @@ class DetailInformasiPemilihDialog(QDialog):
         dis_layout.addWidget(self.ktp_widget)
 
         # Sumber Data (editable)
-        self.sumber_widget = FloatingLabelComboBox("Sumber Data", [], self.get_value("SUMBER"))
-        self.sumber_widget.combo.setEditable(True)
+        self.sumber_widget = FloatingLabelLineEdit("Sumber Data", self.get_value("SUMBER"))
 
         right_layout.addWidget(self.ubah_widget)
         right_layout.addLayout(dis_layout)
@@ -3953,34 +4047,111 @@ class DetailInformasiPemilihDialog(QDialog):
                 self.kawin_widget,
                 self.dis_widget,
                 self.ktp_widget,
-                self.sumber_widget
+                #self.sumber_widget
             ]:
                 if hasattr(c, "combo"):
                     c.combo.currentIndexChanged.connect(self._mark_as_ubah)
                     c.combo.editTextChanged.connect(self._mark_as_ubah)
+
         except Exception as e:
             print(f"[INIT WARN] gagal sambung sinyal realtime ubah: {e}")
 
-    def toggle_edit_mode(self):
-        """Simpan perubahan data ke database (aman untuk semua jenis widget)."""
+        # ============================================================
+        # 🔥 AUTO FORMAT REALTIME FIELD TERTENTU (ANTI LOOP)
+        # ============================================================
         try:
-            # === Ambil kode dari custom combobox ===
-            ket_value = (self.ubah_widget.combo.currentCode() or "").strip()
-            dis_value = (self.dis_widget.combo.currentCode() or "").strip()
-            ktp_value = (self.ktp_widget.combo.currentText() or "").strip()
+            # TEMPAT LAHIR → FULL UPPERCASE
+            self.tempat_widget.line_edit.textChanged.connect(
+                lambda t: (
+                    self.tempat_widget.line_edit.setText(self._auto_upper(t))
+                    if t != self._auto_upper(t) else None
+                )
+            )
 
-            # === Beri default untuk nilai kosong ===
-            if not ket_value:
-                ket_value = "U"
-            if not dis_value:
-                dis_value = "0"
-            if not ktp_value or ktp_value == "Status KTP-El (B/S)":
-                ktp_value = ""
+            # ALAMAT → FULL UPPERCASE
+            self.alamat_widget.line_edit.textChanged.connect(
+                lambda t: (
+                    self.alamat_widget.line_edit.setText(self._auto_upper(t))
+                    if t != self._auto_upper(t) else None
+                )
+            )
 
-            # --- Ambil timestamp sekarang ---
-            current_timestamp = datetime.now().strftime("%d/%m/%Y")
+            # SUMBER DATA (editable combo) → FULL UPPERCASE
+            self.sumber_widget.line_edit.textChanged.connect(
+                lambda t: (
+                    self.sumber_widget.line_edit.setText(self._auto_upper(t))
+                    if t != self._auto_upper(t) else None
+                )
+            )
 
-            # === Susun data untuk disimpan ===
+            # NAMA LENGKAP → KAPITAL SEBELUM KOMA
+            self.nama_widget.line_edit.textChanged.connect(
+                lambda t: (
+                    self.nama_widget.line_edit.setText(self._auto_upper_before_comma(t))
+                    if t != self._auto_upper_before_comma(t) else None
+                )
+            )
+
+        except Exception as e:
+            print(f"[AUTOFORMAT WARN] gagal sambungkan auto-format: {e}")
+
+    def _normalize_tgl_input(self, text: str) -> str:
+        """Normalisasi input tanggal menjadi format dd|mm|yyyy."""
+        if not text:
+            return ""
+
+        # Ganti semua pemisah / - . spasi menjadi |
+        clean = (
+            text.replace("/", "|")
+                .replace("-", "|")
+                .replace(".", "|")
+                .replace(" ", "|")
+        )
+
+        parts = clean.split("|")
+
+        # Jika belum lengkap → jangan diubah dulu
+        if len(parts) != 3:
+            return clean
+
+        dd_raw, mm_raw, yy_raw = parts
+
+        # Pastikan semua bagian angka
+        if not (dd_raw.isdigit() and mm_raw.isdigit() and yy_raw.isdigit()):
+            return clean
+
+        # Auto-fix hari/bulan
+        try:
+            dd = int(dd_raw)
+            mm = int(mm_raw)
+            yyyy = int(yy_raw)
+
+            # Kembalikan format rapi
+            return f"{dd:02d}|{mm:02d}|{yyyy}"
+        except:
+            return clean
+
+    def toggle_edit_mode(self):
+        """Simpan perubahan data ke database — KHUSUS KET 1–8: ambil *_ASAL dari DATABASE, 
+        tetapi SUMBER tetap dari UI (tidak di-rollback)."""
+        try:
+            g = getattr
+            c = self.get_value
+
+            ket_value = (self.ubah_widget.combo.currentCode() or "").strip() or "U"
+            dis_value = (self.dis_widget.combo.currentCode() or "").strip() or "0"
+
+            ktp_raw = (self.ktp_widget.combo.currentText() or "").strip()
+            ktp_value = "" if (not ktp_raw or ktp_raw == "Status KTP-El (B/S)") else ktp_raw
+
+            tps_combo = getattr(self.tps_widget, "combo", None)
+
+            # SIMPAN SUMBER DARI UI DULU (penting!)
+            sumber_ui = (self.sumber_widget.line_edit.text() or "").strip()
+
+            now = datetime.now().strftime("%d/%m/%Y")
+
+            # === BUILD DICT DARI UI TERLEBIH DULU ===
             updated_data = {
                 "NKK": self.nkk_widget.line_edit.text().strip(),
                 "NIK": self.nik_widget.line_edit.text().strip(),
@@ -3995,112 +4166,254 @@ class DetailInformasiPemilihDialog(QDialog):
                 "KET": ket_value,
                 "DIS": dis_value,
                 "KTPel": ktp_value,
-                "SUMBER": (self.sumber_widget.combo.currentText() or "").strip(),
-                "TPS": (
-                    self.tps_widget.combo.currentText().strip()
-                    if hasattr(self.tps_widget, "combo")
-                    else ""
-                ),
-                "LastUpdate": current_timestamp,
+                "SUMBER": sumber_ui,            # ⬅⬅⬅ PENTING, SUMBER DARI UI
+                "TPS": (tps_combo.currentText().strip() if tps_combo else ""),
+                "LastUpdate": now,
             }
 
-            # === Jika KET = 1–8, isi JK dan TPS dari *_ASAL
-            try:
-                if updated_data["KET"] in ("1", "2", "3", "4", "5", "6", "7", "8"):
-                    jk_asal = (self.get_value("JK_ASAL", "") or "").strip().upper()
-                    tps_asal = (str(self.get_value("TPS_ASAL", "") or "").strip())
+            ket_code = updated_data["KET"]
 
-                    if jk_asal:
-                        updated_data["JK"] = jk_asal
-                        self.jk_widget.combo.setCurrentText(jk_asal)
+            # ===============================================================
+            # 🔥 KET 1–8 → rollback seluruh kolom *_ASAL dari DATABASE
+            #     TAPI SUMBER HARUS TETAP NILAI UI
+            # ===============================================================
+            if ket_code in ("1","2","3","4","5","6","7","8"):
 
-                    if tps_asal:
-                        updated_data["TPS"] = tps_asal
-                        if hasattr(self.tps_widget, "combo"):
-                            cb = self.tps_widget.combo
-                            # Pastikan item TPS_ASAL ada agar tidak error
-                            if cb.findText(tps_asal) < 0:
-                                cb.addItem(tps_asal)
-                            cb.setCurrentText(tps_asal)
-            except Exception as e:
-                print(f"[DEBUG] Gagal menyalin JK/TPS asal: {e}")
+                dpid = (self._data.get("DPID", "") or "").strip()
 
-            # === Validasi data ===
-            validation_errors = self._validate_data(updated_data)
-            if validation_errors:
-                QMessageBox.warning(
-                    self,
-                    "Validasi Gagal",
-                    "Data tidak valid:\n" + "\n".join(validation_errors),
-                )
+                mw = self.main_window
+                if not mw:
+                    QMessageBox.warning(self, "Error", "MainWindow tidak ditemukan.")
+                    return
+
+                tbl = mw._active_table()
+
+                if not dpid or not tbl:
+                    QMessageBox.warning(self, "Error", "DPID atau tabel aktif tidak valid.")
+                    return
+
+                conn = get_connection()
+                conn.row_factory = sqlcipher.Row
+                cur = conn.cursor()
+
+                cur.execute(f"""
+                    SELECT 
+                        NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                        TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL,
+                        ALAMAT_ASAL, RT_ASAL, RW_ASAL, DIS_ASAL,
+                        KTPel_ASAL, TPS_ASAL
+                    FROM {tbl}
+                    WHERE DPID = ?
+                """, (dpid,))
+
+                r = cur.fetchone()
+                if not r:
+                    QMessageBox.warning(self, "Error", "Data ASAL tidak ditemukan di database.")
+                    return
+
+                # 🔥 SUMBER TIDAK ADA DI SINI — AGAR SUMBER TETAP UI!
+                asal_map = {
+                    "NKK":      (r["NKK_ASAL"]      or "").strip(),
+                    "NIK":      (r["NIK_ASAL"]      or "").strip(),
+                    "NAMA":     (r["NAMA_ASAL"]     or "").strip(),
+                    "JK":       (r["JK_ASAL"]       or "").strip(),
+                    "TMPT_LHR": (r["TMPT_LHR_ASAL"] or "").strip(),
+                    "TGL_LHR":  (r["TGL_LHR_ASAL"]  or "").strip(),
+                    "STS":      (r["STS_ASAL"]      or "").strip(),
+                    "ALAMAT":   (r["ALAMAT_ASAL"]   or "").strip(),
+                    "RT":       (r["RT_ASAL"]       or "").strip(),
+                    "RW":       (r["RW_ASAL"]       or "").strip(),
+                    "DIS":      (r["DIS_ASAL"]      or "").strip(),
+                    "KTPel":    (r["KTPel_ASAL"]    or "").strip(),
+                    # ❌ "SUMBER" TIDAK DIISI — biarkan SUMBER = UI
+                    "TPS":      (r["TPS_ASAL"]      or "").strip(),
+                }
+
+                # Timpa seluruh data UI dengan *_ASAL, kecuali SUMBER
+                updated_data.update(asal_map)
+
+                # Pulihkan SUMBER UI (supaya tidak ketimpa)
+                updated_data["SUMBER"] = sumber_ui
+
+                # Sinkronkan ke widget
+                self.nkk_widget.line_edit.setText(asal_map["NKK"])
+                self.nik_widget.line_edit.setText(asal_map["NIK"])
+                self.nama_widget.line_edit.setText(asal_map["NAMA"])
+                self.tempat_widget.line_edit.setText(asal_map["TMPT_LHR"])
+                self.tanggal_widget.line_edit.setText(asal_map["TGL_LHR"])
+                self.alamat_widget.line_edit.setText(asal_map["ALAMAT"])
+                self.rt_widget.line_edit.setText(asal_map["RT"])
+                self.rw_widget.line_edit.setText(asal_map["RW"])
+                self.jk_widget.combo.setCurrentText(asal_map["JK"])
+                self.kawin_widget.combo.setCurrentText(asal_map["STS"])
+
+                # SUMBER UI HARUS TETAP
+                self.sumber_widget.line_edit.setText(sumber_ui)
+
+                # TPS
+                if tps_combo:
+                    asal_tps = asal_map["TPS"]
+                    if tps_combo.findText(asal_tps) < 0:
+                        tps_combo.addItem(asal_tps)
+                    tps_combo.setCurrentText(asal_tps)
+
+            # ============================================================
+            # Validasi tetap sama
+            # ============================================================
+            errors = self._validate_data(updated_data)
+            if errors:
+                QMessageBox.warning(self, "Validasi Gagal", "Data tidak valid:\n" + "\n".join(errors))
                 return
 
-            # === Simpan ke database ===
+            # ============================================================
+            # SAVE TO DATABASE — identik
+            # ============================================================
             if self._save_to_database(updated_data):
                 self._data.update(updated_data)
 
-                # === Refresh ringan di MainWindow ===
-                if self.main_window:
-                    if hasattr(self.main_window, "load_data_setelah_hapus"):
-                        self.main_window.load_data_setelah_hapus()
-                    if hasattr(self.main_window, "_refresh_setelah_hapus"):
-                        QTimer.singleShot(150, lambda: self.main_window._refresh_setelah_hapus())
+                mw = self.main_window
+                if mw:
+                    if hasattr(mw, "load_data_setelah_hapus"):
+                        mw.load_data_setelah_hapus()
+                    if hasattr(mw, "_refresh_setelah_hapus"):
+                        QTimer.singleShot(150, lambda: mw._refresh_setelah_hapus())
 
                 QMessageBox.information(self, "Berhasil", "Data berhasil disimpan ke database!")
+
                 self._update_main_window_data(updated_data)
 
+                # Nikah muda warning
+                if self._usia_menikah_muda:
+                    usia = self._usia_menikah_muda_umur
+                    sts  = self._usia_menikah_muda_status
+                    sts_text = "Sudah Kawin" if sts == "S" else "Pernah Kawin"
+
+                    QMessageBox.warning(
+                        self,
+                        "Pemilih berusia di bawah 17 tahun",
+                        f"Pemilih berusia {usia} tahun dan {sts_text}.\n"
+                        "Harap periksa kembali data anda."
+                    )
+
         except Exception as e:
-            print(f"[ERROR] Error di toggle_edit_mode: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Terjadi kesalahan:\n{str(e)}")
+            print(f"[ERROR] toggle_edit_mode super kilat: {e}")
+            QMessageBox.critical(self, "Error", f"Terjadi kesalahan:\n{e}")
 
     def _populate_dropdowns(self):
-        """Mengisi dropdown dari database atau sumber data lain"""
-        if not self.main_window:
-            self.sumber_widget.combo.addItems(["Sumber Data"])
-            return
-
-        try:
-            current_sumber = self.get_value("SUMBER", "")
-            sumber_list = self.main_window.get_distinct_sumber()
-            
-            self.sumber_widget.combo.clear()
-            
-            placeholder_text = "Pilih atau ketik Sumber Data..."
-            if sumber_list:
-                placeholder_text = sumber_list.pop(0)
-                
-            self.sumber_widget.combo.addItems(sumber_list)
-            self.sumber_widget.combo.setPlaceholderText(placeholder_text)
-            
-            if current_sumber in sumber_list:
-                self.sumber_widget.combo.setCurrentText(current_sumber)
-            elif current_sumber: 
-                self.sumber_widget.combo.setCurrentText(current_sumber)
-            else:
-                self.sumber_widget.combo.setCurrentIndex(-1) 
-
-        except Exception as e:
-            self.sumber_widget.combo.clear()
-            self.sumber_widget.combo.setPlaceholderText("Sumber Data")
+        """Mengisi dropdown SUMBER secara murni dari get_distinct_sumber()."""
+        pass
 
     def _validate_data(self, data):
-        """Validasi data sebelum simpan"""
+        """Validasi data sebelum simpan."""
         errors = []
-        
+        # Reset flag peringatan nikah muda
+        self._usia_menikah_muda = False
+
+        # ============================================================
+        # VALIDASI KHUSUS: Keterangan Ubah kosong atau "0" → TOLAK
+        # ============================================================
+        ket = (data.get("KET") or "").strip()
+
+        # ComboBox tanpa pilihan → locked_value = "0"
+        if data["KET"] == "0":
+            errors.append("Masukkan kode perubahan data")
+            return errors
+
+        # ============================================================
+        # VALIDASI DASAR
+        # ============================================================
         if data["NIK"] and len(data["NIK"]) != 16:
             errors.append("NIK harus 16 digit")
-        
+
         if data["NKK"] and len(data["NKK"]) != 16:
             errors.append("NKK harus 16 digit")
-        
+
         if not data["NAMA"].strip():
             errors.append("Nama tidak boleh kosong")
-        
+
         if data["JK"] not in ["L", "P"]:
             errors.append("Jenis Kelamin harus L atau P")
-        
+
+        # ============================================================
+        # VALIDASI TANGGAL LAHIR — format dd|mm|yyyy
+        # ============================================================
+        raw_tgl = (data.get("TGL_LHR") or "").strip()
+
+        if raw_tgl and "|" in raw_tgl:
+            parts = raw_tgl.split("|")
+
+            if len(parts) == 3:
+                dd_raw, mm_raw, yy_raw = parts
+                try:
+                    dd = int(dd_raw)
+                    mm = int(mm_raw)
+                    yyyy = int(yy_raw)
+
+                    # Tahun harus 4 digit
+                    if not (1000 <= yyyy <= 9999):
+                        errors.append("Tahun lahir harus 4 digit (yyyy).")
+                        return errors
+
+                    # Minimal 1880
+                    if yyyy < 1880:
+                        errors.append("Tahun lahir invalid")
+                        return errors
+
+                    # Validasi tanggal real
+                    import calendar
+                    if not (1 <= mm <= 12):
+                        errors.append("Bulan lahir tidak valid (1–12)")
+                        return errors
+
+                    days_in_month = calendar.monthrange(yyyy, mm)[1]
+                    if not (1 <= dd <= days_in_month):
+                        errors.append(
+                            f"Tanggal lahir tidak valid untuk bulan tersebut (maks {days_in_month})"
+                        )
+                        return errors
+
+                    # Hitung usia
+                    tgl_lahir = datetime(yyyy, mm, dd)
+                    target_date = datetime(2029, 6, 26)
+
+                    usia_tahun = target_date.year - tgl_lahir.year
+                    if (target_date.month, target_date.day) < (tgl_lahir.month, tgl_lahir.day):
+                        usia_tahun -= 1
+
+                    current_sts = (data.get("STS") or "").strip().upper()
+
+                    # =====================================================
+                    # PRIORITAS VALIDASI USIA
+                    # =====================================================
+
+                    if usia_tahun < 6:
+                        errors.append(
+                            f"Usia pemilih {usia_tahun} tahun, Cek kembali Data Pemilih anda!"
+                        )
+
+                    elif usia_tahun < 17 and current_sts == "B":
+                        errors.append(
+                            f"Pemilih berusia {usia_tahun} tahun dan Belum Kawin!"
+                        )
+
+                    # =====================================================
+                    # Jika usia 6–16 tetapi STS = S atau P → beri peringatan
+                    # =====================================================
+                    elif 6 <= usia_tahun < 17 and current_sts in ("S", "P"):
+                        self._usia_menikah_muda = True
+                        self._usia_menikah_muda_umur = usia_tahun
+                        self._usia_menikah_muda_status = current_sts
+
+                    # Auto-fix format
+                    data["TGL_LHR"] = f"{dd:02d}|{mm:02d}|{yyyy}"
+
+                except Exception:
+                    errors.append("Format tanggal lahir tidak valid (harus dd|mm|yyyy)")
+            else:
+                errors.append("Format tanggal lahir tidak valid (harus dd|mm|yyyy)")
+        else:
+            errors.append("Tanggal lahir tidak valid atau kosong")
+
         return errors
 
     def _save_to_database(self, updated_data):
@@ -4272,8 +4585,25 @@ class LoginWindow(QMainWindow):
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         form_layout.addWidget(logo_label)
 
-        # === Teks judul ===
-        title_label = QLabel("KOMISI PEMILIHAN UMUM<br>KABUPATEN TASIKMALAYA")
+        # --- Ambil teks wilayah ---
+        nama_kab = _get_user_kabupaten().strip()
+
+        # 1. Jika kosong → default: PROVINSI JAWA BARAT
+        if not nama_kab:
+            wilayah_final = "PROVINSI JAWA BARAT"
+
+        else:
+            nama_up = nama_kab.upper()
+
+            # 2. Jika mengandung KOTA → langsung pakai
+            if "KOTA" in nama_up:
+                wilayah_final = nama_up
+            else:
+                # 3. Bukan kota → tambahkan KABUPATEN
+                wilayah_final = f"KABUPATEN {nama_up}"
+
+        # Masukkan ke label
+        title_label = QLabel(f"KOMISI PEMILIHAN UMUM<br>{wilayah_final}")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("""
             QLabel {
@@ -4497,45 +4827,42 @@ class LoginWindow(QMainWindow):
             return
 
         # ============================================================
-        # 🔐 Login ke database terenkripsi
+        # 🔐 Login ke database terenkripsi (aman, 1 koneksi global)
         # ============================================================
-        try:
-            from db_manager import connect_encrypted
-            conn = connect_encrypted()
-            cur = conn.cursor()
+        from db_manager import with_safe_db
 
+        @with_safe_db
+        def _ambil_user(email, hashed_pw, *, conn=None):
+            cur = conn.cursor()
             # Pastikan tabel users ada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nama TEXT,
                     email TEXT,
+                    kabupaten TEXT,
                     kecamatan TEXT,
                     desa TEXT,
                     password TEXT,
                     otp_secret TEXT
                 )
             """)
-
-            salted_input = (pw + email).encode("utf-8")
-            hashed_pw = hashlib.sha256(salted_input).hexdigest()
-
             cur.execute(
-                "SELECT id, nama, kecamatan, desa, otp_secret FROM users WHERE email=? AND password=?",
+                "SELECT id, nama, kabupaten, kecamatan, desa, otp_secret FROM users WHERE email=? AND password=?",
                 (email, hashed_pw)
             )
-            row = cur.fetchone()
+            return cur.fetchone()
 
+        try:
+            salted_input = (pw + email).encode("utf-8")
+            hashed_pw = hashlib.sha256(salted_input).hexdigest()
+            row = _ambil_user(email, hashed_pw)
             if not row:
                 overlay = buat_overlay(20)
                 show_modern_warning(self, "Login Gagal", "Email atau password salah!")
                 hapus_overlay(overlay)
-                conn.commit()
                 return
-
-            user_id, nama, kecamatan, desa, otp_secret = row
-            conn.commit()
-
+            user_id, nama, kabupaten, kecamatan, desa, otp_secret = row
         except Exception as e:
             overlay = buat_overlay(20)
             show_modern_error(self, "Error", f"Terjadi kesalahan saat login:\n{e}")
@@ -4543,15 +4870,20 @@ class LoginWindow(QMainWindow):
             return
 
         # ============================================================
-        # 1️⃣ Login pertama (belum ada OTP)
+        # 1️⃣ Login pertama (belum ada OTP) → buat & tampilkan QR
         # ============================================================
         if not otp_secret:
             import pyotp, qrcode
             from io import BytesIO
 
             otp_secret = pyotp.random_base32()
-            cur.execute("UPDATE users SET otp_secret=? WHERE id=?", (otp_secret, user_id))
-            conn.commit()
+
+            @with_safe_db
+            def _simpan_secret(user_id, secret, *, conn=None):
+                cur = conn.cursor()
+                cur.execute("UPDATE users SET otp_secret=? WHERE id=?", (secret, user_id))
+
+            _simpan_secret(user_id, otp_secret)
 
             totp = pyotp.TOTP(otp_secret)
             account_label = f"NexVo: {email}"
@@ -4611,9 +4943,6 @@ class LoginWindow(QMainWindow):
 
             qr_dialog.finished.connect(lambda: hapus_overlay(overlay))
             qr_dialog.exec()
-
-        else:
-            conn.commit()
 
         # ============================================================
         # 2️⃣ Verifikasi OTP Modern (dengan blur)
@@ -4689,15 +5018,12 @@ class LoginWindow(QMainWindow):
         def do_verify():
             """Verifikasi OTP dengan proteksi anti-dobel dan efek khas NexVo."""
             from PyQt6.QtCore import QTimer
-            import pyotp
-
-            # 👉 Tunda 1 tick agar Qt sempat update flag sebelum event berikut
             QTimer.singleShot(0, lambda: _do_verify_impl())
 
         def _do_verify_impl():
             import pyotp
             if verifying["in_progress"]:
-                return  # ⛔ cegah event ganda
+                return
             verifying["in_progress"] = True
 
             code = otp_input.text().strip()
@@ -4714,30 +5040,27 @@ class LoginWindow(QMainWindow):
                 overlay_err = buat_overlay(16)
                 show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
                 hapus_overlay(overlay_err)
-                # 🔹 Efek getar khas NexVo
                 shake_widget(otp_input)
                 otp_input.setFocus()
                 otp_input.selectAll()
                 verifying["in_progress"] = False
                 return
 
-            # ✅ OTP valid — jangan reset flag supaya event kedua diabaikan
             otp_dialog.accept()
 
         btn_verify.clicked.connect(do_verify)
         otp_input.returnPressed.connect(do_verify)
-
         otp_dialog.finished.connect(lambda: hapus_overlay(overlay))
 
         if otp_dialog.exec() == QDialog.DialogCode.Accepted:
-            self.accept_login(nama, kecamatan, desa, tahapan)
-
+            self.accept_login(nama, kabupaten, kecamatan, desa, tahapan)
             
     # Konfirmasi Pembuatan akun
     def konfirmasi_buat_akun(self):
         """Konfirmasi pembuatan akun baru, dengan OTP jika tabel users berisi data."""
         from PyQt6.QtWidgets import QWidget, QGraphicsBlurEffect
         import pyotp
+        from db_manager import with_safe_db
 
         def buat_overlay(blur_radius=15):
             overlay = QWidget(self)
@@ -4752,23 +5075,16 @@ class LoginWindow(QMainWindow):
             return overlay
 
         # =========================================================
-        # 🧩 Pastikan koneksi database aktif
+        # 🔍 1️⃣ Periksa isi tabel users (aman 1 koneksi global)
         # =========================================================
-        if self.conn is None:
-            try:
-                from db_manager import get_connection
-                self.conn = get_connection()
-            except Exception as e:
-                show_modern_error(self, "Error Database", f"Gagal membuka koneksi database:\n{e}")
-                return
-
-        # =========================================================
-        # 🔍 1️⃣ Periksa isi tabel users
-        # =========================================================
-        try:
-            cur = self.conn.cursor()
+        @with_safe_db
+        def _ambil_otp_secret(*, conn=None):
+            cur = conn.cursor()
             cur.execute("SELECT otp_secret FROM users LIMIT 1")
-            row = cur.fetchone()
+            return cur.fetchone()
+
+        try:
+            row = _ambil_otp_secret()
         except Exception as e:
             show_modern_error(self, "Error Database", f"Gagal membaca tabel users:\n{e}")
             return
@@ -4883,7 +5199,6 @@ class LoginWindow(QMainWindow):
 
                 code = result["val"]
                 if not code:
-                    #show_modern_info(self, "Dibatalkan", "Verifikasi OTP dibatalkan.")
                     return
 
                 if totp.verify(code, valid_window=1):
@@ -4897,7 +5212,7 @@ class LoginWindow(QMainWindow):
                 return
 
         # =========================================================
-        # 🌫️ 3️⃣ Konfirmasi pembuatan akun (seperti biasa)
+        # 🌫️ 3️⃣ Konfirmasi pembuatan akun
         # =========================================================
         overlay = buat_overlay(15)
         try:
@@ -4919,19 +5234,22 @@ class LoginWindow(QMainWindow):
         # =========================================================
         # 🧹 5️⃣ Hapus data lama & buka RegisterWindow
         # =========================================================
-        hapus_semua_data(self.conn)
+        conn = get_connection()
+        hapus_buat_akun(conn)
+        print("[INFO] Semua data berhasil dihapus (kecuali tabel 'kecamatan').")
         self.register_window = RegisterWindow(None)
         self.register_window.show()
         self.close()
 
     # === Masuk ke MainWindow ===
-    def accept_login(self, nama, kecamatan, desa, tahapan):
+    def accept_login(self, nama, kabupaten, kecamatan, desa, tahapan):
         """Masuk ke halaman utama setelah login sukses."""
         tahapan = tahapan.upper()
 
-        # ✅ Pastikan koneksi database aktif
-        if self.conn is None:
+        # ✅ Pastikan koneksi database aktif (gunakan koneksi global)
+        if getattr(self, "conn", None) is None:
             try:
+                from db_manager import get_connection
                 self.conn = get_connection()
             except Exception as e:
                 show_modern_error(self, "Error DB", f"Gagal membuka koneksi database:\n{e}")
@@ -4964,9 +5282,21 @@ class LoginWindow(QMainWindow):
                     SUMBER TEXT,
                     KET TEXT,
                     TPS TEXT,
-                    LastUpdate TEXT,
+                    LastUpdate DATETIME,
                     CEK_DATA TEXT,
+                    NKK_ASAL TEXT,
+                    NIK_ASAL TEXT,
+                    NAMA_ASAL TEXT,
                     JK_ASAL TEXT,
+                    TMPT_LHR_ASAL TEXT,
+                    TGL_LHR_ASAL TEXT,
+                    STS_ASAL TEXT,
+                    ALAMAT_ASAL TEXT,
+                    RT_ASAL TEXT,
+                    RW_ASAL TEXT,
+                    DIS_ASAL TEXT,
+                    KTPel_ASAL TEXT,
+                    SUMBER_ASAL TEXT,
                     TPS_ASAL TEXT
                 )
             """)
@@ -4978,21 +5308,37 @@ class LoginWindow(QMainWindow):
         # === Tampilkan jendela utama ===
         try:
             self.main_window = MainWindow(
-                nama.upper(), kecamatan.upper(), desa.upper(), str(DB_PATH), tahapan.upper()
+                nama.upper(),
+                kabupaten.upper(),
+                kecamatan.upper(),
+                desa.upper(),
+                str(DB_PATH),
+                tahapan.upper()
             )
             self.main_window.show()
 
             # ✅ Tunda sedikit agar fullscreen dan tabel stabil
-            QTimer.singleShot(50, self.main_window.showMaximized)
+            QTimer.singleShot(30, self.main_window.showMaximized)
 
-            # ✅ Jalankan setup load/fit kolom
-            QTimer.singleShot(600, self._setup_column_widths_after_login)
+            # Setup kolom setelah tabel siap
+            QTimer.singleShot(200, self._setup_column_widths_after_login)
+
+            # Sembunyikan kolom sensitif sedikit setelahnya
+            QTimer.singleShot(230, self._hide_sensitive_columns_after_login)
+
 
             # ✅ Tutup login window
             self.close()
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka halaman utama:\n{e}")
+
+    def _hide_sensitive_columns_after_login(self):
+        try:
+            if hasattr(self, "main_window"):
+                self.main_window.hide_sensitive_columns()
+        except Exception as e:
+            print(f"[WARN] hide_sensitive_columns gagal: {e}")
 
     def _setup_column_widths_after_login(self):
         """Jalankan load_column_widths(), dan jika belum ada → auto_fit_visible_columns()."""
@@ -5286,8 +5632,8 @@ class ResetPasswordDialog(QDialog):
             return
 
         try:
-            from db_manager import connect_encrypted
-            conn = connect_encrypted()
+            from db_manager import get_connection
+            conn = get_connection()
             cur = conn.cursor()
             cur.execute("SELECT otp_secret FROM users WHERE email=?", (email,))
             row = cur.fetchone()
@@ -5339,15 +5685,16 @@ class HoverDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
 
         # 🌟 Warna background seleksi dari palet (biar ikut highlight kuning lembut)
-        if opt.state & QStyle.StateFlag.State_Selected:
-            painter.save()
-            painter.fillRect(opt.rect, opt.palette.highlight())
-            painter.restore()
+        #if opt.state & QStyle.StateFlag.State_Selected:
+        #    painter.save()
+        #    painter.fillRect(opt.rect, opt.palette.highlight())
+        #    painter.restore()
 
         # 🌟 Efek hover (hanya jika tidak diseleksi)
         if index.row() == self.hovered_row and not (opt.state & QStyle.StateFlag.State_Selected):
             painter.save()
-            hover_color = QColor(255, 247, 194, 120)  # kuning lembut transparan 255, 247, 194, 120
+            hover_color = QColor(255, 247, 194, 120)  # kuning lembut transparan 
+            
             painter.fillRect(opt.rect, hover_color)
             painter.restore()
 
@@ -5370,15 +5717,8 @@ class CustomTable(QTableWidget):
 BACKUP_DIR = Path("C:/NexVo/BackUp")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-
-def _derive_key_from_otp(otp_code: str, otp_secret: str) -> bytes:
-    """Turunkan kunci AES-256 dari kombinasi OTP dan secret."""
-    salt = hashlib.sha256(otp_secret.encode()).digest()
-    key = PBKDF2(otp_code, salt, dkLen=32, count=100_000)
-    return key
-
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.bakx) menyertakan database, key, dan OTP secret (SQLCipher safe)."""
+    """Backup lengkap NexVo (.bakx) termasuk database, key, OTP secret, dan file JSON pengaturan kolom."""
     ensure_dirs()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -5386,11 +5726,11 @@ def backup_nexvo(parent=None):
     conn = get_connection()
     cur = conn.cursor()
 
-    # ✅ Pastikan semua perubahan tersimpan dan file siap di-flush
+    # ✅ Pastikan database dalam keadaan bersih
     try:
-        conn.commit()  # commit transaksi aktif
-        cur.execute("PRAGMA wal_checkpoint(FULL)")  # flush WAL → db bersih
-        cur.execute("PRAGMA optimize")               # bersihkan cache
+        conn.commit()
+        cur.execute("PRAGMA wal_checkpoint(FULL)")
+        cur.execute("PRAGMA optimize")
         print("[BACKUP] Semua transaksi SQLCipher telah di-commit & WAL di-flush.")
     except Exception as e:
         print("[BACKUP WARNING] Gagal melakukan checkpoint/commit:", e)
@@ -5403,7 +5743,7 @@ def backup_nexvo(parent=None):
         return
     otp_secret = row[0]
 
-    # === Verifikasi OTP user ===
+    # === Verifikasi OTP ===
     import pyotp
     code, ok = ModernInputDialog(
         "Verifikasi OTP",
@@ -5418,33 +5758,55 @@ def backup_nexvo(parent=None):
         show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
         return
 
-    # === Kompres seluruh file penting ke memori ===
+    # === Path file JSON yang ikut dibackup ===
+    from pathlib import Path
+    appdata_path = Path(APPDATA) / "NexVo"
+    json_files = {
+        "column_widths_datapantarlih.json": appdata_path / "column_widths_datapantarlih.json",
+        "column_widths_unggahreguler.json": appdata_path / "column_widths_unggahreguler.json",
+        "NexVo/column_widths.json": appdata_path / "NexVo" / "column_widths.json",
+    }
+
+    # === Kompres seluruh file penting ke buffer ZIP ===
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 🔹 Database dan Key
         if DB_PATH.exists():
             zf.write(DB_PATH, "nexvo.db")
         else:
             print("[BACKUP WARNING] Database tidak ditemukan:", DB_PATH)
+
         if KEY_PATH.exists():
             zf.write(KEY_PATH, "nexvo.key")
         else:
             print("[BACKUP WARNING] File key tidak ditemukan:", KEY_PATH)
+
+        # 🔹 File JSON pengaturan kolom
+        for name, path in json_files.items():
+            try:
+                if path.exists():
+                    zf.write(path, name)
+                    print(f"[BACKUP] Termasuk file JSON: {name}")
+                else:
+                    print(f"[BACKUP WARNING] File JSON tidak ditemukan: {path}")
+            except Exception as e:
+                print(f"[BACKUP WARNING] Gagal menambahkan {path}: {e}")
+
+        # 🔹 Metadata
         zf.writestr("otp.secret", otp_secret)
         zf.writestr("meta.txt", f"Backup dibuat: {datetime.now()}")
 
     data = buf.getvalue()
 
-    # === Enkripsi AES-GCM dan embed OTP secret di header ===
+    # === Enkripsi AES-GCM ===
     salt = os.urandom(16)
     key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
     iv = os.urandom(12)
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    # === Simpan file backup ===
     secret_bytes = otp_secret.encode()
     secret_len = len(secret_bytes).to_bytes(2, "big")
-
     backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.bakx"
     backup_path = BACKUP_DIR / backup_name
 
@@ -5455,7 +5817,7 @@ def backup_nexvo(parent=None):
 
 
 def restore_nexvo(parent=None):
-    """Pulihkan seluruh data NexVo dari file .bakx, termasuk OTP secret bawaan file."""
+    """Pulihkan seluruh data NexVo dari file .bakx (termasuk database, key, OTP, dan file JSON pengaturan kolom)."""
     ensure_dirs()
 
     bakx_path = QFileDialog.getOpenFileName(
@@ -5471,7 +5833,7 @@ def restore_nexvo(parent=None):
         with open(bakx_path, "rb") as f:
             blob = f.read()
 
-        # === Baca header: secret_len, secret, salt, iv, tag, ciphertext ===
+        # === Header dekripsi ===
         secret_len = int.from_bytes(blob[:2], "big")
         otp_secret = blob[2:2 + secret_len].decode()
         salt = blob[2 + secret_len:18 + secret_len]
@@ -5479,7 +5841,6 @@ def restore_nexvo(parent=None):
         tag = blob[30 + secret_len:46 + secret_len]
         ciphertext = blob[46 + secret_len:]
 
-        # === Dekripsi dengan secret bawaan ===
         key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
         cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
         data = cipher.decrypt_and_verify(ciphertext, tag)
@@ -5491,7 +5852,7 @@ def restore_nexvo(parent=None):
         return
 
     try:
-        # === Ekstraksi ZIP hasil dekripsi ===
+        # === Ekstrak hasil ZIP ===
         temp_dir = Path(APPDATA) / "NexVoTempRestore"
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -5504,37 +5865,46 @@ def restore_nexvo(parent=None):
         restored_key = temp_dir / "nexvo.key"
         restored_otp = (temp_dir / "otp.secret").read_text().strip()
 
-        # === Pastikan folder tujuan ada ===
-        dest_db = DB_PATH
-        dest_key = KEY_PATH
-        (Path(APPDATA) / "NexVo").mkdir(parents=True, exist_ok=True)
-        (Path(APPDATA) / "Aplikasi").mkdir(parents=True, exist_ok=True)
+        # === JSON yang akan direstore ===
+        json_restore_map = {
+            temp_dir / "column_widths_datapantarlih.json": Path(APPDATA) / "NexVo" / "column_widths_datapantarlih.json",
+            temp_dir / "column_widths_unggahreguler.json": Path(APPDATA) / "NexVo" / "column_widths_unggahreguler.json",
+            temp_dir / "NexVo" / "column_widths.json": Path(APPDATA) / "NexVo" / "NexVo" / "column_widths.json",
+        }
 
-        # === Tutup koneksi aktif ===
+        # === Tutup koneksi database ===
         try:
             from db_manager import close_connection
             close_connection()
-            #print("[RESTORE] Koneksi database ditutup sebelum penggantian file.")
         except Exception as e:
-            print("[RESTORE WARNING] Tidak dapat menutup koneksi:", e)
+            print("[RESTORE WARNING] Tidak bisa menutup koneksi:", e)
 
-        import os, time
+        # === Hapus file lama (aman) ===
+        for target in [DB_PATH, KEY_PATH]:
+            try:
+                if target.exists():
+                    os.chmod(target, 0o666)
+                    target.unlink()
+            except Exception as e:
+                print(f"[RESTORE WARNING] Tidak dapat hapus {target}: {e}")
 
-        # === Hapus file lama dengan aman ===
-        for target in [dest_db, dest_key]:
-            for _ in range(3):
-                try:
-                    if target.exists():
-                        os.chmod(target, 0o666)
-                        target.unlink()
-                    break
-                except PermissionError:
-                    print(f"[RESTORE WARNING] File {target} masih terkunci, mencoba ulang...")
-                    time.sleep(0.5)
+        # === Pindahkan database & key baru ===
+        if restored_db.exists():
+            shutil.move(str(restored_db), str(DB_PATH))
+        if restored_key.exists():
+            shutil.move(str(restored_key), str(KEY_PATH))
 
-        # === Salin file hasil restore ===
-        shutil.move(str(restored_db), str(dest_db))
-        shutil.move(str(restored_key), str(dest_key))
+        # === Restore file JSON (tidak hentikan proses jika error) ===
+        for src, dest in json_restore_map.items():
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if src.exists():
+                    shutil.move(str(src), str(dest))
+                    #print(f"[RESTORE] File JSON dipulihkan: {dest.name}")
+                else:
+                    print(f"[RESTORE WARNING] File JSON tidak ditemukan di backup: {src.name}")
+            except Exception as e:
+                print(f"[RESTORE WARNING] Gagal restore {src.name}: {e}")
 
         # === Update OTP secret ===
         from db_manager import get_connection
@@ -5544,20 +5914,10 @@ def restore_nexvo(parent=None):
         conn.commit()
 
         shutil.rmtree(temp_dir, ignore_errors=True)
-        print("[RESTORE] File berhasil dipindahkan & koneksi ditutup rapi.")
-
-        # === Buka ulang jendela login ===
-        show_modern_info(
-            parent,
-            "Restore Berhasil",
-            "Semua data NexVo berhasil dipulihkan."
-        )
-
-        # Pastikan transisi UI aman
+        show_modern_info(parent, "Restore Berhasil", "Semua data NexVo berhasil dipulihkan.")
+        print(f"[RESTORE] Restore Berhasil, Semua data NexVo berhasil dipulihkan.")
         win = LoginWindow()
         win.show()
-
-        # Tutup window lama
         parent.close()
 
     except Exception as e:
@@ -5574,7 +5934,9 @@ class CustomWatermarkedTable(QTableWidget):
         self._rotation = -32  # sedikit kurang miring agar huruf lebih terbaca
 
     def focusOutEvent(self, event):
-        QTableWidget.focusOutEvent(self, event)
+        #QTableWidget.focusOutEvent(self, event)
+        self.clearSelection()
+        super().focusOutEvent(event)
 
     def paintEvent(self, event):
         # 1️⃣ Gambar tabel dulu
@@ -5603,10 +5965,17 @@ class CustomWatermarkedTable(QTableWidget):
         painter.restore()
         painter.end()
 
+class ForceSelectableItemDelegate(QStyledItemDelegate):
+    """Memastikan semua cell bisa dipilih/di-select (bukan edit)."""
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.state |= QStyle.StateFlag.State_Active
+        option.state |= QStyle.StateFlag.State_Enabled
+        option.state |= QStyle.StateFlag.State_Selected
 
 class MainWindow(QMainWindow):
     """Halaman utama sederhana sementara (dengan ikon di title bar bawaan)."""
-    def __init__(self, nama, kecamatan, desa, db_name, tahapan):
+    def __init__(self, nama, kabupaten, kecamatan, desa, db_name, tahapan):
         super().__init__()
         self.setWindowIcon(app_icon())
 
@@ -5614,6 +5983,10 @@ class MainWindow(QMainWindow):
         self._kecamatan = kecamatan
         self._desa = desa
         self._tahapan = tahapan.upper()
+        self._kabupaten = kabupaten.upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
+        self.col_ui = self.label_wilayah.upper()
 
         # ======================================================
         # 🔸 Helper pemilih tabel aktif
@@ -5629,7 +6002,7 @@ class MainWindow(QMainWindow):
         self._active_table = _active_table
 
         # (Opsional untuk konsistensi di helper hide): daftar kolom sensitif
-        self._hidden_columns = ["CEK_DATA", "JK_ASAL", "TPS_ASAL"]
+        self._hidden_columns = ["CEK_DATA", "NKK_ASAL", "NIK_ASAL", "NAMA_ASAL", "JK_ASAL", "TMPT_LHR_ASAL", "TGL_LHR_ASAL", "STS_ASAL", "ALAMAT_ASAL", "RT_ASAL", "RW_ASAL", "DIS_ASAL", "KTPel_ASAL", "SUMBER_ASAL", "TPS_ASAL"]
 
         # ====== Pastikan file KPU.png ada ======
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -5642,7 +6015,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(app_icon())
 
         # Title bar default bawaan
-        self.setWindowTitle(f"Desa {desa.title()} – Tahap {tahapan.upper()}")
+        self.setWindowTitle(f"{self.label_wilayah.title()} {desa.title()} – Tahap {tahapan.upper()}")
 
         # ===== Style =====
         self.setStyleSheet("""
@@ -5776,22 +6149,6 @@ class MainWindow(QMainWindow):
         action_bulk_sidalih = QAction(" Bulk Sidalih", self)
         action_bulk_sidalih.triggered.connect(self.bulk_sidalih)
         generate_menu.addAction(action_bulk_sidalih)
-
-        #view_menu = menubar.addMenu("View")
-        # Actual Size (reset zoom)
-        #self.act_zoom_reset = QAction(" Actual Size", self)
-        #self.act_zoom_reset.triggered.connect(lambda: self.zoom_table_font(0))  # reset
-        #view_menu.addAction(self.act_zoom_reset)
-
-        # Zoom In
-        #self.act_zoom_in = QAction(" Zoom In", self)
-        #self.act_zoom_in.triggered.connect(lambda: self.zoom_table_font(1))
-        #view_menu.addAction(self.act_zoom_in)
-
-        # Zoom Out
-        #self.act_zoom_out = QAction(" Zoom Out", self)
-        #self.act_zoom_out.triggered.connect(lambda: self.zoom_table_font(-1))
-        #view_menu.addAction(self.act_zoom_out)
 
         self._zoom_shortcuts = []
 
@@ -5965,7 +6322,15 @@ class MainWindow(QMainWindow):
         menu_rekap.addAction(QAction("Pemilih Aktif", self, triggered=self.cek_rekapaktif))
         menu_rekap.addAction(QAction("Pemilih Sesuai", self, triggered=self.cek_rekapsesuai))
         menu_rekap.addAction(QAction("Pemilih Baru", self, triggered=self.cek_rekapbaru))
-        menu_rekap.addAction(QAction("Pemilih Baru (non-DP4)", self, triggered=self.cek_rekappemula))
+
+        # ⬇️ Hanya tampil di DPHP
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPHP"):
+            menu_rekap.addAction(QAction("Pemilih Baru (DP4)", self, triggered=self.cek_rekapbarukode8))
+
+        # ⬇️ Hanya tampil di DPHP
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPHP"):
+            menu_rekap.addAction(QAction("Pemilih Baru (non-DP4)", self, triggered=self.cek_rekappemula))
+
         menu_rekap.addAction(QAction("Ubah Data", self, triggered=self.cek_rekapubah))
         menu_rekap.addAction(QAction("Saring TMS", self, triggered=self.cek_rekaptms))
         menu_rekap.addAction(QAction("Pemilih Non KTPel", self, triggered=self.cek_rekapktp))
@@ -6012,7 +6377,7 @@ class MainWindow(QMainWindow):
 
         # === Tombol Cek Data (QToolButton, tapi tampil identik dengan QPushButton) ===
         btn_cekdata = QToolButton()
-        btn_cekdata.setText("Cek Data")
+        btn_cekdata.setText("Analisis")
         btn_cekdata.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn_cekdata.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
@@ -6056,7 +6421,15 @@ class MainWindow(QMainWindow):
             menu_cekdata.addAction(QAction("Pemilih Tidak Padan", self, triggered=self.cek_tidak_padan))
 
         menu_cekdata.addAction(QAction("Ganda NIK", self, triggered=self.cek_ganda_nik))
-        menu_cekdata.addAction(QAction("Pemilih Baru (non-DP4)", self, triggered=self.cek_pemilih_pemula))
+
+        # ⬇️ Hanya tampil di DPHP
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPHP"):
+            menu_cekdata.addAction(QAction("Pemilih Baru (non-DP4)", self, triggered=self.cek_pemilih_pemula))
+
+        # ⬇️ Hanya tampil di DPHP
+        if (getattr(self, "_tahapan", "") or "").upper() in ("DPHP"):
+            menu_cekdata.addAction(QAction("Pemilih Baru (DP4)", self, triggered=self.cek_baru_kode8))
+
         menu_cekdata.addAction(QAction("Perubahan Jenis Kelamin", self, triggered=self.cek_pemilih_ubah_jeniskelamin))
 
         # ⬇️ Hanya tampil di DPSHP & DPSHPA
@@ -6066,6 +6439,10 @@ class MainWindow(QMainWindow):
         btn_cekdata.setMenu(menu_cekdata)
         self.toolbar.addWidget(btn_cekdata)
         add_spacer()
+
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.menuBar().setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
+        self.toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
 
         # === Gaya popup menu elegan ===
         menu_cekdata.setStyleSheet("""
@@ -6158,10 +6535,16 @@ class MainWindow(QMainWindow):
 
         # ============== TABEL ==============
         self.table = CustomWatermarkedTable(self, text=f"PPS {self._desa.upper()}")
+        self.table.setItemDelegate(ForceSelectableItemDelegate(self.table))
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        desa_label = self.label_wilayah.upper()  # hasil "DESA" atau "KELURAHAN"
+
         columns = [
-            " ","KECAMATAN","DESA","DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
-            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate","CEK_DATA", "JK_ASAL", "TPS_ASAL"
+            " ","KECAMATAN", desa_label, "DPID","NKK","NIK","NAMA","JK","TMPT_LHR","TGL_LHR",
+            "STS","ALAMAT","RT","RW","DIS","KTPel","SUMBER","KET","TPS","LastUpdate"
         ]
+        self.idx_nkk = columns.index("NKK")
+        self.idx_nik = columns.index("NIK")
         self.table.setColumnCount(len(columns))
         self.table.setHorizontalHeaderLabels(columns)
         self.table.setAlternatingRowColors(True)
@@ -6192,17 +6575,6 @@ class MainWindow(QMainWindow):
         pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
         pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))      # teks tetap hitam
         self.table.setPalette(pal)
-
-        # === Aktifkan Ctrl+C copy stabil (event filter)
-        self.copy_filter = CopyEventFilter(self.table)
-        self.table.installEventFilter(self.copy_filter)
-
-        # === Auto deselect aman (tidak ganggu drag)
-        def _setup_table_auto_deselect_safe():
-            self.table.setMouseTracking(True)
-            self.table.viewport().installEventFilter(self)
-        self._setup_table_auto_deselect = _setup_table_auto_deselect_safe
-        self._setup_table_auto_deselect()
 
         # === Style umum tabel ===
         self.table.setStyleSheet("""
@@ -6246,13 +6618,21 @@ class MainWindow(QMainWindow):
             "KET": 100,
             "TPS": 80,
             "LastUpdate": 100,
-            "CEK_DATA": 200,
-            "JK_ASAL": 100,
-            "TPS_ASAL": 100
         }
         for idx, col in enumerate(columns):
             if col in col_widths:
                 self.table.setColumnWidth(idx, col_widths[col])
+
+        # === PATCH: Kolom yang tidak boleh ikut di-copy ===
+        self._forbidden_copy_cols = {"LastUpdate"}
+        self._forbidden_copy_indexes = {
+            idx for idx, col in enumerate(columns)
+            if col in self._forbidden_copy_cols
+        }
+
+        # Pasang event filter ke tabel (untuk override Ctrl+C setelah CopyEventFilter jalan)
+        self.copy_filter = CopyEventFilter(self.table)
+        self.table.installEventFilter(self.copy_filter)
 
         # 🔒 Sembunyikan kolom sensitif
         if hasattr(self, "hide_sensitive_columns"):
@@ -6540,21 +6920,30 @@ class MainWindow(QMainWindow):
             self._auto_offset = 0
 
     def eventFilter(self, obj, event):
+
+        # ---------------------------------------------------
+        # 1️⃣ Klik di luar tabel → hapus seleksi
+        # ---------------------------------------------------
         if event.type() == QEvent.Type.MouseButtonPress:
-            pos = self.mapFromGlobal(event.globalPosition().toPoint())
-            if not self.table.geometry().contains(pos):
+            pos = event.globalPosition().toPoint()
+            target = QApplication.widgetAt(pos)
+
+            # Jika klik BUKAN di table atau viewport → clear selection
+            if target not in (self.table, self.table.viewport()):
                 self._safe_clear_selection()
 
+        # ---------------------------------------------------
+        # 2️⃣ Resize viewport → resize overlay kosong
+        # ---------------------------------------------------
         if obj == self.table.viewport() and event.type() == QEvent.Type.Resize:
-            if hasattr(self, "_empty_overlay") and self._empty_overlay:
-                self._empty_overlay.resize(self.table.viewport().size())
+            if getattr(self, "_empty_overlay", None):
+                self._empty_overlay.resize(obj.size())
 
         return super().eventFilter(obj, event)
     
     def _on_column_resized(self, index, old_size, new_size):
             """Tangani perubahan lebar kolom dan simpan otomatis (debounce singkat)."""
             QTimer.singleShot(300, self.save_column_widths)
-
 
     def reset_tampilkan_semua_data(self, silent=False):
         """
@@ -6636,6 +7025,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+            try:
+                if hasattr(self, "filter_sidebar") and self.filter_sidebar:
+                    if hasattr(self.filter_sidebar, "_reset_form_only"):
+                        self.filter_sidebar._reset_form_only()
+            except Exception as e:
+                print(f"[Warning] Gagal reset form filter: {e}")
+
             tbl_name = self._active_table()
             if not tbl_name:
                 overlay.deleteLater()
@@ -6692,12 +7088,12 @@ class MainWindow(QMainWindow):
                 self.table.setVisible(False)
 
                 self._refresh_table_with_new_data(self.all_data)
-                self.update_pagination()
-                self.show_page(1)
                 self.connect_header_events()
                 self.sort_data(auto=True)
+                self.auto_fit_columns()
                 self._warnai_baris_berdasarkan_ket()
                 self._terapkan_warna_ke_tabel_aktif()
+				
 
                 self.table.setVisible(True)
                 self.table.setUpdatesEnabled(True)
@@ -6722,7 +7118,6 @@ class MainWindow(QMainWindow):
                 show_modern_error(self, "Error", f"Gagal menampilkan ulang data:\n{e}")
             else:
                 print(f"[Silent Reset Warning] {e}")
-
 
     def reset_tampilan_setelah_hapus(self, silent=False):
         """
@@ -6786,10 +7181,10 @@ class MainWindow(QMainWindow):
                 self._refresh_table_with_new_data(self.all_data)
 
             # === Jalankan fungsi pasca-reset tanpa ubah halaman
-            self.update_pagination()
             self.show_page(current_page)  # 🔹 tetap di halaman aktif
             self.connect_header_events()
             self.sort_data(auto=True)
+            self.auto_fit_columns()
             self._warnai_baris_berdasarkan_ket()
 
             # Jalankan penerapan warna dengan sedikit delay agar table sudah siap
@@ -7030,18 +7425,30 @@ class MainWindow(QMainWindow):
                 if not self.table.isColumnHidden(col):
                     visible_columns.append(col)
 
-            # Fit to content hanya untuk kolom yang terlihat
+            # === 1️⃣ Fit to content untuk kolom yang terlihat ===
             for col in visible_columns:
                 self.table.resizeColumnToContents(col)
 
-            # Sedikit buffer supaya teks tidak terlalu mepet
+            # === 2️⃣ Tambahkan sedikit buffer ===
             for col in visible_columns:
                 width = self.table.columnWidth(col)
                 self.table.setColumnWidth(col, width + 20)
 
+            # === 3️⃣ Fix: Kolom LASTUPDATE JANGAN diperlakukan sebagai kolom terakhir ===
+            lastupdate_index = self.col_index("LastUpdate")
+            if lastupdate_index != -1:
+                # pastikan resize mode-nya manual
+                header.setSectionResizeMode(lastupdate_index, QHeaderView.ResizeMode.Interactive)
+
+                # jika width terlalu kecil, set ke default supaya Qt tidak menarik kolomnya
+                if self.table.columnWidth(lastupdate_index) < 120:
+                    self.table.setColumnWidth(lastupdate_index, 120)
+
+            # === 4️⃣ Matikan stretch last section (WAJIB SETELAH perbaikan di atas) ===
+            header.setStretchLastSection(False)
+
         except Exception as e:
             print(f"[WARN] Gagal auto-fit kolom: {e}")
-
 
     def showEvent(self, event):
         """Otomatis maximize saat pertama kali tampil."""
@@ -7096,6 +7503,8 @@ class MainWindow(QMainWindow):
         
         # Toggle visibility
         self.filter_dock.setVisible(not self.filter_dock.isVisible())
+        if self.filter_dock.isVisible():
+            self.filter_sidebar._populate_dropdown_options()
 
      # Sembunyikan checkbox dan radio button
         self.filter_sidebar.cb_ganda.hide()
@@ -7139,84 +7548,107 @@ class MainWindow(QMainWindow):
         from db_manager import get_connection
         from PyQt6.QtCore import QTimer
 
+        # ✅ Import sqlcipher3 untuk Row factory (agar dict-like access valid)
+        try:
+            from sqlcipher3 import dbapi2 as sqlcipher
+        except ImportError:
+            import sqlite3 as sqlcipher  # fallback
+
         filters = self.filter_sidebar.get_filters()
         tbl = self._active_table()
         if not tbl:
             show_modern_error(self, "Error", "Tabel aktif tidak ditemukan.")
             return
 
+        # =============================================================
+        # 1️⃣ Ambil data langsung dari database aktif (bukan cache)
+        # =============================================================
         conn = get_connection()
         try:
-            conn.row_factory = sqlcipher.Row  # dict-like access
+            conn.row_factory = sqlcipher.Row
         except Exception:
             pass
-
         cur = conn.cursor()
 
-        # 1) WHERE ringan di SQL (supaya cepat) — sisanya disaring di Python via matches_filters()
+        # --- Siapkan kondisi dasar WHERE (filter ringan di SQL) ---
         conditions, params = [], []
         if filters.get("nama"):
-            conditions.append("NAMA LIKE ?");  params.append(f"%{filters['nama']}%")
+            conditions.append("NAMA LIKE ?");   params.append(f"%{filters['nama']}%")
         if filters.get("nik"):
-            conditions.append("NIK LIKE ?");   params.append(f"%{filters['nik']}%")
+            conditions.append("NIK LIKE ?");    params.append(f"%{filters['nik']}%")
         if filters.get("nkk"):
-            conditions.append("NKK LIKE ?");   params.append(f"%{filters['nkk']}%")
+            conditions.append("NKK LIKE ?");    params.append(f"%{filters['nkk']}%")
         if filters.get("alamat"):
             conditions.append("ALAMAT LIKE ?"); params.append(f"%{filters['alamat']}%")
         if filters.get("jk"):
-            conditions.append("JK = ?");       params.append(filters["jk"])
+            conditions.append("JK = ?");        params.append(filters["jk"])
         if filters.get("sts"):
-            conditions.append("STS = ?");      params.append(filters["sts"])
+            conditions.append("STS = ?");       params.append(filters["sts"])
         if filters.get("ktpel"):
-            conditions.append("KTPel = ?");    params.append(filters["ktpel"])
+            conditions.append("KTPel = ?");     params.append(filters["ktpel"])
         if filters.get("sumber"):
-            conditions.append("SUMBER = ?");   params.append(filters["sumber"])
+            conditions.append("SUMBER = ?");    params.append(filters["sumber"])
         if filters.get("tps"):
-            conditions.append("TPS = ?");      params.append(filters["tps"])
+            conditions.append("TPS = ?");       params.append(filters["tps"])
 
         where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        # Sertakan rowid supaya baris tetap punya identitas unik
         query = f"SELECT rowid, * FROM {tbl} {where_clause} ORDER BY rowid ASC"
 
-        cur.execute(query, params)
-        rows = cur.fetchall()
+        try:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        except Exception as e:
+            show_modern_error(self, "Error Query", f"Gagal mengambil data:\n{e}")
+            return
 
-        # 2) Refine di Python untuk filter kompleks
+        # =============================================================
+        # 2️⃣ Konversi hasil menjadi dict yang valid
+        # =============================================================
         filtered = []
-        for r in rows:
-            d = dict(r)  # sqlcipher.Row -> dict
-            if self.matches_filters(d, filters):
-                filtered.append(d)
+        if rows:
+            try:
+                # Jika hasil sqlcipher.Row → ubah langsung ke dict
+                filtered = [dict(r) for r in rows]
+            except Exception:
+                # Fallback untuk SQLite biasa
+                colnames = [d[0] for d in cur.description]
+                filtered = [dict(zip(colnames, r)) for r in rows]
 
-        # 3) Update state
-        self.all_data = filtered
+        # =============================================================
+        # 3️⃣ Refinement di Python untuk filter kompleks (sidebar custom)
+        # =============================================================
+        refined = []
+        for d in filtered:
+            if self.matches_filters(d, filters):
+                # Ganti semua None → "" agar tidak muncul 'None' di UI
+                for k, v in d.items():
+                    if v is None:
+                        d[k] = ""
+                refined.append(d)
+
+        # =============================================================
+        # 4️⃣ Update state dan refresh UI
+        # =============================================================
+        self.all_data = refined
         self.original_data = None
 
-        # 4) Refresh tampilan & eksekusi fungsi-fungsi pasca-refresh
         with self.freeze_ui():
-            # hitung ulang pagination dari panjang data terbaru
-            self.total_pages = max(1, (len(filtered) + self.rows_per_page - 1) // self.rows_per_page)
+            self.total_pages = max(1, (len(refined) + self.rows_per_page - 1) // self.rows_per_page)
             self.current_page = 1
-
             self.update_pagination()
             self.show_page(1)
 
-        # Pastikan header events terpasang ulang setelah table di-render
+        # Pastikan header & warna diterapkan ulang
         self.connect_header_events()
-
-        # Jalankan sort default (aman untuk data terfilter)
         self.sort_data(auto=True)
-
-        # Pewarnaan baris berbasis KET (langsung), lalu terapkan warna final dengan delay pendek
         self._warnai_baris_berdasarkan_ket()
         QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
 
         # Status ringkas
         if hasattr(self, "lbl_total"):
-            self.lbl_total.setText(f"{len(filtered)} hasil ditemukan")
+            self.lbl_total.setText(f"{len(refined)} hasil ditemukan")
         self.update_statusbar()
 
-    
     @with_safe_db
     def clear_filters(self, auto=False, conn=None):
         """Hapus semua filter dan muat ulang seluruh data dari tabel aktif."""
@@ -7501,13 +7933,10 @@ class MainWindow(QMainWindow):
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
 
-            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
-            desa = cur.fetchone()[0] or 0
-
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps = cur.fetchone()[0] or 0
 
-            return {"total": total, "laki": laki, "perempuan": perempuan, "desa": desa, "tps": tps}
+            return {"total": total, "laki": laki, "perempuan": perempuan, "tps": tps}
 
         stats = _get_header_stats(self)
 
@@ -7519,8 +7948,6 @@ class MainWindow(QMainWindow):
                 self.lbl_total_laki.setText(f"{stats['laki']:,}".replace(",", "."))
             if hasattr(self, "lbl_total_perempuan"):
                 self.lbl_total_perempuan.setText(f"{stats['perempuan']:,}".replace(",", "."))
-            if hasattr(self, "lbl_total_desa"):
-                self.lbl_total_desa.setText(f"{stats['desa']:,}".replace(",", "."))
             if hasattr(self, "lbl_total_tps"):
                 self.lbl_total_tps.setText(f"{stats['tps']:,}".replace(",", "."))
         except Exception as e:
@@ -7536,9 +7963,58 @@ class MainWindow(QMainWindow):
         if hasattr(self, "filter_dock") and self.filter_dock:
             self.filter_dock.hide()
 
-        # === Status bar tetap tampil versi ===
-        if self.statusBar():
-            self.statusBar().showMessage("NexVo v1.1")
+        # === Status bar khusus dashboard ===
+        self.statusBar().showMessage("💞 Pemilih Berdaulat Negara Kuat")
+
+        class _DashboardStatusFilter(QObject):
+            """Filter yang menjaga agar status bar selalu menampilkan pesan dashboard
+            dan otomatis nonaktif saat halaman dashboard diganti."""
+            def __init__(self, parent):
+                super().__init__(parent)
+                self._parent_ref = weakref.ref(parent)
+                self._active = True
+
+            def eventFilter(self, obj, event):
+                parent = self._parent_ref()
+                if not self._active or parent is None:
+                    return False  # jika sudah nonaktif atau parent dihapus
+
+                try:
+                    # === Kembalikan pesan jika menu dihover/leave ===
+                    if obj == parent.menuBar() and event.type() in (
+                        QEvent.Type.StatusTip,
+                        QEvent.Type.ToolTip,
+                        QEvent.Type.Enter,
+                        QEvent.Type.Leave,
+                    ):
+                        parent.statusBar().showMessage("💞 Pemilih Berdaulat Negara Kuat")
+                        return True
+
+                    # === Deteksi jika halaman aktif bukan dashboard lagi ===
+                    if hasattr(parent, "stack") and parent.stack.currentWidget() != parent.dashboard_page:
+                        # halaman sudah berganti → nonaktifkan otomatis
+                        self._active = False
+                        parent.statusBar().clearMessage()
+                        parent.menuBar().removeEventFilter(self)
+                        return False
+
+                except RuntimeError:
+                    # Jika parent atau menuBar sudah dihapus (C++ object gone)
+                    return False
+
+                return False
+
+
+        # === Nonaktifkan filter lama (jika masih terpasang)
+        if hasattr(self, "_dashboard_status_filter") and self._dashboard_status_filter:
+            try:
+                self.menuBar().removeEventFilter(self._dashboard_status_filter)
+            except Exception:
+                pass
+
+        # === Pasang filter baru khusus dashboard
+        self._dashboard_status_filter = _DashboardStatusFilter(self)
+        self.menuBar().installEventFilter(self._dashboard_status_filter)
 
         # === Animasi masuk dashboard ===
         self._stack_fade_to(self.dashboard_page, duration=600)
@@ -7600,9 +8076,10 @@ class MainWindow(QMainWindow):
 
             if total == 0:
                 return {
+                    "kecamatan": self._kecamatan.title(),
                     "desa": self._desa.title(),
                     "total": 0, "laki": 0, "perempuan": 0,
-                    "desa_distinct": 0, "tps": 0,
+                    "tps": 0,
                     "bars": {k: 0 for k in [
                         "MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI",
                         "WNA", "TNI", "POLRI", "SALAH TPS"
@@ -7616,9 +8093,6 @@ class MainWindow(QMainWindow):
             laki = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
-
-            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
-            desa_distinct = cur.fetchone()[0] or 0
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
@@ -7653,9 +8127,10 @@ class MainWindow(QMainWindow):
             ubah_total = cur.fetchone()[0] or 0
 
             return {
+                "kecamatan": self._kecamatan.title(),
                 "desa": self._desa.title(),
                 "total": total, "laki": laki, "perempuan": perempuan,
-                "desa_distinct": desa_distinct, "tps": tps_distinct,
+                "tps": tps_distinct,
                 "bars": bars,
                 "total_tms": total_tms,  # 🔹 Tambahan di sini
                 "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
@@ -7700,15 +8175,16 @@ class MainWindow(QMainWindow):
             card.setStyleSheet("background:#fff; border-radius:12px;")
             return card
 
-        fmt = lambda x: f"{x:,}".replace(",", ".")
+        fmt = lambda x: f"{x:,}".replace(",", ".") if isinstance(x, (int, float)) else x
         cards = [
-            ("🏦", "Nama Desa", stats["desa"]),
-            ("🚻", "Pemilih", fmt(stats["total"])),
-            ("🚹", "Laki-laki", fmt(stats["laki"])),
-            ("🚺", "Perempuan", fmt(stats["perempuan"])),
-            ("🏠", "Kelurahan", fmt(stats["desa_distinct"])),
-            ("🚩", "TPS", fmt(stats["tps"])),
+            ("🏢", "Kecamatan", stats.get("kecamatan", "-")),
+            ("🏤", f"{DesaKel().title()}", stats.get("desa", "-")),
+            ("🚻", "Pemilih Aktif",   fmt(stats.get("total", 0))),
+            ("🚹", "Laki-laki", fmt(stats.get("laki", 0))),
+            ("🚺", "Perempuan", fmt(stats.get("perempuan", 0))),
+            ("🚩", "TPS",       fmt(stats.get("tps", 0))),
         ]
+
         for icon, title, value in cards:
             top_row.addWidget(make_card(icon, title, value))
         dash_layout.addLayout(top_row)
@@ -8084,10 +8560,9 @@ class MainWindow(QMainWindow):
 
         # === Simpan referensi elemen untuk refresh cepat ===
         self.card_labels = {
-            "total": top_row.itemAt(1).widget().findChildren(QLabel)[1],
-            "laki": top_row.itemAt(2).widget().findChildren(QLabel)[1],
-            "perempuan": top_row.itemAt(3).widget().findChildren(QLabel)[1],
-            "desa": top_row.itemAt(4).widget().findChildren(QLabel)[1],
+            "total": top_row.itemAt(2).widget().findChildren(QLabel)[1],
+            "laki": top_row.itemAt(3).widget().findChildren(QLabel)[1],
+            "perempuan": top_row.itemAt(4).widget().findChildren(QLabel)[1],
             "tps": top_row.itemAt(5).widget().findChildren(QLabel)[1],
         }
         self.slice_laki = slice_laki
@@ -8161,9 +8636,10 @@ class MainWindow(QMainWindow):
 
             if total == 0:
                 return {
+                    "kecamatan": self._kecamatan.title(),
                     "desa": self._desa.title(),
                     "total": 0, "laki": 0, "perempuan": 0,
-                    "desa_distinct": 0, "tps": 0,
+                    "tps": 0,
                     "bars": {k: 0 for k in [
                         "MENINGGAL", "GANDA", "DI BAWAH UMUR", "PINDAH DOMISILI",
                         "WNA", "TNI", "POLRI", "SALAH TPS"
@@ -8179,9 +8655,7 @@ class MainWindow(QMainWindow):
             cur.execute(f"SELECT COUNT(*) FROM {tbl} {where_filter} AND JK='P'")
             perempuan = cur.fetchone()[0] or 0
 
-            # Distinct desa & TPS
-            cur.execute(f"SELECT COUNT(DISTINCT DESA) FROM {tbl} {where_filter}")
-            desa_distinct = cur.fetchone()[0] or 0
+            # Distinct TPS
             cur.execute(f"SELECT COUNT(DISTINCT TPS) FROM {tbl} {where_filter}")
             tps_distinct = cur.fetchone()[0] or 0
 
@@ -8215,9 +8689,10 @@ class MainWindow(QMainWindow):
             ubah_total = cur.fetchone()[0] or 0
 
             return {
+                "kecamatan": self._kecamatan.title(),
                 "desa": self._desa.title(),
                 "total": total, "laki": laki, "perempuan": perempuan,
-                "desa_distinct": desa_distinct, "tps": tps_distinct,
+                "tps": tps_distinct,
                 "bars": bars,
                 "total_tms": total_tms,  # ✅ tambahkan ke hasil
                 "baru_l": baru_l, "baru_p": baru_p, "baru_total": baru_total,
@@ -8281,8 +8756,6 @@ class MainWindow(QMainWindow):
                     self.card_labels["laki"].setText(f"{stats['laki']:,}".replace(",", "."))
                 if "perempuan" in self.card_labels:
                     self.card_labels["perempuan"].setText(f"{stats['perempuan']:,}".replace(",", "."))
-                if "desa" in self.card_labels:
-                    self.card_labels["desa"].setText(f"{stats['desa_distinct']:,}".replace(",", "."))
                 if "tps" in self.card_labels:
                     self.card_labels["tps"].setText(f"{stats['tps']:,}".replace(",", "."))
             except Exception as e:
@@ -8291,7 +8764,6 @@ class MainWindow(QMainWindow):
         # === Update label Total TMS (bar paling bawah) ===
         if "Total TMS" in self.bar_labels and "total_tms" in stats:
             self.bar_labels["Total TMS"]["value"].setText(f"{stats['total_tms']:,}".replace(",", "."))
-
     
     def _stack_fade_to(self, target_widget, duration=350):
         """Fade-in ke target page di QStackedWidget (aman, tanpa hapus widget)."""
@@ -8321,11 +8793,22 @@ class MainWindow(QMainWindow):
 
         # Simpan referensi supaya animasi tidak berhenti mendadak
         self._fade_anim = anim
+
+    def remove_dashboard_filter(self):
+        """Matikan filter status bar khusus dashboard."""
+        if hasattr(self, "_dashboard_status_filter") and self._dashboard_status_filter:
+            try:
+                self.menuBar().removeEventFilter(self._dashboard_status_filter)
+                self._dashboard_status_filter = None
+            except Exception:
+                pass
         
     def show_data_page(self):
         """Kembali ke halaman utama Data."""
         from PyQt6.QtWidgets import QToolBar
 
+        self.remove_dashboard_filter()
+        self.statusBar().clearMessage()
         self._is_on_dashboard = False
 
         # Tampilkan lagi toolbar & status bar
@@ -8459,7 +8942,7 @@ class MainWindow(QMainWindow):
 
     # 🧱 Sembunyikan kolom-kolom tertentu secara permanen
     def hide_sensitive_columns(self):
-        hidden_cols = ["CEK_DATA", "JK_ASAL", "TPS_ASAL"]
+        hidden_cols = ["CEK_DATA", "NKK_ASAL", "NIK_ASAL", "NAMA_ASAL", "JK_ASAL", "TMPT_LHR_ASAL", "TGL_LHR_ASAL", "STS_ASAL", "ALAMAT_ASAL", "RT_ASAL", "RW_ASAL", "DIS_ASAL", "KTPel_ASAL", "SUMBER_ASAL", "TPS_ASAL"]
 
         # Ambil daftar header secara aman
         try:
@@ -8480,18 +8963,21 @@ class MainWindow(QMainWindow):
                 continue
 
     def auto_fit_columns(self):
-        """Biarkan kolom bisa diatur manual tanpa auto-resize otomatis."""
+        """Kolom manual, kecuali LastUpdate auto-resize sesuai isi terpanjang."""
         header = self.table.horizontalHeader()
 
-        # 🔹 1️⃣ Pastikan semua kolom bisa diatur manual oleh pengguna
+        # ============================================================
+        # 1️⃣ Semua kolom manual (tidak auto resize otomatis)
+        # ============================================================
         for i in range(self.table.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        # 🔹 2️⃣ Batasi kolom tertentu agar tidak terlalu lebar
+        # ============================================================
+        # 2️⃣ Batasi kolom tertentu agar tidak terlalu panjang
+        # ============================================================
         max_widths = {
-            "CEK_DATA": 200,   # contoh: batasi agar tidak terlalu panjang
+            "CEK_DATA": 200,
         }
-
         for i in range(self.table.columnCount()):
             item = self.table.horizontalHeaderItem(i)
             if not item:
@@ -8503,10 +8989,29 @@ class MainWindow(QMainWindow):
                 if current > max_allowed:
                     self.table.setColumnWidth(i, max_allowed)
 
-        # 🔹 3️⃣ Pastikan kolom terakhir tidak auto-stretch
-        header.setStretchLastSection(False)
+        # ============================================================
+        # 3️⃣ LASTUPDATE: auto-fit sesuai isi terpanjang
+        # ============================================================
+        lastupdate_index = self.col_index("LastUpdate")
+        if lastupdate_index != -1:
+            # Jangan stretch dan jangan jadikan kolom terakhir yang melebar
+            header.setSectionResizeMode(lastupdate_index, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 🔹 4️⃣ Tetap sembunyikan kolom sensitif (CEK_DATA, JK_ASAL, TPS_ASAL)
+            # Paksa minimal width agar tidak terlalu kecil
+            min_width = 120
+            if self.table.columnWidth(lastupdate_index) < min_width:
+                self.table.setColumnWidth(lastupdate_index, min_width)
+
+            # Matikan stretch untuk kolom terakhir
+            header.setStretchLastSection(False)
+
+        else:
+            # Jika kolom tidak ditemukan tetap non-stretch
+            header.setStretchLastSection(False)
+
+        # ============================================================
+        # 4️⃣ Sembunyikan kolom sensitif (jika ada)
+        # ============================================================
         if hasattr(self, "hide_sensitive_columns"):
             self.hide_sensitive_columns()
 
@@ -8673,7 +9178,7 @@ class MainWindow(QMainWindow):
 
         # --- Daftar aksi dasar (selalu muncul)
         actions = [
-            ("🔁 Aktifkan Pemilih", lambda: self._aktifkan_pemilih_auto(checked_rows)),
+            ("🔁 Resolve", lambda: self._aktifkan_pemilih_auto(checked_rows)),
             ("🔥 Hapus", lambda: self._hapus_pemilih_auto(checked_rows)),
             ("🚫 1. Meninggal", lambda: self._set_status_auto(checked_rows, "1", "Meninggal")),
             ("⚠️ 2. Ganda", lambda: self._set_status_auto(checked_rows, "2", "Ganda")),
@@ -8924,7 +9429,7 @@ class MainWindow(QMainWindow):
     # =========================================================
     @with_safe_db
     def hapus_banyak_pemilih(self, rows, conn=None):
-        """Hapus banyak baris data sekaligus dengan anti flicker & konfirmasi batch."""
+        """Hapus banyak baris data sekaligus dengan akurasi penuh, anti flicker, dan deteksi duplikat aman."""
         try:
             if not rows:
                 show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
@@ -8954,34 +9459,52 @@ class MainWindow(QMainWindow):
 
                 ok = skipped = rejected = 0
 
+                # --- Ambil index kolom hanya sekali
+                ci_rowid = self.col_index("rowid") if self.col_index("rowid") != -1 else None
+                ci_dpid = self.col_index("DPID")
+                ci_ket  = self.col_index("KET")
+
+                # --- Loop semua baris yang dipilih
                 for row in rows:
                     def _val(col):
                         ci = self.col_index(col)
                         it = self.table.item(row, ci) if ci != -1 else None
                         return it.text().strip() if it else ""
 
-                    nama, nik, nkk, dpid, tgl, ket = map(_val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"])
+                    nama, nik, nkk, dpid, tgl, ket = map(
+                        _val, ["NAMA", "NIK", "NKK", "DPID", "TGL_LHR", "KET"]
+                    )
 
-                    # ✅ Hanya boleh hapus jika DPID kosong/0 dan KET = B/b
-                    if not ((not dpid or dpid == "0") and (ket or "").strip().lower() == "b"):
-                        rejected += 1
-                        continue
+                    # 🧩 Normalisasi nilai DPID & KET agar deteksi kosong benar
+                    dpid_norm = (dpid or "").strip().lower()
+                    ket_norm = (ket or "").strip().lower()
 
-                    try:
-                        affected = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl)
-                        if affected > 0:
-                            ok += 1
-                        else:
+                    # ✅ Hanya hapus jika DPID kosong/0/none/null dan KET = B
+                    if dpid_norm in ("", "0", "none", "null") and ket_norm == "b":
+                        # --- Ambil rowid unik dari tabel (jika tersedia)
+                        rowid_val = None
+                        if ci_rowid is not None:
+                            rid_item = self.table.item(row, ci_rowid)
+                            if rid_item:
+                                rowid_val = rid_item.text().strip()
+
+                        try:
+                            affected = self._hapus_dari_database(conn, tbl, dpid, nik, nkk, tgl, rowid_val)
+                            if affected > 0:
+                                ok += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            print(f"[WARN] Error hapus data ({nik}): {e}")
                             skipped += 1
-                    except Exception:
-                        skipped += 1
+                    else:
+                        rejected += 1
 
                 conn.commit()
 
-                # 🔹 Anti flicker
+                # 🔹 Anti flicker & refresh UI
                 self.table.blockSignals(True)
                 self.table.setUpdatesEnabled(False)
-
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(200, lambda: self._refresh_dan_buka_repaint())
 
@@ -9003,6 +9526,52 @@ class MainWindow(QMainWindow):
                 self._reset_tabel_background()
             except Exception:
                 pass
+
+    def _hapus_dari_database(self, conn, tbl, dpid, nik, nkk, tgl, rowid_val=None):
+        """
+        Hapus satu baris data dari tabel aktif secara presisi & aman (kompatibel dengan SQLCipher).
+        - Jika rowid tersedia, gunakan langsung.
+        - Jika tidak, cari rowid baris pertama yang cocok lalu hapus 1 baris itu saja.
+        - Tanpa LIMIT (karena tidak didukung SQLCipher lama).
+        """
+        cur = conn.cursor()
+
+        # 🧩 Normalisasi DPID
+        dpid_norm = (dpid or "").strip().lower()
+        if dpid_norm in ("", "0", "none", "null"):
+            dpid_norm = None
+
+        try:
+            # 🟢 1️⃣ Jika punya rowid valid — langsung hapus
+            if rowid_val and rowid_val.isdigit():
+                cur.execute(f"DELETE FROM {tbl} WHERE rowid = ?", (rowid_val,))
+                return cur.rowcount or 0
+
+            # 🟡 2️⃣ Jika tidak ada rowid, cari dulu rowid satu baris yang cocok
+            if dpid_norm is None:
+                cur.execute(f"""
+                    SELECT rowid FROM {tbl}
+                    WHERE (DPID IS NULL OR TRIM(DPID)='' OR DPID='0'
+                        OR LOWER(DPID)='none' OR LOWER(DPID)='null')
+                    AND NIK=? AND NKK=? AND TGL_LHR=?
+                """, (nik, nkk, tgl))
+            else:
+                cur.execute(f"""
+                    SELECT rowid FROM {tbl}
+                    WHERE TRIM(DPID)=? AND NIK=? AND NKK=? AND TGL_LHR=?
+                """, (dpid_norm, nik, nkk, tgl))
+
+            row = cur.fetchone()
+            if not row:
+                return 0
+
+            target_rowid = row[0]
+            cur.execute(f"DELETE FROM {tbl} WHERE rowid = ?", (target_rowid,))
+            return cur.rowcount or 0
+
+        except Exception as e:
+            print(f"[WARN] Gagal hapus baris ({nik}): {e}")
+            return 0
 
     # =========================================================
     # 🔹 ROUTER: otomatis pilih hapus satu / banyak
@@ -9071,14 +9640,15 @@ class MainWindow(QMainWindow):
     # 🔹 AKTIFKAN SATU PEMILIH
     # =========================================================
     def aktifkan_satu_pemilih(self, row):
-        """Aktifkan satu pemilih (KET → 0) dan isi kolom JK/TPS dari *_ASAL tanpa flicker."""
-        try: 
+        """Aktifkan kembali pemilih (KET=TMS) dan pulihkan semua kolom utama dari *_ASAL langsung dari database."""
+        try:
             with self.freeze_ui():
                 tbl = self._active_table()
                 if not tbl:
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
+                # Ambil data dasar dari UI (yang pasti ada)
                 def _val(col):
                     ci = self.col_index(col)
                     it = self.table.item(row, ci) if ci != -1 else None
@@ -9086,76 +9656,150 @@ class MainWindow(QMainWindow):
 
                 nama = _val("NAMA")
                 dpid = _val("DPID")
-                ket = _val("KET")
-                jk_asal = _val("JK_ASAL")
-                tps_asal = _val("TPS_ASAL")
+                ket  = _val("KET")
 
-                # --- Validasi
-                if not dpid or dpid == "0" or ket not in ("1", "2", "3", "4", "5", "6", "7", "8", "u", "U"):
-                    show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
+                # Hanya TMS (1–8, u/U) yang bisa diaktifkan ulang
+                if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8","u","U"):
+                    #show_modern_warning(self, "Ditolak", f"{nama} tidak dapat diaktifkan.")
                     return
 
-                # --- Konfirmasi
+                # Konfirmasi
                 if not show_modern_question(
-                    self, "Aktifkan Pemilih",
-                    f"Aktifkan kembali pemilih ini?<br><b>{nama}</b>"
+                    self, "Resolve Pemilih",
+                    f"Resolve data pemilih ini?<br><b>{nama}</b>"
                 ):
                     return
 
-                # --- Update DB
-                today_str = datetime.now().strftime("%d/%m/%Y")
                 conn = get_connection()
-                cur = conn.cursor()
+                conn.row_factory = sqlcipher.Row
                 conn.execute("PRAGMA busy_timeout = 3000;")
+                cur = conn.cursor()
 
+                # ======================================================
+                # 🔍 Ambil SELURUH nilai *_ASAL langsung dari DB
+                # ======================================================
+                cur.execute(f"""
+                    SELECT
+                        NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                        TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL,
+                        ALAMAT_ASAL, RT_ASAL, RW_ASAL, DIS_ASAL,
+                        KTPel_ASAL, SUMBER_ASAL, TPS_ASAL
+                    FROM {tbl}
+                    WHERE DPID = ?
+                """, (dpid,))
+                row_asal = cur.fetchone()
+
+                if not row_asal:
+                    show_modern_warning(
+                        self,
+                        "Data Asal Tidak Ditemukan",
+                        f"Data ASAL untuk <b>{nama}</b> tidak tersedia di database."
+                    )
+                    return
+
+                # Map hasil query → kolom utama
+                asal_to_utama = {
+                    "NKK":      (row_asal["NKK_ASAL"]      or "").strip(),
+                    "NIK":      (row_asal["NIK_ASAL"]      or "").strip(),
+                    "NAMA":     (row_asal["NAMA_ASAL"]     or "").strip(),
+                    "JK":       (row_asal["JK_ASAL"]       or "").strip(),
+                    "TMPT_LHR": (row_asal["TMPT_LHR_ASAL"] or "").strip(),
+                    "TGL_LHR":  (row_asal["TGL_LHR_ASAL"]  or "").strip(),
+                    "STS":      (row_asal["STS_ASAL"]      or "").strip(),
+                    "ALAMAT":   (row_asal["ALAMAT_ASAL"]   or "").strip(),
+                    "RT":       (row_asal["RT_ASAL"]       or "").strip(),
+                    "RW":       (row_asal["RW_ASAL"]       or "").strip(),
+                    "DIS":      (row_asal["DIS_ASAL"]      or "").strip(),
+                    "KTPel":    (row_asal["KTPel_ASAL"]    or "").strip(),
+                    "SUMBER":   (row_asal["SUMBER_ASAL"]   or "").strip(),
+                    "TPS":      (row_asal["TPS_ASAL"]      or "").strip(),
+                }
+
+                today_str = datetime.now().strftime("%d/%m/%Y")
+
+                # ======================================================
+                # 💾 UPDATE DATABASE UTAMA
+                # ======================================================
                 cur.execute(f"""
                     UPDATE {tbl}
-                    SET 
+                    SET
                         KET = '0',
-                        JK = COALESCE(NULLIF(?, ''), JK),
-                        TPS = COALESCE(NULLIF(?, ''), TPS),
+
+                        NKK       = COALESCE(NULLIF(?,''), NKK),
+                        NIK       = COALESCE(NULLIF(?,''), NIK),
+                        NAMA      = COALESCE(NULLIF(?,''), NAMA),
+                        JK        = COALESCE(NULLIF(?,''), JK),
+                        TMPT_LHR  = COALESCE(NULLIF(?,''), TMPT_LHR),
+                        TGL_LHR   = COALESCE(NULLIF(?,''), TGL_LHR),
+                        STS       = COALESCE(NULLIF(?,''), STS),
+                        ALAMAT    = COALESCE(NULLIF(?,''), ALAMAT),
+                        RT        = COALESCE(NULLIF(?,''), RT),
+                        RW        = COALESCE(NULLIF(?,''), RW),
+                        DIS       = COALESCE(NULLIF(?,''), DIS),
+                        KTPel     = COALESCE(NULLIF(?,''), KTPel),
+                        SUMBER    = COALESCE(NULLIF(?,''), SUMBER),
+                        TPS       = COALESCE(NULLIF(?,''), TPS),
+
                         LastUpdate = ?
                     WHERE DPID = ?
-                """, (jk_asal, tps_asal, today_str, dpid))
+                """, (
+                    asal_to_utama["NKK"],
+                    asal_to_utama["NIK"],
+                    asal_to_utama["NAMA"],
+                    asal_to_utama["JK"],
+                    asal_to_utama["TMPT_LHR"],
+                    asal_to_utama["TGL_LHR"],
+                    asal_to_utama["STS"],
+                    asal_to_utama["ALAMAT"],
+                    asal_to_utama["RT"],
+                    asal_to_utama["RW"],
+                    asal_to_utama["DIS"],
+                    asal_to_utama["KTPel"],
+                    asal_to_utama["SUMBER"],
+                    asal_to_utama["TPS"],
+                    today_str,
+                    dpid
+                ))
+
                 conn.commit()
 
-                # --- Update data cache
+                # ======================================================
+                # 🧠 UPDATE CACHE all_data
+                # ======================================================
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
                     self.all_data[gi]["KET"] = "0"
-                    self.all_data[gi]["JK"] = jk_asal or self.all_data[gi].get("JK", "")
-                    self.all_data[gi]["TPS"] = tps_asal or self.all_data[gi].get("TPS", "")
+                    for col, val in asal_to_utama.items():
+                        if val:
+                            self.all_data[gi][col] = val
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                # --- Update tampilan tabel
-                def _set(col, value):
+                # ======================================================
+                # 🖼️ UPDATE TAMPILAN UI
+                # ======================================================
+                def _set(col, val):
+                    if not val:
+                        return
                     ci = self.col_index(col)
                     if ci != -1:
                         item = self.table.item(row, ci)
                         if item:
-                            item.setText(value)
+                            item.setText(val)
                         else:
-                            self.table.setItem(row, ci, QTableWidgetItem(value))
+                            self.table.setItem(row, ci, QTableWidgetItem(val))
 
                 _set("KET", "0")
-                if jk_asal:
-                    _set("JK", jk_asal)
-                if tps_asal:
-                    _set("TPS", tps_asal)
+                for col, val in asal_to_utama.items():
+                    _set(col, val)
                 _set("LastUpdate", today_str)
 
-                # --- Nonaktifkan repaint sementara (anti flicker)
-                self.table.blockSignals(True)
-                self.table.setUpdatesEnabled(False)
-
-                # --- Jalankan fungsi refresh wajib
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+                QTimer.singleShot(120, lambda: self._refresh_dan_buka_repaint())
 
-            show_modern_info(self, "Aktifkan", f"{nama} telah diaktifkan kembali.")
+            show_modern_info(self, "Resolve Pemilih", f"{nama} telah di resolve.")
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
+            show_modern_error(self, "Error", f"Gagal resolve pemilih:\n{e}")
         finally:
             self._clear_row_selection(row)
             self._reset_tabel_background()
@@ -9164,9 +9808,17 @@ class MainWindow(QMainWindow):
     # 🔹 AKTIFKAN BANYAK PEMILIH (BATCH)
     # =========================================================
     def aktifkan_banyak_pemilih(self, rows):
-        """Aktifkan banyak pemilih (KET → 0) sekaligus + isi JK/TPS dari *_ASAL tanpa flicker."""
-        try: 
+        """Aktifkan banyak pemilih dan kembalikan kolom utama dari *_ASAL langsung dari database."""
+        try:
+
             with self.freeze_ui():
+
+                # === Helper baca nilai tabel TANPA helper global ===
+                def get(row, col):
+                    ci = self.col_index(col)
+                    it = self.table.item(row, ci)
+                    return it.text().strip() if ci != -1 and it else ""
+
                 if not rows:
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
                     return
@@ -9177,51 +9829,90 @@ class MainWindow(QMainWindow):
                     return
 
                 if not show_modern_question(
-                    self, "Konfirmasi Batch",
-                    f"Aktifkan kembali <b>{len(rows)}</b> pemilih yang dipilih?"
+                    self, "Resolve Pemilih",
+                    f"Resolve data <b>{len(rows)}</b> pemilih?"
                 ):
                     return
 
-                # --- Ambil index kolom (sekali saja, efisien)
-                ci_dpid = self.col_index("DPID")
-                ci_ket = self.col_index("KET")
-                ci_nama = self.col_index("NAMA")
-                ci_jk_asal = self.col_index("JK_ASAL")
-                ci_tps_asal = self.col_index("TPS_ASAL")
-
                 today_str = datetime.now().strftime("%d/%m/%Y")
-                batch_data = []
-                ok = rejected = 0
 
-                # --- Loop semua baris terpilih
+                # =========================================================
+                # 🟦 Ambil DPID valid dari UI (TANPA menyentuh DPID)
+                # =========================================================
+                dpid_list = []
                 for row in rows:
-                    dpid_item = self.table.item(row, ci_dpid)
-                    ket_item = self.table.item(row, ci_ket)
-                    jk_asal_item = self.table.item(row, ci_jk_asal)
-                    tps_asal_item = self.table.item(row, ci_tps_asal)
+                    dpid = get(row, "DPID")
+                    ket  = get(row, "KET")
 
-                    dpid = dpid_item.text().strip() if dpid_item else ""
-                    ket = ket_item.text().strip() if ket_item else ""
-                    jk_asal = jk_asal_item.text().strip() if jk_asal_item else ""
-                    tps_asal = tps_asal_item.text().strip() if tps_asal_item else ""
+                    if dpid and dpid != "0" and ket.lower() in ("1","2","3","4","5","6","7","8","u"):
+                        dpid_list.append(dpid)
 
-                    # --- Validasi kelayakan aktivasi
-                    if not dpid or dpid == "0" or ket not in ("1","2","3","4","5","6","7","8","u","U"):
-                        rejected += 1
-                        continue
-
-                    batch_data.append((jk_asal, tps_asal, today_str, dpid))
-                    ok += 1
-
-                if not batch_data:
-                    show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
+                if not dpid_list:
+                    show_modern_warning(self, "Tidak Ada Data Valid yang bisa diaktifkan.")
                     return
 
-                # ============================================================
-                # 🔹 Eksekusi batch cepat ke database
-                # ============================================================
+                # =========================================================
+                # 🟦 Ambil *_ASAL dari database
+                # =========================================================
                 conn = get_connection()
+                conn.row_factory = sqlcipher.Row
                 cur = conn.cursor()
+
+                qmarks = ",".join("?" * len(dpid_list))
+                cur.execute(f"""
+                    SELECT 
+                        DPID,
+                        NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                        TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL,
+                        ALAMAT_ASAL, RT_ASAL, RW_ASAL, DIS_ASAL,
+                        KTPel_ASAL, SUMBER_ASAL, TPS_ASAL
+                    FROM {tbl}
+                    WHERE DPID IN ({qmarks})
+                """, dpid_list)
+
+                asal_map = {}
+                for r in cur.fetchall():
+                    asal_map[r["DPID"]] = {
+                        "NKK":      (r["NKK_ASAL"]      or "").strip(),
+                        "NIK":      (r["NIK_ASAL"]      or "").strip(),
+                        "NAMA":     (r["NAMA_ASAL"]     or "").strip(),
+                        "JK":       (r["JK_ASAL"]       or "").strip(),
+                        "TMPT_LHR": (r["TMPT_LHR_ASAL"] or "").strip(),
+                        "TGL_LHR":  (r["TGL_LHR_ASAL"]  or "").strip(),
+                        "STS":      (r["STS_ASAL"]      or "").strip(),
+                        "ALAMAT":   (r["ALAMAT_ASAL"]   or "").strip(),
+                        "RT":       (r["RT_ASAL"]       or "").strip(),
+                        "RW":       (r["RW_ASAL"]       or "").strip(),
+                        "DIS":      (r["DIS_ASAL"]      or "").strip(),
+                        "KTPel":    (r["KTPel_ASAL"]    or "").strip(),
+                        "SUMBER":   (r["SUMBER_ASAL"]   or "").strip(),
+                        "TPS":      (r["TPS_ASAL"]      or "").strip(),
+                    }
+
+                # =========================================================
+                # 🟦 Siapkan batch UPDATE
+                # =========================================================
+                batch_data = []
+                for dpid in dpid_list:
+                    asal = asal_map.get(dpid)
+                    if not asal:
+                        continue
+
+                    batch_data.append((
+                        asal["NKK"], asal["NIK"], asal["NAMA"], asal["JK"],
+                        asal["TMPT_LHR"], asal["TGL_LHR"], asal["STS"], asal["ALAMAT"],
+                        asal["RT"], asal["RW"], asal["DIS"], asal["KTPel"],
+                        asal["SUMBER"], asal["TPS"],
+                        today_str, dpid      # ← DPID HANYA DIPAKAI UNTUK WHERE
+                    ))
+
+                if not batch_data:
+                    show_modern_warning(self, "Error", "Data *_ASAL tidak ditemukan.")
+                    return
+
+                # =========================================================
+                # 🟦 UPDATE DATABASE
+                # =========================================================
                 conn.executescript("""
                     PRAGMA synchronous = OFF;
                     PRAGMA journal_mode = WAL;
@@ -9231,83 +9922,64 @@ class MainWindow(QMainWindow):
 
                 cur.executemany(f"""
                     UPDATE {tbl}
-                    SET 
+                    SET
                         KET = '0',
-                        JK = COALESCE(NULLIF(?, ''), JK),
-                        TPS = COALESCE(NULLIF(?, ''), TPS),
+                        NKK=?, NIK=?, NAMA=?, JK=?, TMPT_LHR=?, TGL_LHR=?,
+                        STS=?, ALAMAT=?, RT=?, RW=?, DIS=?, KTPel=?, SUMBER=?, TPS=?,
                         LastUpdate = ?
                     WHERE DPID = ?
                 """, batch_data)
+
                 conn.commit()
 
-                # ============================================================
-                # 🔹 Update cache internal (self.all_data)
-                # ============================================================
-                dpid_map = {d for *_, d in batch_data}
-                for rdata in self.all_data:
-                    if rdata.get("DPID") in dpid_map:
-                        match = next((bd for bd in batch_data if bd[3] == rdata.get("DPID")), None)
-                        if match:
-                            jk_asal, tps_asal, _, _ = match
-                            rdata["KET"] = "0"
-                            if jk_asal:
-                                rdata["JK"] = jk_asal
-                            if tps_asal:
-                                rdata["TPS"] = tps_asal
-                            rdata["LastUpdate"] = today_str
+                # =========================================================
+                # 🟦 UPDATE CACHE
+                # =========================================================
+                for rowdata in self.all_data:
+                    d = rowdata.get("DPID")
+                    asal = asal_map.get(d)
+                    if asal:
+                        rowdata["KET"] = "0"
+                        for k, v in asal.items():
+                            rowdata[k] = v
+                        rowdata["LastUpdate"] = today_str
 
-                # ============================================================
-                # 🔹 Update tampilan langsung (anti flicker)
-                # ============================================================
-                ci_lu = self.col_index("LastUpdate")
-                ci_jk = self.col_index("JK")
-                ci_tps = self.col_index("TPS")
-
+                # =========================================================
+                # 🟦 UPDATE UI
+                # =========================================================
                 for row in rows:
-                    dpid_item = self.table.item(row, ci_dpid)
-                    if not dpid_item:
+                    dpid = get(row, "DPID")
+                    asal = asal_map.get(dpid)
+                    if not asal:
                         continue
-                    dpid = dpid_item.text().strip()
-                    match = next((bd for bd in batch_data if bd[3] == dpid), None)
-                    if not match:
-                        continue
-                    jk_asal, tps_asal, _, _ = match
 
-                    def _set(col, value):
+                    # Update KET
+                    ci = self.col_index("KET")
+                    if ci != -1:
+                        self.table.item(row, ci).setText("0")
+
+                    # Update 14 kolom utama
+                    for col, val in asal.items():
                         ci = self.col_index(col)
-                        if ci != -1 and value is not None:
-                            item = self.table.item(row, ci)
-                            if item:
-                                item.setText(value)
-                            else:
-                                self.table.setItem(row, ci, QTableWidgetItem(value))
+                        if ci != -1:
+                            cell = self.table.item(row, ci)
+                            if cell: cell.setText(val)
+                            else: self.table.setItem(row, ci, QTableWidgetItem(val))
 
-                    _set("KET", "0")
-                    _set("LastUpdate", today_str)
-                    if jk_asal:
-                        _set("JK", jk_asal)
-                    if tps_asal:
-                        _set("TPS", tps_asal)
+                    # LastUpdate
+                    ci = self.col_index("LastUpdate")
+                    if ci != -1:
+                        self.table.item(row, ci).setText(today_str)
 
-                # ============================================================
-                # 🔹 Nonaktifkan repaint sementara (anti flicker)
-                # ============================================================
-                self.table.blockSignals(True)
-                self.table.setUpdatesEnabled(False)
-
-                # ============================================================
-                # 🔹 Jalankan fungsi wajib pasca proses
-                # ============================================================
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+                QTimer.singleShot(120, lambda: self._refresh_dan_buka_repaint())
 
-                msg = f"✅ {ok} diaktifkan"
-                if rejected:
-                    msg += f", ❌ {rejected} dilewati"
-                show_modern_info(self, "Selesai", msg)
+                show_modern_info(self, "Resolve Pemilih",
+                                f"Berhasil resolve <b>{len(batch_data)}</b> pemilih.")
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal mengaktifkan pemilih:\n{e}")
+            show_modern_error(self, "Error", f"Gagal memproses batch:\n{e}")
+
         finally:
             self._clear_row_selection(rows)
             self._reset_tabel_background()
@@ -9338,105 +10010,143 @@ class MainWindow(QMainWindow):
     # 🔹 SET STATUS SATU (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_satu(self, row, new_value, label):
-        """Set status KET untuk satu baris dengan freeze & konfirmasi — tanpa flicker."""
+        """Set satu status KET, ambil *_ASAL langsung dari DATABASE — tanpa helper get/set."""
         try:
             with self.freeze_ui():
+
                 tbl = self._active_table()
                 if not tbl:
                     show_modern_warning(self, "Error", "Tabel aktif tidak ditemukan.")
                     return
 
-                ci_dpid = self.col_index("DPID")
-                ci_nama = self.col_index("NAMA")
-                ci_ket  = self.col_index("KET")
+                # ============= Ambil nilai UI tanpa helper ============
+                def get(col):
+                    ci = self.col_index(col)
+                    it = self.table.item(row, ci)
+                    return it.text().strip() if ci != -1 and it else ""
 
-                dpid = self.table.item(row, ci_dpid).text().strip() if ci_dpid != -1 else ""
-                nama = self.table.item(row, ci_nama).text().strip() if ci_nama != -1 else ""
-                ket  = self.table.item(row, ci_ket).text().strip() if ci_ket != -1 and self.table.item(row, ci_ket) else ""
+                dpid = get("DPID")
+                nama = get("NAMA")
+                ket  = get("KET")
 
+                # Validasi
                 if not dpid or dpid == "0" or ket.lower() == "b":
-                    show_modern_warning(self, "Ditolak", f"{nama} Pemilih Baru di tahap ini tidak dapat di-TMS-kan.")
+                    show_modern_warning(self, "Ditolak", f"{nama} Pemilih Baru tidak dapat di-TMS-kan.")
                     return
 
-                # 🔹 Salin nilai JK/TPS dari *_ASAL
-                jk_asal_idx, tps_asal_idx = self.col_index("JK_ASAL"), self.col_index("TPS_ASAL")
-                jk_idx, tps_idx = self.col_index("JK"), self.col_index("TPS")
-
-                if jk_asal_idx != -1 and jk_idx != -1:
-                    jk_asal_item = self.table.item(row, jk_asal_idx)
-                    if jk_asal_item:
-                        jk_value = jk_asal_item.text().strip()
-                        target_item = self.table.item(row, jk_idx)
-                        if target_item:
-                            target_item.setText(jk_value)
-                        else:
-                            self.table.setItem(row, jk_idx, QTableWidgetItem(jk_value))
-
-                if tps_asal_idx != -1 and tps_idx != -1:
-                    tps_asal_item = self.table.item(row, tps_asal_idx)
-                    if tps_asal_item:
-                        tps_value = tps_asal_item.text().strip()
-                        target_item = self.table.item(row, tps_idx)
-                        if target_item:
-                            target_item.setText(tps_value)
-                        else:
-                            self.table.setItem(row, tps_idx, QTableWidgetItem(tps_value))
-
-                # 🔹 Update database
+                # ============== AMBIL *_ASAL DARI DATABASE ==============
                 conn = get_connection()
+                conn.row_factory = sqlcipher.Row
                 cur = conn.cursor()
-                conn.execute("PRAGMA busy_timeout = 3000;")
 
-                if jk_asal_idx != -1 and tps_asal_idx != -1:
-                    cur.execute(f"UPDATE {tbl} SET JK = JK_ASAL, TPS = TPS_ASAL WHERE DPID = ?", (dpid,))
-                    conn.commit()
+                cur.execute(f"""
+                    SELECT 
+                        NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                        TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL,
+                        ALAMAT_ASAL, RT_ASAL, RW_ASAL, DIS_ASAL,
+                        KTPel_ASAL, SUMBER, TPS_ASAL
+                    FROM {tbl}
+                    WHERE DPID = ?
+                """, (dpid,))
+                r = cur.fetchone()
 
+                if not r:
+                    show_modern_warning(self, "Error", "Data ASAL tidak ditemukan di database.")
+                    return
+
+                # Map hasil dari database
+                asal = {
+                    "NKK":      (r["NKK_ASAL"]      or "").strip(),
+                    "NIK":      (r["NIK_ASAL"]      or "").strip(),
+                    "NAMA":     (r["NAMA_ASAL"]     or "").strip(),
+                    "JK":       (r["JK_ASAL"]       or "").strip(),
+                    "TMPT_LHR": (r["TMPT_LHR_ASAL"] or "").strip(),
+                    "TGL_LHR":  (r["TGL_LHR_ASAL"]  or "").strip(),
+                    "STS":      (r["STS_ASAL"]      or "").strip(),
+                    "ALAMAT":   (r["ALAMAT_ASAL"]   or "").strip(),
+                    "RT":       (r["RT_ASAL"]       or "").strip(),
+                    "RW":       (r["RW_ASAL"]       or "").strip(),
+                    "DIS":      (r["DIS_ASAL"]      or "").strip(),
+                    "KTPel":    (r["KTPel_ASAL"]    or "").strip(),
+                    "SUMBER":   (r["SUMBER"]   or "").strip(),
+                    "TPS":      (r["TPS_ASAL"]      or "").strip(),
+                }
+
+                # ============== UPDATE DATABASE ==============
+                cur.execute(f"""
+                    UPDATE {tbl}
+                    SET
+                        NKK=?, NIK=?, NAMA=?, JK=?, TMPT_LHR=?, TGL_LHR=?,
+                        STS=?, ALAMAT=?, RT=?, RW=?, DIS=?, KTPel=?, SUMBER=?, TPS=?
+                    WHERE DPID=?
+                """, (
+                    asal["NKK"], asal["NIK"], asal["NAMA"], asal["JK"],
+                    asal["TMPT_LHR"], asal["TGL_LHR"], asal["STS"], asal["ALAMAT"],
+                    asal["RT"], asal["RW"], asal["DIS"], asal["KTPel"],
+                    asal["SUMBER"], asal["TPS"], dpid
+                ))
+                conn.commit()
+
+                # =============== KONFIRMASI SET KET ===================
                 if not show_modern_question(
                     self, f"Tandai {label}",
-                    f"Apakah Anda yakin ingin menandai <b>{nama}</b> sebagai Pemilih {label}?"):
+                    f"Apakah Anda yakin ingin menandai <b>{nama}</b> sebagai Pemilih {label}?"
+                ):
                     return
 
                 today_str = datetime.now().strftime("%d/%m/%Y")
-                cur.execute(f"UPDATE {tbl} SET KET = ?, LastUpdate = ? WHERE DPID = ?", (new_value, today_str, dpid))
+                cur.execute(f"UPDATE {tbl} SET KET=?, LastUpdate=? WHERE DPID=?",
+                            (new_value, today_str, dpid))
                 conn.commit()
 
-                # 🔹 Update data cache
+                # =============== UPDATE CACHE ==========================
                 gi = self._global_index(row)
                 if 0 <= gi < len(self.all_data):
+                    for k, v in asal.items():
+                        self.all_data[gi][k] = v
                     self.all_data[gi]["KET"] = new_value
                     self.all_data[gi]["LastUpdate"] = today_str
 
-                # 🔹 Update tampilan LastUpdate aman
-                ci_lu = self.col_index("LastUpdate")
-                if ci_lu != -1:
-                    lu_item = self.table.item(row, ci_lu)
-                    if lu_item:
-                        lu_item.setText(today_str)
-                    else:
-                        self.table.setItem(row, ci_lu, QTableWidgetItem(today_str))
+                # =============== UPDATE UI TANPA HELPER ===============
+                for col, val in asal.items():
+                    ci = self.col_index(col)
+                    if ci != -1:
+                        it = self.table.item(row, ci)
+                        if it:
+                            it.setText(val)
+                        else:
+                            self.table.setItem(row, ci, QTableWidgetItem(val))
 
-                # 🔹 Hindari flicker
-                self.table.blockSignals(True)
-                self.table.setUpdatesEnabled(False)
+                # Set KET
+                ci = self.col_index("KET")
+                if ci != -1:
+                    it = self.table.item(row, ci)
+                    if it: it.setText(new_value)
+                    else: self.table.setItem(row, ci, QTableWidgetItem(new_value))
+
+                # Set LastUpdate
+                ci = self.col_index("LastUpdate")
+                if ci != -1:
+                    it = self.table.item(row, ci)
+                    if it: it.setText(today_str)
+                    else: self.table.setItem(row, ci, QTableWidgetItem(today_str))
 
                 self.load_data_setelah_hapus()
                 QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
 
-            show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
+                show_modern_info(self, label, f"{nama} disaring sebagai Pemilih {label}.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal set status:\n{e}")
-        finally:
-            self._clear_row_selection(row)
-            self._reset_tabel_background()
 
     # =========================================================
     # 🔹 SET STATUS BANYAK (MENINGGAL, GANDA, DLL)
     # =========================================================
     def set_status_banyak(self, rows, new_value, label):
-        """Set status KET untuk banyak baris sekaligus — batch cepat tanpa flicker."""
+        """Set status banyak pemilih dengan mengambil seluruh kolom *_ASAL dari DATABASE — tanpa sentuh DPID."""
         try:
             with self.freeze_ui():
+
                 if not rows:
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada baris yang dipilih.")
                     return
@@ -9448,58 +10158,102 @@ class MainWindow(QMainWindow):
 
                 if not show_modern_question(
                     self, "Konfirmasi Batch",
-                    f"Tandai <b>{len(rows)}</b> pemilih sebagai {label}?"):
+                    f"Tandai <b>{len(rows)}</b> pemilih sebagai {label}?"
+                ):
                     return
 
-                ci_dpid = self.col_index("DPID")
-                ci_ket = self.col_index("KET")
-                ci_jk = self.col_index("JK")
-                ci_tps = self.col_index("TPS")
-                ci_jk_asal = self.col_index("JK_ASAL")
-                ci_tps_asal = self.col_index("TPS_ASAL")
+                # =============================
+                # Ambil DPID valid dari UI
+                # =============================
+                dpid_list = []
 
-                today_str = datetime.now().strftime("%d/%m/%Y")
-                batch_data = []
-                ok = rejected = 0
+                def get(row, col):
+                    ci = self.col_index(col)
+                    it = self.table.item(row, ci)
+                    return it.text().strip() if ci != -1 and it else ""
 
                 for row in rows:
-                    dpid_item = self.table.item(row, ci_dpid)
-                    ket_item = self.table.item(row, ci_ket)
+                    dpid = get(row, "DPID")
+                    ket  = get(row, "KET")
 
-                    dpid = dpid_item.text().strip() if dpid_item else ""
-                    ket = ket_item.text().strip() if ket_item else ""
-
+                    # Hanya boleh yang KET != B dan DPID valid
                     if not dpid or dpid == "0" or ket.lower() == "b":
-                        rejected += 1
                         continue
 
-                    jk_asal = self.table.item(row, ci_jk_asal).text().strip() if ci_jk_asal != -1 and self.table.item(row, ci_jk_asal) else ""
-                    tps_asal = self.table.item(row, ci_tps_asal).text().strip() if ci_tps_asal != -1 and self.table.item(row, ci_tps_asal) else ""
+                    dpid_list.append(dpid)
 
-                    # --- Update tampilan langsung
-                    if ci_jk != -1:
-                        jk_item = self.table.item(row, ci_jk)
-                        if jk_item:
-                            jk_item.setText(jk_asal)
-                        else:
-                            self.table.setItem(row, ci_jk, QTableWidgetItem(jk_asal))
-
-                    if ci_tps != -1:
-                        tps_item = self.table.item(row, ci_tps)
-                        if tps_item:
-                            tps_item.setText(tps_asal)
-                        else:
-                            self.table.setItem(row, ci_tps, QTableWidgetItem(tps_asal))
-
-                    batch_data.append((new_value, today_str, jk_asal, tps_asal, dpid))
-                    ok += 1
-
-                if not batch_data:
+                if not dpid_list:
                     show_modern_warning(self, "Tidak Ada Data", "Tidak ada data valid untuk diproses.")
                     return
 
+                # =============================
+                # Ambil *_ASAL dari database
+                # =============================
                 conn = get_connection()
+                conn.row_factory = sqlcipher.Row
                 cur = conn.cursor()
+
+                qmarks = ",".join("?" * len(dpid_list))
+
+                cur.execute(f"""
+                    SELECT 
+                        DPID,
+                        NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                        TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL,
+                        ALAMAT_ASAL, RT_ASAL, RW_ASAL, DIS_ASAL,
+                        KTPel_ASAL, SUMBER_ASAL, TPS_ASAL
+                    FROM {tbl}
+                    WHERE DPID IN ({qmarks})
+                """, dpid_list)
+
+                asal_map = {}
+                for r in cur.fetchall():
+                    dpid = r["DPID"]
+                    asal_map[dpid] = {
+                        "NKK":      (r["NKK_ASAL"]      or "").strip(),
+                        "NIK":      (r["NIK_ASAL"]      or "").strip(),
+                        "NAMA":     (r["NAMA_ASAL"]     or "").strip(),
+                        "JK":       (r["JK_ASAL"]       or "").strip(),
+                        "TMPT_LHR": (r["TMPT_LHR_ASAL"] or "").strip(),
+                        "TGL_LHR":  (r["TGL_LHR_ASAL"]  or "").strip(),
+                        "STS":      (r["STS_ASAL"]      or "").strip(),
+                        "ALAMAT":   (r["ALAMAT_ASAL"]   or "").strip(),
+                        "RT":       (r["RT_ASAL"]       or "").strip(),
+                        "RW":       (r["RW_ASAL"]       or "").strip(),
+                        "DIS":      (r["DIS_ASAL"]      or "").strip(),
+                        "KTPel":    (r["KTPel_ASAL"]    or "").strip(),
+                        "SUMBER":   (r["SUMBER_ASAL"]   or "").strip(),
+                        "TPS":      (r["TPS_ASAL"]      or "").strip(),
+                    }
+
+                today_str = datetime.now().strftime("%d/%m/%Y")
+
+                # =============================
+                # Siapkan batch update
+                # =============================
+                batch_data = []
+                for dpid in dpid_list:
+                    asal = asal_map.get(dpid)
+                    if not asal:
+                        continue
+
+                    batch_data.append((
+                        new_value,
+                        asal["NKK"], asal["NIK"], asal["NAMA"], asal["JK"],
+                        asal["TMPT_LHR"], asal["TGL_LHR"], asal["STS"], asal["ALAMAT"],
+                        asal["RT"], asal["RW"], asal["DIS"], asal["KTPel"],
+                        asal["SUMBER"], asal["TPS"],
+                        today_str,
+                        dpid   # ← hanya sebagai WHERE, tidak mengupdate DPID
+                    ))
+
+                if not batch_data:
+                    show_modern_warning(self, "Error", "Data ASAL tidak ditemukan.")
+                    return
+
+                # =============================
+                # UPDATE DATABASE super cepat
+                # =============================
                 conn.executescript("""
                     PRAGMA synchronous = OFF;
                     PRAGMA journal_mode = WAL;
@@ -9509,29 +10263,81 @@ class MainWindow(QMainWindow):
 
                 cur.executemany(f"""
                     UPDATE {tbl}
-                    SET 
-                        KET = ?, 
-                        LastUpdate = ?, 
-                        JK = ?, 
-                        TPS = ?
+                    SET
+                        KET = ?,
+
+                        NKK       = COALESCE(NULLIF(?,''), NKK),
+                        NIK       = COALESCE(NULLIF(?,''), NIK),
+                        NAMA      = COALESCE(NULLIF(?,''), NAMA),
+                        JK        = COALESCE(NULLIF(?,''), JK),
+                        TMPT_LHR  = COALESCE(NULLIF(?,''), TMPT_LHR),
+                        TGL_LHR   = COALESCE(NULLIF(?,''), TGL_LHR),
+                        STS       = COALESCE(NULLIF(?,''), STS),
+                        ALAMAT    = COALESCE(NULLIF(?,''), ALAMAT),
+                        RT        = COALESCE(NULLIF(?,''), RT),
+                        RW        = COALESCE(NULLIF(?,''), RW),
+                        DIS       = COALESCE(NULLIF(?,''), DIS),
+                        KTPel     = COALESCE(NULLIF(?,''), KTPel),
+                        SUMBER    = COALESCE(NULLIF(?,''), SUMBER),
+                        TPS       = COALESCE(NULLIF(?,''), TPS),
+
+                        LastUpdate = ?
                     WHERE DPID = ?
                 """, batch_data)
+
                 conn.commit()
 
-                # 🔹 Nonaktifkan repaint (anti flicker)
-                self.table.blockSignals(True)
-                self.table.setUpdatesEnabled(False)
+                # =============================
+                # UPDATE CACHE
+                # =============================
+                for rdata in self.all_data:
+                    dpid = rdata.get("DPID")
+                    asal = asal_map.get(dpid)
+                    if not asal:
+                        continue
+
+                    rdata["KET"] = new_value
+                    rdata["LastUpdate"] = today_str
+
+                    for k, v in asal.items():
+                        rdata[k] = v  # Tidak menyentuh DPID
+
+                # =============================
+                # UPDATE UI
+                # =============================
+                def set_ui(row, col, value):
+                    ci = self.col_index(col)
+                    if ci != -1:
+                        it = self.table.item(row, ci)
+                        if it:
+                            it.setText(value)
+                        else:
+                            self.table.setItem(row, ci, QTableWidgetItem(value))
+
+                for row in rows:
+                    dpid = get(row, "DPID")
+                    asal = asal_map.get(dpid)
+                    if not asal:
+                        continue
+
+                    # Set KET
+                    set_ui(row, "KET", new_value)
+
+                    # Set semua kolom ASAL → kolom utama
+                    for col, val in asal.items():
+                        set_ui(row, col, val)
+
+                    set_ui(row, "LastUpdate", today_str)
 
                 self.load_data_setelah_hapus()
-                QTimer.singleShot(150, lambda: self._refresh_dan_buka_repaint())
+                QTimer.singleShot(120, lambda: self._refresh_dan_buka_repaint())
 
-                msg = f"✅ {ok} ditandai {label}"
-                if rejected:
-                    msg += f", ❌ {rejected} dilewati"
-                show_modern_info(self, "Selesai", msg)
+                show_modern_info(self, "Selesai", 
+                    f"Berhasil menandai <b>{len(batch_data)}</b> pemilih sebagai {label}.")
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal set status:\n{e}")
+
         finally:
             self._clear_row_selection(rows)
             self._reset_tabel_background()
@@ -10150,7 +10956,92 @@ class MainWindow(QMainWindow):
                 )
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih Pemula:\n{e}")
+            show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih (non-DP4):\n{e}")
+
+    def cek_baru_kode8(self):
+        """
+        🔍 Pemilih Pemula:
+        - Baris dengan KET = 'B'
+        - Pemilih Baru yang sudah terdaftar di DP4 (tanpa melewatkan KET 1–8)
+        - Tampilkan hasil ke tabel (urut: TPS, RW, RT, NKK, NAMA)
+        - Jika tidak ditemukan → tampilkan tabel kosong
+        """
+        from db_manager import get_connection
+        from collections import defaultdict
+        from PyQt6.QtCore import QTimer
+
+        try:
+            tahap = getattr(self, "_tahapan", "").strip().upper()
+            tbl_name = {"DPHP": "dphp", "DPSHP": "dpshp", "DPSHPA": "dpshpa"}.get(tahap, "dphp")
+
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(f"SELECT * FROM {tbl_name}")
+            col_names = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+            if not rows:
+                show_modern_info(self, "Info", "Tabel kosong — tidak ada data untuk diperiksa.")
+                with self.freeze_ui():
+                    self._refresh_table_with_new_data([])  # tampilkan tabel kosong
+                return
+
+            # === Muat semua data ===
+            all_data = [
+                {col_names[i]: ("" if r[i] is None else str(r[i])) for i in range(len(col_names))}
+                for r in rows
+            ]
+
+            # === Hitung kemunculan NIK (semua data, tanpa skip KET 1–8) ===
+            nik_count = defaultdict(int)
+            for d in all_data:
+                nik = d.get("NIK", "").strip()
+                if nik:
+                    nik_count[nik] += 1
+
+            # === Ambil baris dengan KET='B' dan NIK unik (count==1) ===
+            hasil_data = []
+            for d in all_data:
+                # Ambil nilai KET & NIK secara aman
+                ket = (d.get("KET") or "").strip().upper()
+                nik = (d.get("NIK") or "").strip()
+
+                # Hanya yang KET = B dan NIK muncul lebih dari 1 kali
+                if ket == "B" and nik and nik_count.get(nik, 0) > 1:
+                    hasil_data.append(d)
+
+            # === Urutkan hasil ===
+            hasil_data.sort(key=lambda d: (
+                d.get("TPS", ""),
+                d.get("RW", ""),
+                d.get("RT", ""),
+                d.get("NKK", ""),
+                d.get("NAMA", "")
+            ))
+
+            # === Tampilkan hasil (termasuk kosong) ===
+            with self.freeze_ui():
+                self._refresh_table_with_new_data(hasil_data)
+                self._warnai_baris_berdasarkan_ket()
+                QTimer.singleShot(100, lambda: self._terapkan_warna_ke_tabel_aktif())
+
+            # === Info hasil ===
+            if hasil_data:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    f"{len(hasil_data)} Data Pemilih Baru (DP4) Ditemukan.\n"
+                    f"Ini hanya untuk keperluan verifikasi anda."
+                )
+            else:
+                show_modern_info(
+                    self,
+                    "Selesai",
+                    "Tidak Ditemukan Data Pemilih Baru (DP4)."
+                )
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal memeriksa data Pemilih (DP4):\n{e}")
 
     def cek_pemilih_ubah_jeniskelamin(self):
         """
@@ -10363,191 +11254,34 @@ class MainWindow(QMainWindow):
     # Import CSV Function (OTP + Progress Bar NexVo)
     # =================================================
     def import_csv(self):
-        # ============================================================
-        # 🧩 1️⃣ Pilih File CSV
-        # ============================================================
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Pilih File CSV", "", "CSV Files (*.csv)"
-        )
-        if not file_path:
-            return
+        # Supaya aman dipakai di finally
+        progress_overlay = None
 
-        # ============================================================
-        # 🧩 2️⃣ Ambil secret OTP dari database
-        # ============================================================
         try:
-            from db_manager import get_connection
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT otp_secret FROM users LIMIT 1")
-            row = cur.fetchone()
-            if not row or not row[0]:
-                show_modern_error(self, "OTP Tidak Ditemukan", "Kode OTP belum dikonfigurasi di sistem.")
-                return
-            otp_secret = row[0].strip()
-        except Exception as e:
-            show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
-            return
-
-        # ============================================================
-        # 🧩 3️⃣ Verifikasi OTP Modern sebelum import
-        # ============================================================
-        overlay = self.buat_overlay(18)
-        otp_dialog = QDialog(self)
-        otp_dialog.setWindowTitle("Verifikasi OTP")
-        otp_dialog.setFixedSize(340, 220)
-        otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        otp_dialog.setStyleSheet("""
-            QDialog {
-                background-color: #dddddd;
-                color: black;
-                border-radius: 10px;
-            }
-            QLabel { color: black; font-size: 12pt; }
-            QLineEdit {
-                border: 2px solid #555;
-                border-radius: 6px;
-                padding: 6px;
-                font-size: 16pt;
-                letter-spacing: 4px;
-                background-color: #666666;
-                color: #ffffff;
-                qproperty-alignment: AlignCenter;
-            }
-            QPushButton {
-                background-color: #ff6600;
-                color: white;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 6px;
-            }
-            QPushButton:hover { background-color: #d71d1d; }
-        """)
-        layout = QVBoxLayout(otp_dialog)
-        layout.setSpacing(15)
-        layout.setContentsMargins(25, 25, 25, 25)
-
-        lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
-        lbl.setWordWrap(True)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(lbl)
-
-        otp_input = QLineEdit()
-        otp_input.setMaxLength(6)
-        otp_input.setPlaceholderText("••••••")
-        otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
-        layout.addWidget(otp_input)
-
-        btn_verify = QPushButton("Verifikasi")
-        btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout.addWidget(btn_verify)
-
-        # 🔹 Efek getar khas NexVo
-        def shake_widget(widget):
-            anim = QPropertyAnimation(widget, b"pos", widget)
-            anim.setDuration(280)
-            anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-            start_pos = widget.pos()
-            offset = 6
-            for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
-                anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
-            anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-
-        verifying = {"in_progress": False}
-
-        def do_verify():
-            """Verifikasi OTP dengan proteksi anti-dobel khas NexVo (versi stabil event-loop)."""
-            from PyQt6.QtCore import QTimer
-            import pyotp
-            QTimer.singleShot(0, _do_verify_impl)
-
-        def _do_verify_impl():
-            import pyotp
-            if verifying["in_progress"]:
-                return  # ⛔ cegah eksekusi ganda
-            verifying["in_progress"] = True
-
-            code = otp_input.text().strip()
-            if not code:
-                show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
-                otp_input.setFocus()
-                verifying["in_progress"] = False
-                return
-
-            totp = pyotp.TOTP(otp_secret)
-            if not totp.verify(code):
-                show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
-                shake_widget(otp_input)
-                otp_input.setFocus()
-                otp_input.selectAll()
-                verifying["in_progress"] = False
-                return
-
-            # ✅ OTP valid — jangan reset flag agar event kedua diabaikan
-            otp_dialog.accept()
-
-        # 🔹 Hubungkan event secara langsung tanpa btn_verify.click()
-        btn_verify.clicked.connect(do_verify)
-        otp_input.returnPressed.connect(do_verify)
-        otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
-
-        if otp_dialog.exec() != QDialog.DialogCode.Accepted:
-            show_modern_info(self, "Dibatalkan", "Proses import CSV dibatalkan oleh pengguna.")
-            return
-
-        # ============================================================
-        # 🧩 4️⃣ OTP valid → tampilkan progress bar khas NexVo
-        # ============================================================
-        progress_overlay = QWidget(self)
-        progress_overlay.setGeometry(0, 0, self.width(), self.height())
-        progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
-
-        layout = QVBoxLayout(progress_overlay)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        lbl_status = QLabel("Mengimpor data CSV...")
-        lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_status.setStyleSheet("color: black; font-size: 13pt; font-weight: 600;")
-
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
-        progress_bar.setFixedWidth(int(self.width() * 0.4))
-        progress_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #e0e0e0;
-                border: 1px solid #999;
-                border-radius: 10px;
-                text-align: center;
-                height: 24px;
-                color: black;
-                font-weight: bold;
-            }
-            QProgressBar::chunk {
-                background-color: #ff6600;
-                border-radius: 10px;
-            }
-        """)
-
-        layout.addWidget(lbl_status)
-        layout.addSpacing(10)
-        layout.addWidget(progress_bar)
-        progress_overlay.show()
-        QApplication.processEvents()
-
-        # ============================================================
-        # 🧩 5️⃣ Proses Import CSV
-        # ============================================================
-        try:
+            # ============================================================
+            # 🧩 Import modul
+            # ============================================================
             from datetime import datetime
             import csv, re
+            from db_manager import get_connection
 
+            # ============================================================
+            # 🧩 1️⃣ Pilih File CSV
+            # ============================================================
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Pilih File CSV", "", "CSV Files (*.csv)"
+            )
+            if not file_path:
+                return
+
+            # ============================================================
+            # 🧩 2️⃣ Baca & validasi dasar CSV (tanpa OTP dulu)
+            # ============================================================
             with open(file_path, newline="", encoding="utf-8") as csvfile:
                 reader = list(csv.reader(csvfile, delimiter="#"))
                 total_rows = len(reader)
                 if total_rows < 15:
                     show_modern_warning(self, "Error", "File CSV tidak valid atau terlalu pendek.")
-                    progress_overlay.hide()
                     return
 
                 header = [h.strip().upper() for h in reader[0]]
@@ -10557,10 +11291,9 @@ class MainWindow(QMainWindow):
                 required_cols = {"KEC_ID", "KEL_ID", "TPS_ID", "TAHAPAN_ID"}
                 if not required_cols.issubset(set(header)):
                     show_modern_warning(self, "Ditolak", "Data yang di import bukan CSV dari aplikasi Sidalih.")
-                    progress_overlay.hide()
                     return
 
-                # ---------- Header fleksibel ----------
+                # ---------- Helper cari kolom ----------
                 def find_col(possible_names):
                     for name in possible_names:
                         for col in header:
@@ -10570,45 +11303,71 @@ class MainWindow(QMainWindow):
 
                 # Fleksibel untuk KECAMATAN/DESA
                 idx_kec = find_col(["KECAMATAN", "KEC", "DISTRIK", "NAMA KEC", "NAMA_KEC"])
-                idx_kel = find_col(["KELURAHAN", "KEL", "DESA", "KEL/DESA", "DESA/KEL", "KELURAHAN/DESA", "DESA/KELURAHAN", "NAMA KEL", "NAMA_KEL", "NAMA DESA", "NAMA_DESA"])
+                idx_kel = find_col([
+                    "KELURAHAN", "KEL", "DESA", "KEL/DESA", "DESA/KEL",
+                    "KELURAHAN/DESA", "DESA/KELURAHAN",
+                    "NAMA KEL", "NAMA_KEL", "NAMA DESA", "NAMA_DESA"
+                ])
                 if idx_kec is None or idx_kel is None:
                     show_modern_warning(self, "Error", "Kolom 'KECAMATAN' dan/atau 'KELURAHAN' tidak ditemukan.")
-                    progress_overlay.hide()
                     return
 
                 # === 🔍 Validasi wilayah CSV dengan distinct check ===
+                def normalize_wilayah(text: str) -> str:
+                    """
+                    Normalisasi nama wilayah agar bebas spasi, strip, underscore, dan karakter pengganggu.
+                    Hanya menyisakan huruf A-Z dan angka.
+                    """
+                    if not text:
+                        return ""
+                    t = text.upper()
+                    t = re.sub(r"[^A-Z0-9]", "", t)   # hapus semua karakter selain huruf/angka
+                    return t
+
                 try:
                     kecamatan_values = set()
                     desa_values = set()
+
                     for r in reader[1:]:
                         if not r:
                             continue
-                        if idx_kec < len(r) and r[idx_kec].strip():
-                            kecamatan_values.add(r[idx_kec].strip().upper())
-                        if idx_kel < len(r) and r[idx_kel].strip():
-                            desa_values.add(r[idx_kel].strip().upper())
 
+                        # Ambil & normalisasi KECAMATAN
+                        if idx_kec < len(r) and r[idx_kec].strip():
+                            kecamatan_values.add(
+                                normalize_wilayah(r[idx_kec].strip())
+                            )
+
+                        # Ambil & normalisasi DESA
+                        if idx_kel < len(r) and r[idx_kel].strip():
+                            desa_values.add(
+                                normalize_wilayah(r[idx_kel].strip())
+                            )
+
+                    # Harus hanya 1 kecamatan dan 1 desa di CSV
                     if len(kecamatan_values) != 1 or len(desa_values) != 1:
                         show_modern_warning(
                             self, "Error",
                             f"Import CSV gagal!\nHarap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
                         )
-                        progress_overlay.hide()
                         return
 
                     kecamatan_csv = next(iter(kecamatan_values))
                     desa_csv = next(iter(desa_values))
+
                 except Exception:
                     show_modern_warning(self, "Error", "Data yang di import bukan CSV dari aplikasi Sidalih.")
-                    progress_overlay.hide()
                     return
 
-                if kecamatan_csv != (self._kecamatan or "").upper() or desa_csv != (self._desa or "").upper():
+                # === 🔥 Bandingkan dengan fuzzy-normalized nama di aplikasi ===
+                kec_app = normalize_wilayah(self._kecamatan or "")
+                desa_app = normalize_wilayah(self._desa or "")
+
+                if kecamatan_csv != kec_app or desa_csv != desa_app:
                     show_modern_warning(
                         self, "Error",
                         f"Import CSV gagal!\nHarap Import CSV untuk Desa {self._desa.title()} yang bersumber dari Sidalih."
                     )
-                    progress_overlay.hide()
                     return
 
                 tahap = self._tahapan.strip().upper()
@@ -10616,178 +11375,399 @@ class MainWindow(QMainWindow):
                 tbl_name = tabel_map.get(tahap)
                 if not tbl_name:
                     show_modern_warning(self, "Error", f"Tahapan tidak dikenal: {tahap}")
-                    progress_overlay.hide()
                     return
 
-                # --------- Mapping alias-aware → target kolom internal ----------
-                alias_groups = {
-                    "KECAMATAN": ["KECAMATAN", "KEC", "DISTRIK", "NAMA KEC", "NAMA_KEC"],
-                    "DESA": ["KELURAHAN", "KEL", "DESA", "KEL/DESA", "DESA/KEL", "KELURAHAN/DESA", "DESA/KELURAHAN", "NAMA KEL", "NAMA_KEL"],
-                    "DPID": ["DPID", "ID", "DP ID", "DP_ID"],
-                    "NKK": ["NKK", "NO KK", "NO_KK"],
-                    "NIK": ["NIK"],
-                    "NAMA": ["NAMA", "NAMA LENGKAP", "NAMA_LENGKAP"],
-                    "JK": ["KELAMIN", "JENIS_KELAMIN", "JENISKELAMIN", "JENIS KELAMIN", "JK"],
-                    "TMPT_LHR": ["TEMPAT LAHIR", "TMPTLHR", "TMPT_LHR", "TEMPAT_LAHIR", "TMPT LAHIR", "TMPT_LAHIR", "TEMPATLAHIR"],
-                    "TGL_LHR": ["TANGGAL LAHIR", "TGLLHR", "TGL_LHR", "TANGGAL_LAHIR", "TGL LHR", "TGL_LAHIR", "TGL LAHIR", "TANGGALLAHIR"],
-                    "STS": ["STS KAWIN", "STS_KAWIN", "STATUS", "STS", "KAWIN", "STATUS KAWIN", "STATUS_KAWIN", "STATUSKAWIN"],
-                    "ALAMAT": ["ALAMAT", "ALMT", "KAMPUNG", "JALAN"],
-                    "RT": ["RT", "NO_RT", "NO RT"],
-                    "RW": ["RW", "NO_RW", "NO RW"],
-                    "DIS": ["DISABILITAS", "DIS", "DIFABEL", "DIF"],
-                    "KTPel": ["EKTP", "KTP", "KTPEL", "KTP EL", "KTP_EL", "E KTP", "E_KTP"],
-                    "SUMBER": ["SUMBER", "SMBR", "SUMBER DATA", "SUMBER_DATA", "SUMBERDATA"],
-                    "KET": ["KETERANGAN", "KET"],
-                    "TPS": ["TPS"],
-                    "LastUpdate": ["UPDATED_AT", "UPDATED AT", "LAST_UPDATE", "LAST UPDATE"],
-                }
-
-                map_indices = []
-                for target_col, aliases in alias_groups.items():
-                    idx = None
-                    for alias in aliases:
-                        if alias in header_idx:
-                            idx = header_idx[alias]
-                            break
-                    if idx is not None:
-                        map_indices.append((idx, target_col))
-                # -----------------------------------------------------------------
-
-                idx_status = header_idx.get("STATUS")
-                if idx_status is None:
-                    show_modern_warning(self, "Error", "Kolom STATUS tidak ditemukan di CSV.")
-                    progress_overlay.hide()
-                    return
-
+            # ============================================================
+            # 🧩 3️⃣ Ambil secret OTP dari database
+            # ============================================================
+            try:
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.executescript("""
-                    PRAGMA busy_timeout = 8000;
-                    PRAGMA synchronous = OFF;
-                    PRAGMA temp_store = MEMORY;
-                    PRAGMA journal_mode = WAL;
-                """)
-
-                # ✅ pastikan tabel data_awal ada (mencegah error)
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS data_awal (
-                        TPS TEXT,
-                        L INTEGER DEFAULT 0,
-                        P INTEGER DEFAULT 0,
-                        LP INTEGER DEFAULT 0
+                cur.execute("SELECT otp_secret FROM users LIMIT 1")
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    show_modern_error(
+                        self,
+                        "OTP Tidak Ditemukan",
+                        "Kode OTP belum dikonfigurasi di sistem."
                     )
-                """)
+                    return
+                otp_secret = row[0].strip()
+            except Exception as e:
+                show_modern_error(self, "Error OTP", f"Gagal memuat secret OTP:\n{e}")
+                return
 
-                cur.execute("DELETE FROM data_awal")
-                cur.execute(f"DELETE FROM {tbl_name}")
+            # ============================================================
+            # 🧩 4️⃣ Verifikasi OTP Modern sebelum import
+            # ============================================================
+            overlay = self.buat_overlay(18)
 
-                # ======= Helper normalisasi =======
-                def format_nama(nama: str) -> str:
-                    if not nama:
-                        return ""
-                    parts = nama.split(",")
-                    parts[0] = parts[0].upper()
-                    if len(parts) > 1:
-                        parts[1] = parts[1].strip().title()
-                    return ", ".join(parts).strip()
+            otp_dialog = QDialog(self)
+            otp_dialog.setWindowTitle("Verifikasi OTP")
+            otp_dialog.setFixedSize(340, 220)
+            otp_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            otp_dialog.setStyleSheet("""
+                QDialog {
+                    background-color: #dddddd;
+                    color: black;
+                    border-radius: 10px;
+                }
+                QLabel { color: black; font-size: 12pt; }
+                QLineEdit {
+                    border: 2px solid #555;
+                    border-radius: 6px;
+                    padding: 6px;
+                    font-size: 16pt;
+                    letter-spacing: 4px;
+                    background-color: #666666;
+                    color: #ffffff;
+                    qproperty-alignment: AlignCenter;
+                }
+                QPushButton {
+                    background-color: #ff6600;
+                    color: white;
+                    font-weight: bold;
+                    border-radius: 6px;
+                    padding: 6px;
+                }
+                QPushButton:hover { background-color: #d71d1d; }
+            """)
 
-                def to_upper(v: str) -> str:
-                    return v.strip().upper() if v else ""
-                # ==================================
+            lay_otp = QVBoxLayout(otp_dialog)
+            lay_otp.setSpacing(15)
+            lay_otp.setContentsMargins(25, 25, 25, 25)
 
-                batch_values = []
-                step = max(1, total_rows // 100)
+            lbl = QLabel("Masukkan kode OTP dari aplikasi Authenticator Anda:")
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lay_otp.addWidget(lbl)
 
-                for i, row in enumerate(reader[1:], start=1):
-                    if not row or len(row) < len(header):
-                        continue
-                    status_val = row[idx_status].strip().upper()
-                    if status_val not in ("AKTIF", "UBAH", "BARU"):
-                        continue
+            otp_input = QLineEdit()
+            otp_input.setMaxLength(6)
+            otp_input.setPlaceholderText("••••••")
+            otp_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            otp_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            lay_otp.addWidget(otp_input)
 
-                    data = {}
-                    for src_idx, target_col in map_indices:
-                        val = (row[src_idx] or "").strip()
+            btn_verify = QPushButton("Verifikasi")
+            btn_verify.setCursor(Qt.CursorShape.PointingHandCursor)
+            lay_otp.addWidget(btn_verify)
 
-                        # Normalisasi angka-only untuk RT/RW/TPS
-                        if target_col in ("RT", "RW", "TPS") and val.isdigit():
+            # 🔹 Efek getar khas NexVo
+            def shake_widget(widget):
+                anim = QPropertyAnimation(widget, b"pos", widget)
+                anim.setDuration(280)
+                anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                start_pos = widget.pos()
+                offset = 6
+                for i, x in enumerate([-offset, offset, -offset, offset, -offset/2, offset/2, 0]):
+                    anim.setKeyValueAt(i / 6, start_pos + QPoint(int(x), 0))
+                anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+            verifying = {"in_progress": False}
+
+            def do_verify():
+                """Verifikasi OTP dengan proteksi anti-dobel (event-loop aman)."""
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, _do_verify_impl)
+
+            def _do_verify_impl():
+                import pyotp
+                if verifying["in_progress"]:
+                    return  # ⛔ cegah eksekusi ganda
+                verifying["in_progress"] = True
+
+                code = otp_input.text().strip()
+                if not code:
+                    show_modern_warning(otp_dialog, "Error", "Kode OTP belum diisi.")
+                    otp_input.setFocus()
+                    verifying["in_progress"] = False
+                    return
+
+                totp = pyotp.TOTP(otp_secret)
+                if not totp.verify(code):
+                    show_modern_error(otp_dialog, "Gagal", "Kode OTP salah atau sudah kedaluwarsa!")
+                    shake_widget(otp_input)
+                    otp_input.setFocus()
+                    otp_input.selectAll()
+                    verifying["in_progress"] = False
+                    return
+
+                # ✅ OTP valid — jangan reset flag agar event kedua diabaikan
+                otp_dialog.accept()
+
+            btn_verify.clicked.connect(do_verify)
+            otp_input.returnPressed.connect(do_verify)
+            otp_dialog.finished.connect(lambda: self.hapus_overlay(overlay))
+
+            if otp_dialog.exec() != QDialog.DialogCode.Accepted:
+                show_modern_info(self, "Dibatalkan", "Proses import CSV dibatalkan oleh pengguna.")
+                return
+
+            # ============================================================
+            # 🧩 5️⃣ OTP valid → tampilkan progress bar khas NexVo
+            # ============================================================
+            progress_overlay = QWidget(self)
+            progress_overlay.setGeometry(0, 0, self.width(), self.height())
+            progress_overlay.setStyleSheet("background-color: rgba(255,255,255,230);")
+
+            lay_prog = QVBoxLayout(progress_overlay)
+            lay_prog.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            lbl_status = QLabel("Mengimpor data CSV...")
+            lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_status.setStyleSheet("color: black; font-size: 13pt; font-weight: 600;")
+
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 100)
+            progress_bar.setFixedWidth(int(self.width() * 0.4))
+            progress_bar.setStyleSheet("""
+                QProgressBar {
+                    background-color: #e0e0e0;
+                    border: 1px solid #999;
+                    border-radius: 10px;
+                    text-align: center;
+                    height: 24px;
+                    color: black;
+                    font-weight: bold;
+                }
+                QProgressBar::chunk {
+                    background-color: #ff6600;
+                    border-radius: 10px;
+                }
+            """)
+
+            lay_prog.addWidget(lbl_status)
+            lay_prog.addSpacing(10)
+            lay_prog.addWidget(progress_bar)
+            progress_overlay.show()
+            QApplication.processEvents()
+
+            # ============================================================
+            # 🧩 6️⃣ Mapping kolom & proses ke DB
+            # ============================================================
+            # --------- Mapping alias-aware → target kolom internal ----------
+            alias_groups = {
+                "KECAMATAN": ["KECAMATAN", "KEC", "DISTRIK", "NAMA KEC", "NAMA_KEC"],
+                "DESA": ["KELURAHAN", "KEL", "DESA", "KEL/DESA", "DESA/KEL",
+                        "KELURAHAN/DESA", "DESA/KELURAHAN", "NAMA KEL", "NAMA_KEL"],
+                "DPID": ["DPID", "ID", "DP_ID", "DP ID"],
+                "NKK": ["NKK", "NO KK", "NO_KK"],
+                "NIK": ["NIK"],
+                "NAMA": ["NAMA", "NAMA LENGKAP", "NAMA_LENGKAP"],
+                "JK": ["KELAMIN", "JENIS_KELAMIN", "JENISKELAMIN", "JENIS KELAMIN", "JK"],
+                "TMPT_LHR": ["TEMPAT LAHIR", "TMPTLHR", "TMPT_LHR", "TEMPAT_LAHIR",
+                            "TMPT LAHIR", "TMPT_LAHIR", "TEMPATLAHIR"],
+                "TGL_LHR": ["TANGGAL LAHIR", "TGLLHR", "TGL_LHR", "TANGGAL_LAHIR",
+                            "TGL LHR", "TGL_LAHIR", "TGL LAHIR", "TANGGALLAHIR"],
+                "STS": ["STS KAWIN", "STS_KAWIN", "STATUS", "STS", "KAWIN",
+                        "STATUS KAWIN", "STATUS_KAWIN", "STATUSKAWIN"],
+                "ALAMAT": ["ALAMAT", "ALMT", "KAMPUNG", "JALAN"],
+                "RT": ["RT", "NO_RT", "NO RT"],
+                "RW": ["RW", "NO_RW", "NO RW"],
+                "DIS": ["DISABILITAS", "DIS", "DIFABEL", "DIF"],
+                "KTPel": ["EKTP", "KTP", "KTPEL", "KTP EL", "KTP_EL", "E KTP", "E_KTP"],
+                "SUMBER": ["SUMBER", "SMBR", "SUMBER DATA", "SUMBER_DATA", "SUMBERDATA"],
+                "KET": ["KETERANGAN", "KET"],
+                "TPS": ["TPS"],
+                "LastUpdate": ["UPDATED_AT", "UPDATED AT", "LAST_UPDATE", "LAST UPDATE"],
+            }
+
+            map_indices = []
+            for target_col, aliases in alias_groups.items():
+                idx = None
+                for alias in aliases:
+                    if alias in header_idx:
+                        idx = header_idx[alias]
+                        break
+                if idx is not None:
+                    map_indices.append((idx, target_col))
+
+            idx_status = header_idx.get("STATUS")
+            if idx_status is None:
+                show_modern_warning(self, "Error", "Kolom STATUS tidak ditemukan di CSV.")
+                return
+
+            # ======================================================
+            # 🔧 Siapkan DB & tabel data_awal
+            # ======================================================
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.executescript("""
+                PRAGMA busy_timeout = 8000;
+                PRAGMA synchronous = OFF;
+                PRAGMA temp_store = MEMORY;
+                PRAGMA journal_mode = WAL;
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS data_awal (
+                    TPS TEXT,
+                    L INTEGER DEFAULT 0,
+                    P INTEGER DEFAULT 0,
+                    LP INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute("DELETE FROM data_awal")
+            cur.execute(f"DELETE FROM {tbl_name}")
+
+            # ======= Helper normalisasi =======
+            def format_nama(nama: str) -> str:
+                if not nama:
+                    return ""
+                parts = nama.split(",")
+                parts[0] = parts[0].upper()
+                if len(parts) > 1:
+                    parts[1] = parts[1].strip().title()
+                return ", ".join(parts).strip()
+
+            def to_upper(v: str) -> str:
+                return v.strip().upper() if v else ""
+            # ==================================
+
+            ordered_cols = [
+                "checked", "KECAMATAN", "DESA", "DPID",
+                "NKK", "NIK", "NAMA", "JK",
+                "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT",
+                "RT", "RW", "DIS", "KTPel",
+                "SUMBER", "KET", "TPS", "LastUpdate",
+                "CEK_DATA",
+                "NKK_ASAL", "NIK_ASAL", "NAMA_ASAL", "JK_ASAL",
+                "TMPT_LHR_ASAL", "TGL_LHR_ASAL", "STS_ASAL",
+                "ALAMAT_ASAL", "RT_ASAL", "RW_ASAL", "DIS_ASAL",
+                "KTPel_ASAL", "SUMBER_ASAL", "TPS_ASAL"
+            ]
+
+            # 💡 Safety check: jumlah kolom tabel harus cocok dengan ordered_cols
+            cur.execute(f"PRAGMA table_info({tbl_name})")
+            tbl_cols = [r[1] for r in cur.fetchall()]
+            if len(tbl_cols) != len(ordered_cols):
+                raise Exception(
+                    f"Struktur tabel {tbl_name} tidak sesuai.\n"
+                    f"Kolom tabel: {len(tbl_cols)}, kolom import: {len(ordered_cols)}."
+                )
+
+            batch_values = []
+            step = max(1, total_rows // 100)
+
+            # Pakai lagi 'reader' yang sudah diisi di atas
+            for i, row in enumerate(reader[1:], start=1):
+                if not row or len(row) < len(header):
+                    continue
+
+                status_val = row[idx_status].strip().upper()
+                if status_val not in ("AKTIF", "UBAH", "BARU"):
+                    continue
+
+                data = {}
+                for src_idx, target_col in map_indices:
+                    val = (row[src_idx] or "").strip()
+
+                    # Normalisasi angka untuk RT/RW/TPS
+                    if target_col in ("RT", "RW", "TPS"):
+                        # hapus nol di depan, jika murni angka
+                        if val.isdigit():
                             val = str(int(val))
 
-                        # KET selalu '0'
-                        if target_col == "KET":
-                            val = "0"
+                    # KET selalu '0'
+                    if target_col == "KET":
+                        val = "0"
 
-                        # Format tanggal LastUpdate jika ada
-                        if target_col == "LastUpdate" and val:
-                            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
-                                try:
-                                    val = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
-                                    break
-                                except Exception:
-                                    pass
+                    # Format LastUpdate jika ada
+                    if target_col == "LastUpdate" and val:
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+                            try:
+                                val = datetime.strptime(val, fmt).strftime("%d/%m/%Y")
+                                break
+                            except Exception:
+                                pass
 
-                        # Normalisasi kapitalisasi sesuai aturan
-                        if target_col == "NAMA":
-                            val = format_nama(val)
-                        elif target_col in ("JK", "STS", "ALAMAT", "KTPel", "SUMBER"):
-                            val = to_upper(val)
+                    # Normalisasi kapitalisasi
+                    if target_col == "NAMA":
+                        val = format_nama(val)
+                    elif target_col in ("JK", "STS", "ALAMAT", "KTPel", "SUMBER"):
+                        val = to_upper(val)
 
-                        data[target_col] = val
+                    data[target_col] = val
 
-                    # Tambahan kolom default
-                    data["checked"] = 0
-                    data["JK_ASAL"] = data.get("JK", "")
-                    data["TPS_ASAL"] = data.get("TPS", "")
+                # Tambahan kolom default
+                data["checked"] = 0
+                # ✅ KECAMATAN & DESA diambil dari user (bukan CSV)
+                data["KECAMATAN"] = (self._kecamatan or "").upper()
+                data["DESA"] = (self._desa or "").upper()
+                # CEK_DATA sengaja dikosongkan
 
-                    ordered_cols = [
-                        "checked", "KECAMATAN", "DESA", "DPID", "NKK", "NIK", "NAMA", "JK",
-                        "TMPT_LHR", "TGL_LHR", "STS", "ALAMAT", "RT", "RW", "DIS", "KTPel",
-                        "SUMBER", "KET", "TPS", "LastUpdate", "CEK_DATA", "JK_ASAL", "TPS_ASAL"
-                    ]
-                    batch_values.append(tuple(data.get(c, "") for c in ordered_cols))
+                # ✅ Kolom *_ASAL dari nilai utama (tanpa DPID_ASAL)
+                data["NKK_ASAL"]       = data.get("NKK", "")
+                data["NIK_ASAL"]       = data.get("NIK", "")
+                data["NAMA_ASAL"]      = data.get("NAMA", "")
+                data["JK_ASAL"]        = data.get("JK", "")
+                data["TMPT_LHR_ASAL"]  = data.get("TMPT_LHR", "")
+                data["TGL_LHR_ASAL"]   = data.get("TGL_LHR", "")
+                data["STS_ASAL"]       = data.get("STS", "")
+                data["ALAMAT_ASAL"]    = data.get("ALAMAT", "")
+                data["RT_ASAL"]        = data.get("RT", "")
+                data["RW_ASAL"]        = data.get("RW", "")
+                data["DIS_ASAL"]       = data.get("DIS", "")
+                data["KTPel_ASAL"]     = data.get("KTPel", "")
+                data["SUMBER_ASAL"]    = data.get("SUMBER", "")
+                data["TPS_ASAL"]       = data.get("TPS", "")
 
-                    if i % step == 0:
-                        progress_bar.setValue(min(100, int(i / total_rows * 100)))
-                        QApplication.processEvents()
+                batch_values.append(tuple(data.get(c, "") for c in ordered_cols))
 
-                placeholders = ",".join(["?"] * 23)
+                if i % step == 0:
+                    progress_bar.setValue(min(100, int(i / total_rows * 100)))
+                    QApplication.processEvents()
+
+            # ✅ placeholder harus sesuai jumlah kolom
+            placeholders = ",".join(["?"] * len(ordered_cols))
+            if batch_values:
                 cur.executemany(f"INSERT INTO {tbl_name} VALUES ({placeholders})", batch_values)
+                # ✅ KET tetap dipaksa '0' (walau sudah di-set di atas)
                 cur.execute(f"UPDATE {tbl_name} SET KET='0'")
                 conn.commit()
 
-                # ✅ perbaikan query data_awal — bebas error walau TPS kosong
-                cur.execute(f"""
-                    INSERT INTO data_awal (TPS, L, P, LP)
-                    SELECT 
-                        COALESCE(TPS, '0') AS TPS,
-                        SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END),
-                        COUNT(*) 
-                    FROM {tbl_name}
-                    GROUP BY COALESCE(TPS, '0')
-                    ORDER BY CAST(COALESCE(TPS, '0') AS INTEGER)
-                """)
-                conn.commit()
+            # ✅ data_awal: bebas error meski TPS kosong / non-digit
+            cur.execute(f"""
+                INSERT INTO data_awal (TPS, L, P, LP)
+                SELECT 
+                    COALESCE(TPS, '0') AS TPS,
+                    SUM(CASE WHEN JK='L' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN JK='P' THEN 1 ELSE 0 END),
+                    COUNT(*) 
+                FROM {tbl_name}
+                GROUP BY COALESCE(TPS, '0')
+                ORDER BY 
+                    CASE 
+                        WHEN TPS GLOB '[0-9]*' AND TPS<>'' THEN CAST(TPS AS INTEGER)
+                        ELSE 0
+                    END
+            """)
+            conn.commit()
 
-                progress_bar.setValue(100)
-                QApplication.processEvents()
+            progress_bar.setValue(100)
+            QApplication.processEvents()
 
-                with self.freeze_ui():
-                    self.load_data_from_db()
-                    self.update_pagination()
-                    self.show_page(1)
-                    self.connect_header_events()
-                    self.sort_data(auto=True)
+            with self.freeze_ui():
+                self.load_data_from_db()
+                self.update_pagination()
+                self.show_page(1)
+                self.connect_header_events()
+                self.sort_data(auto=True)
 
-                show_modern_info(self, "Sukses",
-                                f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
-                                f"{len(batch_values)} baris berhasil dimuat.")
+            show_modern_info(
+                self, "Sukses",
+                f"Import CSV ke tabel {tbl_name.upper()} selesai!\n"
+                f"{len(batch_values)} baris berhasil dimuat."
+            )
+
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal import CSV:\n{e}")
         finally:
-            progress_overlay.hide()
+            # Aman walau progress_overlay belum pernah dibuat
+            if progress_overlay is not None:
+                progress_overlay.hide()
             QApplication.processEvents()
-
 
     def import_baruecoklit(self):
         """
@@ -12002,28 +12982,40 @@ class MainWindow(QMainWindow):
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {tbl_name} (
                 checked     INTEGER DEFAULT 0,
-                KECAMATAN  TEXT,
-                DESA       TEXT,
-                DPID       TEXT,
-                NKK        TEXT,
-                NIK        TEXT,
-                NAMA       TEXT,
-                JK         TEXT,
-                TMPT_LHR   TEXT,
-                TGL_LHR    TEXT,
-                STS        TEXT,
-                ALAMAT     TEXT,
-                RT         TEXT,
-                RW         TEXT,
-                DIS        TEXT,
-                KTPel      TEXT,
-                SUMBER     TEXT,
-                KET        TEXT,
-                TPS        TEXT,
+                KECAMATAN TEXT,
+                DESA TEXT,
+                DPID TEXT,
+                NKK TEXT,
+                NIK TEXT,
+                NAMA TEXT,
+                JK TEXT,
+                TMPT_LHR TEXT,
+                TGL_LHR TEXT,
+                STS TEXT,
+                ALAMAT TEXT,
+                RT TEXT,
+                RW TEXT,
+                DIS TEXT,
+                KTPel TEXT,
+                SUMBER TEXT,
+                KET TEXT,
+                TPS TEXT,
                 LastUpdate DATETIME,
-                CEK_DATA   TEXT,
-                JK_ASAL    TEXT,
-                TPS_ASAL   TEXT
+                CEK_DATA TEXT,
+                NKK_ASAL TEXT,
+                NIK_ASAL TEXT,
+                NAMA_ASAL TEXT,
+                JK_ASAL TEXT,
+                TMPT_LHR_ASAL TEXT,
+                TGL_LHR_ASAL TEXT,
+                STS_ASAL TEXT,
+                ALAMAT_ASAL TEXT,
+                RT_ASAL TEXT,
+                RW_ASAL TEXT,
+                DIS_ASAL TEXT,
+                KTPel_ASAL TEXT,
+                SUMBER_ASAL TEXT,
+                TPS_ASAL TEXT
             )
         """)
 
@@ -12497,44 +13489,31 @@ class MainWindow(QMainWindow):
         # 📋 Persiapan variabel agar loop cepat
         # =========================================================
         setItem = self.table.setItem
-        newItem = QTableWidgetItem
         colCount = self.table.columnCount()
         headerItems = [self.table.horizontalHeaderItem(i).text() for i in range(colCount)]
         center_cols = {"DPID", "JK", "STS", "TGL_LHR", "RT", "RW", "DIS", "KTPel", "KET", "TPS"}
-
-        # =========================================================
-        # 🎨 Mapping warna super kilat
-        # =========================================================
-        warna_map = {
-            "B": QColor("green"),   # BARU
-            "U": QColor("orange"),  # UBAH
-        }
-        tms_vals = {"1", "2", "3", "4", "5", "6", "7", "8"}  # TMS
-        warna_default = QColor("black")
-
-        # 🔵 Daftar KET yang membuat font biru
-        ket_biru_vals = {
-            "NKK INVALID", "POTENSI NKK INVALID",
-            "NIK INVALID", "POTENSI NIK INVALID",
-            "POTENSI DIBAWAH UMUR", "DIBAWAH UMUR",
-            "GANDA AKTIF", "BEDA TPS", "TIDAK PADAN"
-        }
-
         # =========================================================
         # 🧮 Isi tabel dengan loop minimalis
         # =========================================================
         for i, d in enumerate(data_rows):
-            # Checkbox
-            chk = newItem("")
+            # Checkbox (buat objek baru setiap baris)
+            chk = QTableWidgetItem("")
             chk.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
             chk.setCheckState(Qt.CheckState.Unchecked)
-            setItem(i, 0, chk)
+            self.table.setItem(i, 0, chk)
 
             # Kolom lain
             for j, col in enumerate(headerItems[1:], start=1):
                 if col == "_rowid_":
                     continue
-                val = d.get(col, "")
+
+                # 🔹 Jika header UI adalah "DESA" atau "KELURAHAN", tetap ambil data dari kolom DESA di database
+                if col.upper() in ("DESA", "KELURAHAN"):
+                    val = d.get("DESA", "")
+                else:
+                    val = d.get(col, "")
+
+                # 🔹 Format tanggal
                 if col == "LastUpdate" and val:
                     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
                         try:
@@ -12543,21 +13522,17 @@ class MainWindow(QMainWindow):
                         except Exception:
                             pass
 
-                cell = newItem(val)
+                # 🔹 Buat item tabel baru (tidak reuse)
+                cell = QTableWidgetItem(str(val))
+                cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
 
-                # 👉 Set flag lengkap SEBELUM dimasukkan ke tabel
-                cell.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled |
-                    Qt.ItemFlag.ItemIsSelectable
-                )
-
-                # Alignment & warna default
+                # 🔹 Alignment dan warna dasar
                 if col in center_cols:
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 cell.setForeground(QColor("#000000"))
 
-                # Masukkan ke tabel
-                setItem(i, j, cell)
+                # 🔹 Masukkan ke tabel
+                self.table.setItem(i, j, cell)
 
         # =========================================================
         # 🔁 Update tampilan & pagination
@@ -12833,11 +13808,86 @@ class MainWindow(QMainWindow):
                 cur.execute("INSERT INTO pemula VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
 
             conn.commit()
-            self.baru_window = self.show_window_with_transition(PemulaWindow)
+            self.pemula_window = self.show_window_with_transition(PemulaWindow)
 
         except Exception as e:
             show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Baru (non-DP4):\n{e}")
 
+    def cek_rekapbarukode8(self):
+        """Menampilkan rekap pemilih 'B' (baru) DP4."""
+        try:
+            from db_manager import get_connection
+
+            tbl_name = self._active_table()
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # 🔹 Pastikan tabel hasil ada
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS barukode8 (
+                    "NAMA TPS" TEXT,
+                    "JUMLAH KK" INTEGER,
+                    "LAKI-LAKI" INTEGER,
+                    "PEREMPUAN" INTEGER,
+                    "JUMLAH" INTEGER
+                )
+            """)
+            cur.execute("DELETE FROM barukode8")
+
+            # 🔹 Ambil semua TPS
+            cur.execute(f"SELECT DISTINCT TPS FROM {tbl_name} WHERE TRIM(TPS) <> '' ORDER BY CAST(TPS AS INTEGER)")
+            tps_list = [r[0] for r in cur.fetchall()]
+
+            # ============================================================
+            # ⚙️ Rekap per TPS hanya untuk NIK yang unik di seluruh tabel
+            # ============================================================
+            for tps in tps_list:
+                nama_tps = f"TPS {int(tps):03d}"
+
+                # --- jumlah KK untuk pemilih baru unik ---
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT NKK)
+                    FROM {tbl_name}
+                    WHERE TPS = ?
+                    AND LOWER(COALESCE(KET,'')) = 'b'
+                    AND NIK IN (
+                        SELECT NIK FROM {tbl_name}
+                        GROUP BY NIK HAVING COUNT(*) > 1
+                    )
+                """, (tps,))
+                nkk = cur.fetchone()[0] or 0
+
+                # --- jumlah L dan P ---
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS = ? AND JK='L'
+                    AND LOWER(COALESCE(KET,'')) = 'b'
+                    AND NIK IN (
+                        SELECT NIK FROM {tbl_name}
+                        GROUP BY NIK HAVING COUNT(*) > 1
+                    )
+                """, (tps,))
+                jml_L = cur.fetchone()[0] or 0
+
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {tbl_name}
+                    WHERE TPS = ? AND JK='P'
+                    AND LOWER(COALESCE(KET,'')) = 'b'
+                    AND NIK IN (
+                        SELECT NIK FROM {tbl_name}
+                        GROUP BY NIK HAVING COUNT(*) > 1
+                    )
+                """, (tps,))
+                jml_P = cur.fetchone()[0] or 0
+
+                total = jml_L + jml_P
+                cur.execute("INSERT INTO barukode8 VALUES (?, ?, ?, ?, ?)", (nama_tps, nkk, jml_L, jml_P, total))
+
+            conn.commit()
+            self.barukode8_window = self.show_window_with_transition(PemulaKode8)
+
+        except Exception as e:
+            show_modern_error(self, "Error", f"Gagal membuka Rekap Pemilih Baru (DP4):\n{e}")
 
     def cek_rekapubah(self):
         """Menampilkan rekap pemilih ubah per TPS (termasuk TPS tanpa data)."""
@@ -14329,7 +15379,7 @@ class MainWindow(QMainWindow):
             "Konfirmasi Ekspor",
             (
                 f"Apakah Anda ingin mengekspor data <b>Bulk Sidalih</b> "
-                f"untuk Desa <b>{desa}</b> pada tahap <b>{tahap}</b>?"
+                f"untuk {self.label_wilayah.title()} <b>{desa}</b> pada tahap <b>{tahap}</b>?"
             )
         )
         if not res:
@@ -14340,7 +15390,7 @@ class MainWindow(QMainWindow):
             folder_path = "C:/NexVo/Bulk Sidalih"
             os.makedirs(folder_path, exist_ok=True)
             waktu_str = datetime.now().strftime("%d%m%Y %H.%M")
-            file_name = f"Bulk Sidalih Desa {desa} tahap {tahap} {waktu_str}.xlsx"
+            file_name = f"Bulk Sidalih {self.label_wilayah.title()} {desa} tahap {tahap} {waktu_str}.xlsx"
             file_path = os.path.join(folder_path, file_name)
 
             # === 3️⃣ Ambil data dari tabel aktif ===
@@ -14509,11 +15559,12 @@ class UnggahRegulerWindow(QWidget):
         self._desa = getattr(main_window, "_desa", "")
         self._tahapan = getattr(main_window, "_tahapan", "")
         self._active_table = getattr(main_window, "_active_table", lambda: None)
+        self.label_wilayah = DesaKel()
 
         # ==========================================
         # 🔹 Konfigurasi dasar jendela
         # ==========================================
-        self.setWindowTitle(f"Unggah Webgrid TPS Desa {self._desa.title()} – Tahap {self._tahapan}")
+        self.setWindowTitle(f"Unggah Webgrid TPS {self.label_wilayah.title()} {self._desa.title()} – Tahap {self._tahapan}")
         self.setStyleSheet("background-color:white;")
 
         # Terapkan ikon aplikasi
@@ -14685,7 +15736,7 @@ class UnggahRegulerWindow(QWidget):
 
     def simpan_data_ke_tabel_aktif(self):
         """Validasi & unggah data dari tabel UnggahReguler ke tabel aktif (super kilat & identik hasil).
-        Khusus KET 1..8: kolom JK dan TPS SELALU diisi dari JK_ASAL/TPS_ASAL pada tabel aktif (tanpa fallback)."""
+        Khusus KET 1..8: SEMUA kolom utama SELALU diisi dari *_ASAL pada tabel aktif (tanpa fallback)."""
         try:
             tbl_aktif = self._active_table()
             if not tbl_aktif:
@@ -14709,27 +15760,34 @@ class UnggahRegulerWindow(QWidget):
             gagal_list = []
             sukses_list = []
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ket_codes_1_8 = {"1","2","3","4","5","6","7","8"}
+            ket_codes_1_8 = {"1", "2", "3", "4", "5", "6", "7", "8"}
 
             # =============================================================
             #  📋 Cache semua nilai (superspeed)
             # =============================================================
             total_rows = self.table.rowCount()
-            semua_dpid = [(self.table.item(r, 1).text().strip() if self.table.item(r, 1) else "") for r in range(total_rows)]
-            semua_nik  = [(self.table.item(r, 3).text().strip() if self.table.item(r, 3) else "") for r in range(total_rows)]
-            semua_ket  = [(self.table.item(r, 15).text().strip().upper() if self.table.item(r, 15) else "") for r in range(total_rows)]
+            semua_dpid = [
+                (self.table.item(r, 1).text().strip() if self.table.item(r, 1) else "")
+                for r in range(total_rows)
+            ]
+            semua_nik = [
+                (self.table.item(r, 3).text().strip() if self.table.item(r, 3) else "")
+                for r in range(total_rows)
+            ]
+            semua_ket = [
+                (self.table.item(r, 15).text().strip().upper() if self.table.item(r, 15) else "")
+                for r in range(total_rows)
+            ]
 
             # === 🚀 Build lookup untuk deteksi cepat ===
             nik_map = {}
             dpid_ket_seen = set()
-            for i, (nik, ket, dpid) in enumerate(zip(semua_nik, semua_ket, semua_dpid)):
-                if nik and ket not in ("1","2","3","4","5","6","7","8"):
-                    nik_map.setdefault(nik, []).append(i)
-                if dpid and ket:
-                    pair = (dpid, ket)
-                    if pair in dpid_ket_seen:
-                        pass
-                    else:
+            for i, (nik_val, ket_val, dpid_val) in enumerate(zip(semua_nik, semua_ket, semua_dpid)):
+                if nik_val and ket_val not in ket_codes_1_8:
+                    nik_map.setdefault(nik_val, []).append(i)
+                if dpid_val and ket_val:
+                    pair = (dpid_val, ket_val)
+                    if pair not in dpid_ket_seen:
                         dpid_ket_seen.add(pair)
 
             # === Cache TPS dari tabel aktif (sekali query saja) ===
@@ -14740,10 +15798,16 @@ class UnggahRegulerWindow(QWidget):
             #  🚀 Proses baris demi baris
             # =============================================================
             for row in range(total_rows):
-                data = [self.table.item(row, c).text().strip() if self.table.item(row, c) else "" for c in range(self.table.columnCount())]
+                data = [
+                    self.table.item(row, c).text().strip() if self.table.item(row, c) else ""
+                    for c in range(self.table.columnCount())
+                ]
+
+                # Urutan kolom: sesuaikan dengan struktur tabel UnggahReguler
                 no, dpid, nkk, nik, nama, jk, tmpt, tgl, sts, alamat, rt, rw, dis, ktpel, sumber, ket, tps = data
 
-                if not any(data[1:]):  # skip baris kosong
+                # Skip baris benar-benar kosong (kecuali kolom No)
+                if not any(data[1:]):
                     continue
 
                 err = []
@@ -14751,13 +15815,12 @@ class UnggahRegulerWindow(QWidget):
                 # =============================================================
                 # 🔍 CEK DUPLIKASI DALAM TABEL UNGGAH (pakai cache)
                 # =============================================================
-                if nik and ket not in ("1","2","3","4","5","6","7","8"):
+                if nik and ket.upper() not in ket_codes_1_8:
                     dup_rows = nik_map.get(nik, [])
                     if len(dup_rows) > 1:
                         err.append("NIK Ganda")
 
                 if dpid and ket:
-                    # Jika ada pasangan DPID+KET ganda di tabel unggah
                     pair = (dpid, ket.upper())
                     if semua_dpid.count(dpid) > 1 and semua_ket.count(ket.upper()) > 1:
                         for r2 in range(total_rows):
@@ -14768,53 +15831,52 @@ class UnggahRegulerWindow(QWidget):
                 # =============================================================
                 # 🔎 VALIDASI DASAR
                 # =============================================================
-                if not (nkk.isdigit() and len(nkk) == 16): err.append("NKK Invalid")
-                if not (nik.isdigit() and len(nik) == 16): err.append("NIK Invalid")
+                if not (nkk.isdigit() and len(nkk) == 16):
+                    err.append("NKK Invalid")
+                if not (nik.isdigit() and len(nik) == 16):
+                    err.append("NIK Invalid")
 
                 jk = jk.upper()
-                if jk not in ("L", "P"): err.append("Jenis Kelamin Invalid")
+                if jk not in ("L", "P"):
+                    err.append("Jenis Kelamin Invalid")
 
+                # =============================================================
+                # 🔎 VALIDASI TANGGAL LAHIR & USIA
+                # =============================================================
                 try:
-                    # 🔹 Pecah tanggal berdasarkan tanda "|"
                     dd, mm, yyyy = map(int, tgl.split("|"))
                     lahir = datetime(yyyy, mm, dd)
 
-                    # 🔹 Hitung umur per 26 Juni 2029
-                    ##### Ubah jadi tanggal Pemilu #####
+                    # Hitung umur per 26 Juni 2029
                     umur = (datetime(2029, 6, 26) - lahir).days / 365.25
 
-                    # 🔹 Logika validasi umur
                     if umur < 0 or umur < 5:
-                        # Tahun lahir lebih dari 2029 atau terlalu muda → tidak valid
                         err.append("Tanggal Lahir Invalid")
                     elif umur < 17 and sts.upper() == "B":
-                        # Umur valid tapi masih di bawah 17 tahun dan status 'B' → pemilih di bawah umur
                         err.append("Pemilih Dibawah Umur")
-
                 except Exception:
-                    # Format salah, nilai bukan angka, atau tanggal tidak valid
                     err.append("Tanggal Lahir Invalid")
 
-
                 sts = sts.upper()
-                if sts not in ("B", "S", "P"): err.append("Status Invalid")
+                if sts not in ("B", "S", "P"):
+                    err.append("Status Invalid")
 
-                for val, name in [(rt, "RT"), (rw, "RW"), (tps, "TPS")]:
+                for val, name in ((rt, "RT"), (rw, "RW"), (tps, "TPS")):
                     if val and not val.isdigit():
                         err.append(f"{name} Invalid")
 
-                if dis not in ("0","1","2","3","4","5","6"):
+                if dis not in ("0", "1", "2", "3", "4", "5", "6"):
                     err.append("DIS Invalid")
 
                 ktpel = ktpel.upper()
-                if ktpel not in ("B","S"):
+                if ktpel not in ("B", "S"):
                     err.append("KTPel Invalid")
 
                 ket = ket.upper()
-                if self._tahapan.upper() == "DPHP":
-                    allowed_ket = ("B","U","1","2","3","4","5","6","7","8")
+                if tahapan == "DPHP":
+                    allowed_ket = ("B", "U", "1", "2", "3", "4", "5", "6", "7", "8")
                 else:
-                    allowed_ket = ("B","U","1","2","3","4","5","6","7")
+                    allowed_ket = ("B", "U", "1", "2", "3", "4", "5", "6", "7")
 
                 if ket not in allowed_ket:
                     err.append("Kode Keterangan Invalid")
@@ -14824,6 +15886,7 @@ class UnggahRegulerWindow(QWidget):
                 # =============================================================
                 if not err:
                     if (not dpid or dpid.strip() == "0") or ket.lower() == "b":
+                        # BARU: tidak boleh ada NIK aktif di tabel aktif
                         cur.execute(f"""
                             SELECT COUNT(*) 
                             FROM {tbl_aktif} 
@@ -14833,6 +15896,7 @@ class UnggahRegulerWindow(QWidget):
                         if cur.fetchone()[0] > 0:
                             err.append("Terdaftar sebagai NIK Pemilih Aktif")
                     elif dpid.strip() and ket.lower() == "u":
+                        # UBAH: jika ada NIK aktif lain dengan DPID berbeda → tolak
                         cur.execute(f"""
                             SELECT DPID 
                             FROM {tbl_aktif} 
@@ -14858,13 +15922,13 @@ class UnggahRegulerWindow(QWidget):
                 # =============================================================
                 # 🔎 CEK SALAH TPS (VERIFIKASI AKHIR, pakai cache)
                 # =============================================================
-                if not err and dpid and ket.upper() in ("U","1","2","3","4","5","6","7","8"):
+                if not err and dpid and ket.upper() in ("U", "1", "2", "3", "4", "5", "6", "7", "8"):
                     tps_aktif = tps_lookup.get(str(dpid))
                     if tps_aktif:
                         if ket.upper() == "U" and tahapan == "DPHP":
                             if tps.strip() != tps_aktif:
                                 err.append("Salah TPS")
-                        elif ket in ("1","2","3","4","5","6","7","8"):
+                        elif ket in ket_codes_1_8:
                             if tps.strip() != tps_aktif:
                                 err.append("Salah TPS")
 
@@ -14875,31 +15939,65 @@ class UnggahRegulerWindow(QWidget):
                     gagal_list.append(f"{nama}, {nik}, {'; '.join(err)}")
                     continue
 
-                nama = ", ".join([nama.split(",")[0].upper(), nama.split(",")[1]]) if "," in nama else nama.upper()
-
                 # 🔒 Default pakai nilai dari unggah
-                jk_use  = jk
+                jk_use = jk
                 tps_use = tps
 
-                # ✅ KHUSUS KET 1..8 → SELALU ambil dari JK_ASAL/TPS_ASAL di tabel aktif, DPID sama
+                # Simpan SUMBER dari UI supaya tidak tertimpa *_ASAL
+                sumber_ui = sumber
+
+                # ✅ KHUSUS KET 1..8: SEMUA kolom utama ambil dari *_ASAL di tabel aktif (DPID sama)
                 if dpid and ket in ket_codes_1_8:
                     cur.execute(f"""
-                        SELECT JK_ASAL, TPS_ASAL
+                        SELECT 
+                            NKK_ASAL, NIK_ASAL, NAMA_ASAL, JK_ASAL,
+                            TMPT_LHR_ASAL, TGL_LHR_ASAL, STS_ASAL, ALAMAT_ASAL,
+                            RT_ASAL, RW_ASAL, DIS_ASAL, KTPel_ASAL,
+                            SUMBER_ASAL, TPS_ASAL
                         FROM {tbl_aktif}
                         WHERE DPID=? LIMIT 1
                     """, (dpid,))
-                    r = cur.fetchone()
-                    if r:
-                        # TANPA fallback: tulis persis dari kolom *_ASAL
-                        jk_use  = (r[0] or "").strip().upper()
-                        tps_use = (str(r[1]) if r[1] is not None else "").strip()
+                    r_asal = cur.fetchone()
+                    if r_asal:
+                        (
+                            nkk_db, nik_db, nama_db, jk_db,
+                            tmpt_db, tgl_db, sts_db, alamat_db,
+                            rt_db, rw_db, dis_db, ktpel_db,
+                            _ignored_sumber, tps_db
+                        ) = [(str(x).strip() if x is not None else "") for x in r_asal]
 
+                        # Semua kolom utama pakai ASAL
+                        nkk = nkk_db
+                        nik = nik_db
+                        nama = nama_db
+                        jk_use = jk_db
+                        tmpt = tmpt_db
+                        tgl = tgl_db
+                        sts = sts_db
+                        alamat = alamat_db
+                        rt = rt_db
+                        rw = rw_db
+                        dis = dis_db
+                        ktpel = ktpel_db
+                        tps_use = tps_db
+
+                        # SUMBER tetap dari UI
+                        sumber = sumber_ui
+
+                # === Format nama / alamat / sumber (logika lama tetap dipakai) ===
+                nama = ", ".join([nama.split(",")[0].upper(), nama.split(",")[1]]) if "," in nama else nama.upper()
+                alamat = alamat.upper()
+                sumber = sumber.upper()
+
+                # Rekam final untuk INSERT / UPDATE
                 record = (
-                    nkk, nik, nama, jk_use, tmpt, tgl, sts, alamat, rt, rw, dis,
-                    ktpel, sumber, ket, tps_use, kecamatan, desa, now
+                    nkk, nik, nama, jk_use, tmpt, tgl, sts, alamat,
+                    rt, rw, dis, ktpel, sumber, ket, tps_use,
+                    kecamatan, desa, now
                 )
 
                 if not dpid and ket == "B":
+                    # INSERT BARU
                     cur.execute(f"""
                         INSERT INTO {tbl_aktif}
                         (NKK, NIK, NAMA, JK, TMPT_LHR, TGL_LHR, STS, ALAMAT,
@@ -14908,6 +16006,7 @@ class UnggahRegulerWindow(QWidget):
                     """, record)
                     sukses_list.append(row)
                 elif dpid and ket != "B":
+                    # UPDATE EXISTING
                     cur.execute(f"""
                         UPDATE {tbl_aktif}
                         SET NKK=?, NIK=?, NAMA=?, JK=?, TMPT_LHR=?, TGL_LHR=?, STS=?, 
@@ -14934,13 +16033,13 @@ class UnggahRegulerWindow(QWidget):
             else:
                 QMessageBox.information(self, "Berhasil", "Semua data berhasil diunggah.")
 
+            # Hapus baris yang sukses dari tabel unggah
             for r in sorted(sukses_list, reverse=True):
                 self.table.removeRow(r)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Gagal menyimpan data:\n{e}")
             import traceback; traceback.print_exc()
-
 
     def eventFilter(self, obj, event):
         """Tangani tombol Delete dari mana pun dalam tabel (termasuk editor)."""
@@ -15191,6 +16290,8 @@ class SesuaiWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -15204,7 +16305,7 @@ class SesuaiWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -15435,6 +16536,8 @@ class RekapWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Aktif")
         self.setStyleSheet("background-color: #ffffff;")
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -15462,7 +16565,7 @@ class RekapWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -15710,6 +16813,8 @@ class BaruWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -15723,7 +16828,7 @@ class BaruWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -15970,6 +17075,8 @@ class PemulaWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -15983,7 +17090,7 @@ class PemulaWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -16204,6 +17311,267 @@ class PemulaWindow(QMainWindow):
             QTimer.singleShot(150, self.parent_window.repaint)
         self.close()
 
+class PemulaKode8(QMainWindow):
+    """Jendela maximize untuk rekap pemilih baru DP4 per TPS."""
+
+    def __init__(self, parent_window):
+        super().__init__()  # tidak pakai parent Qt
+
+        self.parent_window = parent_window  # simpan referensi manual
+        self.setWindowIcon(app_icon())
+        self.setWindowTitle("Rekap Pemilih Baru (DP4)")
+        self.setStyleSheet("background-color: #ffffff;")
+
+        # === Layout utama ===
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(20)
+        self.setCentralWidget(central)
+
+        # =========================================================
+        # 🧭 Ambil info dari parent_window
+        # =========================================================
+        nama_user = getattr(parent_window, "_nama", "PENGGUNA").upper()
+        tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
+
+        # =========================================================
+        # 🧾 Tentukan teks tahapan
+        # =========================================================
+        if tahap == "DPHP":
+            nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHP":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN PEMILU TAHUN 2029"
+        elif tahap == "DPSHPA":
+            nama_tahapan = "DAFTAR PEMILIH SEMENTARA HASIL PERBAIKAN AKHIR PEMILU TAHUN 2029"
+        else:
+            nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
+
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
+
+        # =========================================================
+        # 🧍 Header User
+        # =========================================================
+        lbl_user = QLabel(nama_user)
+        lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)             
+        lbl_user.setFont(font)
+
+        lbl_user.setStyleSheet("""
+            color: #000000;
+            border-bottom: 3px solid #ff6600;
+            padding-bottom: 8px;
+        """)
+
+        layout.addWidget(lbl_user)
+
+        # =========================================================
+        # 🏷️ Judul utama (3 baris)
+        # =========================================================
+        judul_layout = QVBoxLayout()
+        judul_layout.setSpacing(2)
+
+        lbl1 = QLabel("REKAP PEMILIH BARU YANG TERDAFTAR DI DP4")
+        lbl1.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl1.setStyleSheet("color: #000000;")
+
+        lbl2 = QLabel(nama_tahapan)
+        lbl2.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl2.setStyleSheet("color: #000000;")
+
+        lbl3 = QLabel(lokasi_str)
+        lbl3.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        lbl3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl3.setStyleSheet("color: #000000;")
+
+        judul_layout.addWidget(lbl1)
+        judul_layout.addWidget(lbl2)
+        judul_layout.addWidget(lbl3)
+
+        layout.addLayout(judul_layout)
+
+        # =========================================================
+        # 📋 Tabel baru
+        # =========================================================
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["NAMA TPS", "JUMLAH KK", "LAKI-LAKI", "PEREMPUAN", "JUMLAH"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #2d2d2d;
+                color: white;
+                font-weight: bold;
+                font-family: Segoe UI;
+                font-size: 11pt;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #dddddd;
+                background-color: white;
+                alternate-background-color: #f6f6f6;
+                color: #000000;
+                font-size: 11pt;
+                font-family: Segoe UI;
+                selection-background-color: #d9d9d9;    /* ✅ abu lembut saat dipilih */
+                selection-color: #000000;
+            }
+        """)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        # === Ambil data dari tabel baru ===
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM barukode8 ORDER BY CAST(substr(\"NAMA TPS\", 5) AS INTEGER)")
+        rows = cur.fetchall()
+        self.table.setRowCount(len(rows) + 1)  # +1 untuk total
+
+        total_nkk = total_L = total_P = total_all = 0
+
+        for i, row in enumerate(rows):
+            nama_tps, nkk, L, P, total = row
+            total_nkk += nkk
+            total_L += L
+            total_P += P
+            total_all += total
+
+            # Tampilkan '-' untuk nilai nol
+            display_values = [
+                nama_tps,
+                "-" if nkk == 0 else str(nkk),
+                "-" if L == 0 else str(L),
+                "-" if P == 0 else str(P),
+                "-" if total == 0 else str(total),
+            ]
+
+            for j, val in enumerate(display_values):
+                item = QTableWidgetItem(val)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                font = item.font()
+                if j in (0, 1, 2, 3, 4):
+                    font.setBold(True)
+                item.setFont(font)
+                self.table.setItem(i, j, item)
+
+        # === Baris total ===
+        total_labels = ["TOTAL", str(total_nkk), str(total_L), str(total_P), str(total_all)]
+        for j, val in enumerate(total_labels):
+            item = QTableWidgetItem(val)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = item.font()
+            font.setBold(True)
+            font.setPointSize(11)
+            item.setFont(font)
+            item.setBackground(QBrush(QColor("#B0AEAD")))  # abu lembut
+            self.table.setItem(len(rows), j, item)
+
+        # === Aktifkan Copy ke Excel (Ctrl + C) ===
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.table.installEventFilter(self)
+
+        # Tambahkan palette seleksi lembut
+        pal = self.table.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor(255, 247, 194, 120))  # kuning lembut semi-transparan
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.table.setPalette(pal)
+        layout.addWidget(self.table)
+
+        # =========================================================
+        # 🔸 Tombol Tutup
+        # =========================================================
+        btn_tutup = QPushButton("Tutup")
+        btn_tutup.setFixedSize(120, 40)
+        btn_tutup.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #d71d1d;
+            }
+        """)
+        btn_tutup.clicked.connect(self.kembali_ke_main)
+        layout.addWidget(btn_tutup, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def eventFilter(self, obj, event):
+        """Izinkan Ctrl+C menyalin data tabel ke clipboard Excel."""
+        if obj == self.table and event.type() == QEvent.Type.KeyPress:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_C:
+                self.copy_table_to_clipboard()
+                return True
+        return super().eventFilter(obj, event)
+
+    def copy_table_to_clipboard(self):
+        """Salin isi sel yang terseleksi ke clipboard (termasuk header kolom, adaptif ; atau ,)."""
+        selected = self.table.selectedRanges()
+        if not selected:
+            return
+
+        top = selected[0].topRow()
+        bottom = selected[0].bottomRow()
+        left = selected[0].leftColumn()
+        right = selected[0].rightColumn()
+
+        rows = []
+
+        # === Header kolom ===
+        headers = []
+        for c in range(left, right + 1):
+            header_item = self.table.horizontalHeaderItem(c)
+            headers.append(header_item.text() if header_item else "")
+        rows.append(headers)
+
+        # === Isi tabel yang terseleksi ===
+        for r in range(top, bottom + 1):
+            cols = []
+            for c in range(left, right + 1):
+                item = self.table.item(r, c)
+                val = item.text() if item else ""
+                if val.strip() in ("-", ""):
+                    val = "0"
+                cols.append(val)
+            rows.append(cols)
+
+        # === Buat teks untuk dua format ===
+        delimiter = get_system_delimiter()
+        csv_text = "\n".join([delimiter.join(row) for row in rows])
+        tsv_text = "\n".join(["\t".join(row) for row in rows])
+
+        # === Simpan ke clipboard dalam 3 format agar Excel pasti kenal ===
+        mime = QMimeData()
+        mime.setData("text/tab-separated-values", tsv_text.encode("utf-8"))
+        mime.setData("text/csv", csv_text.encode("utf-8"))
+        mime.setText(tsv_text)  # fallback umum
+
+        QApplication.clipboard().setMimeData(mime)
+
+    # === Fungsi kembali ke main window ===
+    def kembali_ke_main(self):
+        """Tutup jendela rekap dan tampilkan kembali MainWindow dengan tampilan normal."""
+        if self.parent_window:
+            self.parent_window.showNormal()
+            self.parent_window.showMaximized()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+            self.parent_window.repaint()
+            QTimer.singleShot(150, self.parent_window.repaint)
+        self.close()
+
 class UbahWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih ubah per TPS."""
 
@@ -16229,6 +17597,8 @@ class UbahWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -16242,7 +17612,7 @@ class UbahWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -16488,6 +17858,8 @@ class SaringWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -16498,7 +17870,7 @@ class SaringWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -16720,6 +18092,8 @@ class KtpWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -16730,7 +18104,7 @@ class KtpWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -16949,6 +18323,8 @@ class DifabelWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         if tahap == "DPHP":
             nama_tahapan = "DAFTAR PEMILIH HASIL PEMUTAKHIRAN PEMILU TAHUN 2029"
@@ -16959,7 +18335,7 @@ class DifabelWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         lbl_user = QLabel(nama_user)
         lbl_user.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -17178,6 +18554,8 @@ class UbahKelaminWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -17191,7 +18569,7 @@ class UbahKelaminWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -17439,6 +18817,8 @@ class UbahTPSWindow(QMainWindow):
         tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
         kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         desa = getattr(parent_window, "_desa", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # =========================================================
         # 🧾 Tentukan teks tahapan
@@ -17452,7 +18832,7 @@ class UbahTPSWindow(QMainWindow):
         else:
             nama_tahapan = "DAFTAR PEMILIH PEMILU TAHUN 2029"
 
-        lokasi_str = f"KECAMATAN {kecamatan} DESA {desa}"
+        lokasi_str = f"KECAMATAN {kecamatan} {self.label_wilayah.upper()} {desa}"
 
         # =========================================================
         # 🧍 Header User
@@ -17699,7 +19079,12 @@ class BeritaAcara(QMainWindow):
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
 
-        self.setWindowTitle(f"Berita Acara Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
+
+        self.setWindowTitle(
+            f"Berita Acara {self.label_wilayah.title()} {self.desa.strip().title()} – Tahap {self.tahap.strip().upper()}"
+        )
         self.setStyleSheet("background-color:#ffffff;")
         self.showMaximized()
 
@@ -18008,22 +19393,22 @@ class BeritaAcara(QMainWindow):
         story.append(Spacer(1, 8))
         story.append(Paragraph(
             f"<b>REKAPITULASI {judul_tahapan.upper()}<br/>"
-            f"TINGKAT DESA {self.desa.upper()}<br/>"
+            f"TINGKAT {self.label_wilayah.upper()} {self.desa.upper()}<br/>"
             "PEMILIHAN UMUM TAHUN 2029</b>", styles["CenterBold"]))
         story.append(Spacer(1, 8))
 
         # === Paragraf pembuka ===
         story.append(Paragraph(
             f"Pada hari {hari} tanggal {tanggal_lengkap_terbilang} "
-            f"bertempat di Desa {self.desa.title()}, PPS {self.desa.title()} "
-            f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat Desa "
+            f"bertempat di {self.label_wilayah.title()} {self.desa.title()}, PPS {self.desa.title()} "
+            f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat {self.label_wilayah.title()} "
             f"{self.desa.title()} untuk Pemilihan Umum Tahun 2029.",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
 
         story.append(Paragraph(
             f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi {judul_tahapan.title()} "
-            f"Desa {self.desa.title()} dengan rincian sebagai berikut:",
+            f"{self.label_wilayah.title()} {self.desa.title()} dengan rincian sebagai berikut:",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
 
@@ -18044,7 +19429,7 @@ class BeritaAcara(QMainWindow):
 
         # === Header tabel (1 cell gabungan, 2 baris teks) ===
         judul_header = Paragraph(
-            f"REKAPITULASI {judul_tahapan.upper()}<br/>DESA {self.desa.upper()}",
+            f"REKAPITULASI {judul_tahapan.upper()}<br/>{self.label_wilayah.upper()} {self.desa.upper()}",
             style_center
         )
 
@@ -18104,7 +19489,7 @@ class BeritaAcara(QMainWindow):
         # === Paragraf penutup ===
         story.append(Paragraph(
             f"Rekapitulasi {judul_tahapan.title()} tersebut selanjutnya ditetapkan secara lebih rinci "
-            f"dalam dokumen Rekapitulasi Tingkat Desa {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
+            f"dalam dokumen Rekapitulasi Tingkat {self.label_wilayah.title()} {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
             styles["JustifyArial"]))
         story.append(Spacer(1, 4))
 
@@ -18248,7 +19633,7 @@ class BeritaAcara(QMainWindow):
             story.append(Spacer(1, 8))
             story.append(Paragraph(
                 f"<b>REKAPITULASI {judul_tahapan.upper()}<br/>"
-                f"TINGKAT DESA {self.desa.upper()}<br/>"
+                f"TINGKAT {self.label_wilayah.upper()} {self.desa.upper()}<br/>"
                 "PEMILIHAN UMUM TAHUN 2029</b>", styles["CenterBold"]))
             story.append(Spacer(1, 8))
 
@@ -18265,21 +19650,21 @@ class BeritaAcara(QMainWindow):
 
             story.append(Paragraph(
                 f"Pada hari {hari} tanggal {tanggal_lengkap_terbilang} "
-                f"bertempat di Desa {self.desa.title()}, PPS {self.desa.title()} "
-                f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat Desa "
+                f"bertempat di {self.label_wilayah.title()} {self.desa.title()}, PPS {self.desa.title()} "
+                f"telah melaksanakan Rapat Pleno Terbuka Rekapitulasi {judul_tahapan.title()} Tingkat {self.label_wilayah.title()} "
                 f"{self.desa.title()} untuk Pemilihan Umum Tahun 2029.",
                 styles["JustifyArial"]))
             story.append(Spacer(1, 4))
 
             story.append(Paragraph(
                 f"Dalam Rapat tersebut, PPS {self.desa.title()} menetapkan Rekapitulasi {judul_tahapan.title()} "
-                f"Desa {self.desa.title()} dengan rincian sebagai berikut:",
+                f"{self.label_wilayah.title()} {self.desa.title()} dengan rincian sebagai berikut:",
                 styles["JustifyArial"]))
             story.append(Spacer(1, 6))
 
             # === Tabel rekap ===
             judul_header = Paragraph(
-                f"REKAPITULASI {judul_tahapan.upper()}<br/>DESA {self.desa.upper()}",
+                f"REKAPITULASI {judul_tahapan.upper()}<br/>{self.label_wilayah.upper()} {self.desa.upper()}",
                 ParagraphStyle("centered", parent=styles["CenterBold"], alignment=1, leading=14)
             )
 
@@ -18331,7 +19716,7 @@ class BeritaAcara(QMainWindow):
             # === Paragraf penutup ===
             story.append(Paragraph(
                 f"Rekapitulasi {judul_tahapan.title()} tersebut selanjutnya ditetapkan secara lebih rinci "
-                f"dalam dokumen Rekapitulasi Tingkat Desa {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
+                f"dalam dokumen Rekapitulasi Tingkat {self.label_wilayah.title()} {self.desa.title()} sebagaimana terlampir yang merupakan bagian tidak terpisahkan dari Berita Acara ini.",
                 styles["JustifyArial"]))
             story.append(Spacer(1, 4))
             story.append(Paragraph("Demikian Berita Acara ini dibuat untuk digunakan sebagaimana mestinya.", styles["JustifyArial"]))
@@ -18756,7 +20141,7 @@ class BeritaAcara(QMainWindow):
 
             # === 3️⃣ Format nama file ===
             waktu_str = datetime.datetime.now().strftime("%d%m%Y %H%M")  # ada spasi
-            nama_file = f"BA {tahap} Desa {desa} Pemilu 2029 {waktu_str}.pdf"
+            nama_file = f"BA {tahap} {self.label_wilayah.title()} {desa} Pemilu 2029 {waktu_str}.pdf"
             path_file = os.path.join(base_dir, nama_file)
 
             # === 4️⃣ Konfirmasi sebelum menyimpan (custom style) ===
@@ -19571,6 +20956,9 @@ class LampAdpp(QMainWindow):
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        self.kabupaten = getattr(parent_window, "_kabupaten", "").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # ====================== REGISTER FONT ==========================
         from reportlab.pdfbase import pdfmetrics
@@ -19620,7 +21008,7 @@ class LampAdpp(QMainWindow):
             self.current_tps_index = 0
             self.current_tps = self.tps_list[0]
 
-        self.setWindowTitle(f"Daftar Perubahan Pemilih Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.setWindowTitle(f"Daftar Perubahan Pemilih {self.label_wilayah.title()} {self.desa.title()} – Tahap {self.tahap}")
         self.setStyleSheet("background-color:#ffffff;")
         # ====================== LAYOUT UTAMA ==========================
         central = QWidget()
@@ -20101,6 +21489,8 @@ class LampAdpp(QMainWindow):
 
             # ---------- Identitas Wilayah ----------
             nama_kec = self.kecamatan
+            # 🧩 Hilangkan hanya kata "KOTA " di depan, biarkan "KABUPATEN" tetap tampil
+            nama_kab = self.kabupaten.upper().replace("KOTA ", "")
             nama_desa = self.desa
             tps_text = f"{int(tps_filter):03d}" if (tps_filter and str(tps_filter).isdigit()) else str(tps_filter or "-")
 
@@ -20113,11 +21503,20 @@ class LampAdpp(QMainWindow):
             )
 
             data_identitas = [
-                [Paragraph("PROVINSI", style_ident), Paragraph(":", style_ident), Paragraph("JAWA BARAT", style_ident),
-                "", Paragraph("KECAMATAN", style_ident), Paragraph(":", style_ident), Paragraph(nama_kec, style_ident)],
-                [Paragraph("KABUPATEN", style_ident), Paragraph(":", style_ident), Paragraph("TASIKMALAYA", style_ident),
-                "", Paragraph("DESA", style_ident), Paragraph(":", style_ident), Paragraph(nama_desa, style_ident)],
-                ["", "", "", "", Paragraph("TPS", style_ident), Paragraph(":", style_ident), Paragraph(tps_text, style_ident)],
+                [
+                    Paragraph("PROVINSI", style_ident), Paragraph(":", style_ident), Paragraph("JAWA BARAT", style_ident),
+                    "", Paragraph("KECAMATAN", style_ident), Paragraph(":", style_ident), Paragraph(nama_kec.upper(), style_ident)
+                ],
+                [
+                    Paragraph(f"{self.jenis_wilayah.upper()}", style_ident),
+                    Paragraph(":", style_ident), Paragraph(nama_kab, style_ident),
+                    "", Paragraph(f"{self.label_wilayah.upper()}", style_ident),
+                    Paragraph(":", style_ident), Paragraph(nama_desa.upper(), style_ident)
+                ],
+                [
+                    "", "", "", "",
+                    Paragraph("TPS", style_ident), Paragraph(":", style_ident), Paragraph(tps_text, style_ident)
+                ],
             ]
 
             tabel_identitas = Table(
@@ -20590,8 +21989,14 @@ class LampAdpp(QMainWindow):
 
             # ---------- Identitas Wilayah ----------
             nama_kec = self.kecamatan
+            # 🧩 Hilangkan hanya kata "KOTA " di depan, biarkan "KABUPATEN" tetap tampil
+            nama_kab = self.kabupaten.upper().replace("KOTA ", "")
             nama_desa = self.desa
-            tps_text = f"{int(tps_filter):03d}" if (tps_filter and str(tps_filter).isdigit()) else str(tps_filter or "-")
+            tps_text = (
+                f"{int(tps_filter):03d}"
+                if (tps_filter and str(tps_filter).isdigit())
+                else str(tps_filter or "-")
+            )
 
             style_ident = ParagraphStyle(
                 "IdentitasRapat",
@@ -20602,11 +22007,30 @@ class LampAdpp(QMainWindow):
             )
 
             data_identitas = [
-                [Paragraph("PROVINSI", style_ident), Paragraph(":", style_ident), Paragraph("JAWA BARAT", style_ident),
-                "", Paragraph("KECAMATAN", style_ident), Paragraph(":", style_ident), Paragraph(nama_kec, style_ident)],
-                [Paragraph("KABUPATEN", style_ident), Paragraph(":", style_ident), Paragraph("TASIKMALAYA", style_ident),
-                "", Paragraph("DESA", style_ident), Paragraph(":", style_ident), Paragraph(nama_desa, style_ident)],
-                ["", "", "", "", Paragraph("TPS", style_ident), Paragraph(":", style_ident), Paragraph(tps_text, style_ident)],
+                [
+                    Paragraph("PROVINSI", style_ident),
+                    Paragraph(":", style_ident),
+                    Paragraph("JAWA BARAT", style_ident),
+                    "",
+                    Paragraph("KECAMATAN", style_ident),
+                    Paragraph(":", style_ident),
+                    Paragraph(nama_kec.upper(), style_ident),
+                ],
+                [
+                    Paragraph(f"{self.jenis_wilayah.upper()}", style_ident),
+                    Paragraph(":", style_ident),
+                    Paragraph(nama_kab, style_ident),
+                    "",
+                    Paragraph(f"{self.label_wilayah.upper()}", style_ident),
+                    Paragraph(":", style_ident),
+                    Paragraph(nama_desa.upper(), style_ident),
+                ],
+                [
+                    "", "", "", "",
+                    Paragraph("TPS", style_ident),
+                    Paragraph(":", style_ident),
+                    Paragraph(tps_text, style_ident),
+                ],
             ]
 
             tabel_identitas = Table(
@@ -20860,7 +22284,7 @@ class LampAdpp(QMainWindow):
                 return
 
             waktu_str = datetime.now().strftime("%d-%m-%Y %H.%M")
-            path_file = os.path.join(base_dir, f"Model A-DPP {tahap} Desa {desa} {waktu_str}.pdf")
+            path_file = os.path.join(base_dir, f"Model A-DPP {tahap} {self.label_wilayah.title()} {desa} {waktu_str}.pdf")
 
             # ======================================================
             # 2️⃣ Ambil data badan adhoc
@@ -21008,7 +22432,7 @@ class LampAdpp(QMainWindow):
                 msg.setWindowTitle("Konfirmasi Cetak")
                 msg.setText(
                     f"<b>Pilih jenis pencetakan:</b><br><br>"
-                    f"• <b>Seluruh TPS</b> → Cetak semua TPS di Desa {desa}<br>"
+                    f"• <b>Seluruh TPS</b> → Cetak semua TPS di {self.label_wilayah.title()} {desa}<br>"
                     f"• <b>Hanya TPS Ini</b> → Cetak dokumen yang sedang tampil"
                 )
                 msg.setIcon(QMessageBox.Icon.Question)
@@ -21138,7 +22562,7 @@ class LampAdpp(QMainWindow):
                     QMessageBox.information(
                         self,
                         "Cetak Selesai",
-                        f"Model A-DPP untuk seluruh TPS di Desa {desa} berhasil dicetak ({total_dicetak} TPS)."
+                        f"Model A-DPP untuk seluruh TPS di {self.label_wilayah.title()} {desa} berhasil dicetak ({total_dicetak} TPS)."
                     )
 
                 else:
@@ -21273,14 +22697,17 @@ class LampArpp(QMainWindow):
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        self.kabupaten = getattr(parent_window, "_kabupaten", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # === Ambil daftar TPS ===
         self.tps_list = self.parent_window.get_distinct_tps()
         self.current_tps_index = 0
         self.current_tps = self.tps_list[0] if self.tps_list else "-"
 
-        self.setWindowTitle(f"Rekap Perubahan Pemilih Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.setWindowTitle(f"Rekap Perubahan Pemilih {self.label_wilayah.title()} {self.desa.title()} – Tahap {self.tahap}")
         self.setStyleSheet("background-color:#ffffff;")
 
         # ====================== REGISTER FONT ==========================
@@ -21628,14 +23055,23 @@ class LampArpp(QMainWindow):
 
             # === Identitas Wilayah ===
             ident_style = ParagraphStyle("Ident", fontName=self._font_base, fontSize=12, alignment=TA_LEFT)
+
+            # Bersihkan awalan "KOTA " / "KABUPATEN "
+            kab_clean = self.kabupaten.upper().replace("KOTA ", "").replace("KABUPATEN ", "")
+
             tps_text = f"{int(tps_filter):03d}" if (tps_filter and str(tps_filter).isdigit()) else str(tps_filter or "-")
 
             ident_tbl = Table([
-                [Paragraph("PROVINSI", ident_style), Paragraph(":", ident_style), Paragraph("JAWA BARAT", ident_style),
-                "", Paragraph("KECAMATAN", ident_style), Paragraph(":", ident_style), Paragraph(self.kecamatan, ident_style)],
-                [Paragraph("KABUPATEN", ident_style), Paragraph(":", ident_style), Paragraph("TASIKMALAYA", ident_style),
-                "", Paragraph("DESA", ident_style), Paragraph(":", ident_style), Paragraph(self.desa, ident_style)],
+                [
+                    Paragraph("PROVINSI", ident_style), Paragraph(":", ident_style), Paragraph("JAWA BARAT", ident_style),
+                    "", Paragraph("KECAMATAN", ident_style), Paragraph(":", ident_style), Paragraph(self.kecamatan.upper(), ident_style)
+                ],
+                [
+                    Paragraph(f"{self.jenis_wilayah.upper()}", ident_style), Paragraph(":", ident_style), Paragraph(kab_clean, ident_style),
+                    "", Paragraph(f"{self.label_wilayah.upper()}", ident_style), Paragraph(":", ident_style), Paragraph(self.desa.upper(), ident_style)
+                ],
             ], colWidths=[3*cm, 0.5*cm, 5*cm, 8*cm, 3.1*cm, 0.5*cm, 5*cm])
+
             story.append(ident_tbl)
             story.append(Spacer(1, 12))
 
@@ -21859,7 +23295,7 @@ class LampArpp(QMainWindow):
 
             # === 4️⃣ Format nama file ===
             waktu_str = datetime.datetime.now().strftime("%d-%m-%Y %H.%M")
-            nama_file = f"Model A-RPP {tahap} Desa {desa} {waktu_str}.pdf"
+            nama_file = f"Model A-RPP {tahap} {self.label_wilayah.title()} {desa} {waktu_str}.pdf"
             path_file = os.path.join(base_dir, nama_file)
 
             # === 5️⃣ Simpan PDF ke file ===
@@ -21984,9 +23420,12 @@ class LampRekapPps(QMainWindow):
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        self.kabupaten = getattr(parent_window, "_kabupaten", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
-        self.setWindowTitle(f"Rekap PPS Desa {self.desa.title()} – Tahap {self.tahap}")
+        self.setWindowTitle(f"Rekap PPS {self.label_wilayah.upper()} {self.desa.title()} – Tahap {self.tahap}")
         self.setStyleSheet("background-color:#ffffff;")
 
         # ====================== REGISTER FONT ==========================
@@ -22192,12 +23631,27 @@ class LampRekapPps(QMainWindow):
 
             # === Identitas Wilayah ===
             ident_style = ParagraphStyle("Ident", fontName=self._font_base, fontSize=12, alignment=TA_LEFT)
+
+            # 🧩 Hilangkan awalan "KOTA " saja dari nama kabupaten (biarkan "KABUPATEN")
+            kab_clean = self.kabupaten.upper().replace("KOTA ", "")
+
             ident_tbl = Table([
-                [Paragraph("PROVINSI", ident_style), Paragraph(": JAWA BARAT", ident_style),
-                "", Paragraph("KECAMATAN", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style)],
-                [Paragraph("KABUPATEN", ident_style), Paragraph(": TASIKMALAYA", ident_style),
-                "", Paragraph("DESA", ident_style), Paragraph(f": {self.desa.upper()}", ident_style)],
+                [
+                    Paragraph("PROVINSI", ident_style),
+                    Paragraph(": JAWA BARAT", ident_style),
+                    "",
+                    Paragraph("KECAMATAN", ident_style),
+                    Paragraph(f": {self.kecamatan.upper()}", ident_style)
+                ],
+                [
+                    Paragraph(f"{self.jenis_wilayah.upper()}", ident_style),
+                    Paragraph(f": {kab_clean}", ident_style),
+                    "",
+                    Paragraph(f"{self.label_wilayah.upper()}", ident_style),
+                    Paragraph(f": {self.desa.upper()}", ident_style)
+                ],
             ], colWidths=[3*cm, 4*cm, 2.8*cm, 3.1*cm, 4.7*cm], hAlign="CENTER")
+
             story.append(ident_tbl)
             story.append(Spacer(1, 8))
 
@@ -22405,7 +23859,7 @@ class LampRekapPps(QMainWindow):
             base_dir = os.path.join("C:/NexVo", tahap)
             os.makedirs(base_dir, exist_ok=True)
             waktu_str = datetime.datetime.now().strftime("%d-%m-%Y %H.%M")
-            path_file = os.path.join(base_dir, f"Model A-Rekap PPS {tahap} Desa {desa} {waktu_str}.pdf")
+            path_file = os.path.join(base_dir, f"Model A-Rekap PPS {tahap} {self.label_wilayah.title()} {desa} {waktu_str}.pdf")
             with open(path_file, "wb") as f:
                 f.write(data)
             QMessageBox.information(self, "Berhasil", f"PDF berhasil disimpan:\n{path_file}")
@@ -22524,13 +23978,16 @@ class LapCoklit(QMainWindow):
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
         self.kecamatan = getattr(parent_window, "_kecamatan", "").upper()
+        self.kabupaten = getattr(parent_window, "_kabupaten", "").upper()
         self.tahap = getattr(parent_window, "_tahapan", "DPHP").upper()
+        self.label_wilayah = DesaKel()
+        self.jenis_wilayah = KabKo()
 
         # === Ambil daftar TPS ===
         self.tps_list = self.parent_window.get_distinct_tps()
         self.current_tps_index = 0
 
-        self.setWindowTitle(f"Laporan Hasil Coklit Desa {self.desa.title()}")
+        self.setWindowTitle(f"Laporan Hasil Coklit {self.label_wilayah.title()} {self.desa.title()}")
         self.setStyleSheet("background-color:#ffffff;")
 
         # ====================== REGISTER FONT ==========================
@@ -22806,13 +24263,18 @@ class LapCoklit(QMainWindow):
                 ident_tbl = Table([
                     [Paragraph("PROVINSI", ident_style), Paragraph(": JAWA BARAT", ident_style),
                     "", Paragraph("NO TPS", ident_style), Paragraph(":", dbldt_style), Paragraph(nomor_tps, ident_style)],
-                    [Paragraph("KABUPATEN", ident_style), Paragraph(": TASIKMALAYA", ident_style),
+
+                    [Paragraph(f"{self.jenis_wilayah.upper()}", ident_style), Paragraph(f": {self.kabupaten.upper().replace('KOTA ', '').replace('KABUPATEN ', '')}", ident_style),
                     "", Paragraph("NAMA PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph(nama_pantarlih, ident_style)],
+
                     [Paragraph("KECAMATAN", ident_style), Paragraph(f": {self.kecamatan.upper()}", ident_style),
                     "", Paragraph("NIK PANTARLIH", ident_style), Paragraph(":", dbldt_style), Paragraph(nik_pantarlih, ident_style)],
-                    [Paragraph("DESA", ident_style), Paragraph(f": {self.desa.upper()}", ident_style),
+
+                    [Paragraph(f"{self.label_wilayah.upper()}", ident_style), Paragraph(f": {self.desa.upper()}", ident_style),
                     "", Paragraph("NO HP", ident_style), Paragraph(":", dbldt_style), Paragraph(hp_pantarlih, ident_style)],
-                ], colWidths=[2.9 * cm, 4 * cm, 2.5 * cm, 3.9 * cm, 0.5 * cm, 4.7 * cm], hAlign="CENTER")
+                ],
+                colWidths=[2.9 * cm, 5.5 * cm, 1 * cm, 3.9 * cm, 0.5 * cm, 4.7 * cm],
+                hAlign="CENTER")
 
                 ident_tbl.setStyle(TableStyle([
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -23420,7 +24882,7 @@ class LapCoklit(QMainWindow):
             os.makedirs(base_dir, exist_ok=True)
 
             waktu_str = datetime.datetime.now().strftime("%d%m%Y %H.%M")
-            path_file = os.path.join(base_dir, f"Laporan Hasil Coklit Desa {desa} {waktu_str}.pdf")
+            path_file = os.path.join(base_dir, f"Laporan Hasil Coklit {self.label_wilayah.title()} {desa} {waktu_str}.pdf")
 
             # === 5️⃣ Simpan file PDF ===
             data = buf.data()
@@ -23682,7 +25144,11 @@ class Data_Pantarlih(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.SelectedClicked |
+            QAbstractItemView.EditTrigger.DoubleClicked |
+            QAbstractItemView.EditTrigger.EditKeyPressed
+        )
         self.table.installEventFilter(self)
 
         # === Style ===
@@ -23876,10 +25342,24 @@ class Data_Pantarlih(QMainWindow):
 
                     def make_item(txt, align_center=False, readonly=False):
                         item = QTableWidgetItem(str(txt) if txt is not None else "")
+
                         if align_center:
                             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
                         if readonly:
-                            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                            # read only tapi tetap bisa dipilih supaya Delete tidak error
+                            item.setFlags(
+                                Qt.ItemFlag.ItemIsSelectable |
+                                Qt.ItemFlag.ItemIsEnabled
+                            )
+                        else:
+                            # editable: harus punya 3 flag ini
+                            item.setFlags(
+                                Qt.ItemFlag.ItemIsSelectable |
+                                Qt.ItemFlag.ItemIsEnabled |
+                                Qt.ItemFlag.ItemIsEditable
+                            )
+
                         return item
 
                     # Kolom data pantarlih
@@ -24028,11 +25508,43 @@ class Data_Pantarlih(QMainWindow):
     # 🧩 Event Filter untuk Ctrl+C / Ctrl+V (tanpa ganggu navigasi)
     # ===========================================================
     def eventFilter(self, obj, event):
-        """Menangani Ctrl+C dan Ctrl+V di QTableWidget dari/ke Excel."""
         if obj is self.table and event.type() == QEvent.Type.KeyPress:
             from PyQt6.QtGui import QKeySequence
 
-            # === PASTE dari Excel ===
+            # ==========================================================
+            # 1️⃣ DELETE / BACKSPACE → HAPUS SEMUA SEL TERPILIH
+            # ==========================================================
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+
+                # Ambil semua range yang terseleksi
+                ranges = self.table.selectedRanges()
+
+                if not ranges:
+                    return True
+
+                for r in ranges:
+                    for row in range(r.topRow(), r.bottomRow() + 1):
+                        for col in range(r.leftColumn(), r.rightColumn() + 1):
+
+                            # hanya kolom editable 2..8
+                            if 2 <= col <= 8:
+
+                                item = self.table.item(row, col)
+                                if item is None:
+                                    item = QTableWidgetItem("")
+                                    self.table.setItem(row, col, item)
+                                else:
+                                    item.setText("")
+
+                                # hitung otomatis stiker
+                                if col in (7, 8):
+                                    self.hitung_otomatis(row, col)
+
+                return True   # WAJIB hentikan event Qt
+
+            # ==========================================================
+            # 2️⃣ PASTE dari Excel
+            # ==========================================================
             if event.matches(QKeySequence.StandardKey.Paste):
                 text = QGuiApplication.clipboard().text()
                 if not text.strip():
@@ -24048,31 +25560,31 @@ class Data_Pantarlih(QMainWindow):
                 self.table.blockSignals(True)
                 try:
                     for r_idx, row_text in enumerate(rows):
-                        cols = row_text.split('\t')
+                        cols = row_text.split("\t")
                         for c_idx, value in enumerate(cols):
                             rr = start_row + r_idx
                             cc = start_col + c_idx
-                            # Kolom valid: 2..8 (nama, nik, hp, tanggal, lembar, s1, s2)
+
                             if rr >= self.table.rowCount() or cc < 2 or cc > 8:
                                 continue
 
                             item = QTableWidgetItem(value.strip())
 
-                            # Kolom rata tengah: HP(4), Lembar(6), Stiker1(7), Stiker2(8)
                             if cc in (3, 4, 5, 6, 7, 8):
                                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
                             self.table.setItem(rr, cc, item)
 
-                            # Trigger hitung otomatis bila stiker berubah
                             if cc in (7, 8):
                                 self.hitung_otomatis(rr, cc)
                 finally:
                     self.table.blockSignals(False)
                 return True
 
-            # === COPY ke Excel ===
-            elif event.matches(QKeySequence.StandardKey.Copy):
+            # ==========================================================
+            # 3️⃣ COPY ke Excel
+            # ==========================================================
+            if event.matches(QKeySequence.StandardKey.Copy):
                 ranges = self.table.selectedRanges()
                 if not ranges:
                     self._msgbox("Copy", "Pilih sel untuk di-copy.", "warn").exec()
@@ -24090,8 +25602,39 @@ class Data_Pantarlih(QMainWindow):
                 QGuiApplication.clipboard().setText("\n".join(lines))
                 return True
 
-        return super().eventFilter(obj, event)
+            # ==========================================================
+            # 4️⃣ LANGSUNG KETIK → MASUK MODE EDIT
+            # ==========================================================
+            if self.table.state() != QAbstractItemView.State.EditingState:
+                mods = event.modifiers()
+                if not (mods & (
+                    Qt.KeyboardModifier.ControlModifier |
+                    Qt.KeyboardModifier.AltModifier |
+                    Qt.KeyboardModifier.MetaModifier
+                )):
+                    ch = event.text()
 
+                    # abaikan tombol kosong, F1, panah, dsb
+                    if ch.strip() == "":
+                        return super().eventFilter(obj, event)
+
+                    row = self.table.currentRow()
+                    col = self.table.currentColumn()
+
+                    if row >= 0 and 2 <= col <= 8:
+                        item = self.table.item(row, col)
+                        if item is None:
+                            item = QTableWidgetItem()
+                            self.table.setItem(row, col, item)
+
+                        item.setText(ch)
+                        self.table.editItem(item)
+                        return True
+
+        # ==========================================================
+        # Default Qt behavior (panah, tab, enter saat sudah editing)
+        # ==========================================================
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         """Menangani navigasi dan edit dengan tombol tertentu."""
@@ -24312,6 +25855,9 @@ class CopyEventFilter(QObject):
 class RegisterWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._validating = False
+        self._skip_validation = False
+        self._just_shown_error = False
         self.setWindowTitle("Buat Akun Baru")
         self.setWindowIcon(app_icon())
         self.setWindowIcon(app_icon())
@@ -24362,7 +25908,24 @@ class RegisterWindow(QMainWindow):
         form_layout.addWidget(logo_label)
 
         # === Teks judul atas ===
-        title_label = QLabel("KOMISI PEMILIHAN UMUM<br>KABUPATEN TASIKMALAYA")
+        nama_kab = _get_user_kabupaten().strip()
+
+        # 1. Jika kosong → default: PROVINSI JAWA BARAT
+        if not nama_kab:
+            wilayah_final = "PROVINSI JAWA BARAT"
+
+        else:
+            nama_up = nama_kab.upper()
+
+            # 2. Jika mengandung KOTA → langsung pakai
+            if "KOTA" in nama_up:
+                wilayah_final = nama_up
+            else:
+                # 3. Bukan kota → tambahkan KABUPATEN
+                wilayah_final = f"KABUPATEN {nama_up}"
+
+        # Masukkan ke label
+        title_label = QLabel(f"KOMISI PEMILIHAN UMUM<br>{wilayah_final}")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("""
             QLabel {
@@ -24392,23 +25955,81 @@ class RegisterWindow(QMainWindow):
         self.email.setPlaceholderText("Email Aktif")
         form_layout.addWidget(self.email)
 
+        self.kec_list = []
+        self.desa_list = []
+
+        # === Kabupaten ===
+        self.kabupaten = QLineEdit()
+        self.kabupaten.setPlaceholderText("Ketik Kabupaten...")
+        self.kabupaten.textChanged.connect(lambda t: self.kabupaten.setText(t.upper()) if t != t.upper() else None)
+
+        kab_list = [k.upper() for k in get_kabupaten()]
+        self._prev_kab = ""  # backup nilai sebelumnya
+
+        kab_completer = QCompleter(kab_list, self)
+        kab_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        kab_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        kab_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.kabupaten.setCompleter(kab_completer)
+
+        # Validasi realtime
+        self.kabupaten.textChanged.connect(
+            lambda t: self.validate_input(self.kabupaten, t, kab_list, "_prev_kab")
+        )
+
+        # update kec/kel
+        self.kabupaten.textChanged.connect(self.update_kecamatan)
+        self.kabupaten.textChanged.connect(self.clear_kecamatan_desa)
+        form_layout.addWidget(self.kabupaten)
+
         # === Kecamatan ===
         self.kecamatan = QLineEdit()
         self.kecamatan.setPlaceholderText("Ketik Kecamatan...")
+
         self.kecamatan.textChanged.connect(lambda t: self.kecamatan.setText(t.upper()) if t != t.upper() else None)
-        kec_list = get_kecamatan()
-        completer = QCompleter(kec_list, self)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self.kecamatan.setCompleter(completer)
-        self.kecamatan.textChanged.connect(self.update_desa)
+        self.kecamatan.textChanged.connect(lambda t: setattr(self, "_kecamatan", t.strip()))
+
+        self._prev_kecamatan = ""
+
         form_layout.addWidget(self.kecamatan)
 
+        self.kec_completer = QCompleter([], self)
+        self.kec_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.kec_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.kec_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.kec_completer.activated.connect(lambda val: setattr(self, "_kecamatan", val.strip()))
+        self.kecamatan.setCompleter(self.kec_completer)
+
+        # Validasi realtime (setelah kabupaten terisi otomatis)
+        self.kecamatan.textChanged.connect(
+            lambda t: self.validate_input(self.kecamatan, t, self.kec_list, "_prev_kecamatan")
+        )
+        # 🔹 Event tambahan
+        self.kecamatan.textChanged.connect(self.update_desa)
+        self.kecamatan.textChanged.connect(self.clear_desa)
+
         # === Desa ===
-        self.desa = QComboBox()
-        self.desa.addItem("-- Pilih Desa --")
+        self.desa = QLineEdit()
+        self.desa.setPlaceholderText("Ketik Desa...")
+
+        self.desa.textChanged.connect(lambda t: self.desa.setText(t.upper()) if t != t.upper() else None)
+        self.desa.textChanged.connect(lambda t: setattr(self, "_desa", t.strip()))
+
+        self._prev_desa = ""
+
         form_layout.addWidget(self.desa)
+
+        self.desa_completer = QCompleter([], self)
+        self.desa_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.desa_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.desa_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.desa_completer.activated.connect(lambda val: setattr(self, "_desa", val.strip()))
+        self.desa.setCompleter(self.desa_completer)
+
+        # Validasi realtime
+        self.desa.textChanged.connect(
+            lambda t: self.validate_input(self.desa, t, self.desa_list, "_prev_desa")
+        )
 
         # === Password & Konfirmasi ===
         for field, placeholder in [(1, "Password"), (2, "Tulis Ulang Password")]:
@@ -24582,7 +26203,91 @@ class RegisterWindow(QMainWindow):
                     }
                 """)
         return super().eventFilter(obj, event)
+    
+    def blink_red(self, widget):
+        anim = QPropertyAnimation(widget, b"styleSheet")
+        anim.setDuration(300)
+        anim.setStartValue("border: 2px solid red; background-color: rgba(255, 0, 0, 60);")
+        anim.setEndValue("")
+        anim.start()
+        self._blink_anim = anim
 
+    def shake_widget(self, widget):
+        anim = QPropertyAnimation(widget, b"pos")
+        anim.setDuration(200)
+        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        x, y = widget.x(), widget.y()
+
+        anim.setKeyValueAt(0, QPoint(x, y))
+        anim.setKeyValueAt(0.2, QPoint(x - 5, y))
+        anim.setKeyValueAt(0.5, QPoint(x + 5, y))
+        anim.setKeyValueAt(0.7, QPoint(x - 5, y))
+        anim.setKeyValueAt(1, QPoint(x, y))
+
+        anim.start()
+        self._shake_anim = anim
+
+    def fuzzy_matches(self, text, source_list, limit=5, threshold=60):
+        res = process.extract(text, source_list, limit=limit)
+        return [r[0] for r in res if r[1] >= threshold]
+    
+    def validate_input(self, widget, text, valid_list, previous_attr_name):
+
+        # Jika baru saja tampil popup → jangan validasi 
+        if self._just_shown_error:
+            return
+
+        # BLOK VALIDASI dari trigger lain (clear, update_kecamatan, setText, dsb.)
+        if self._skip_validation:
+            return
+
+        # BLOK VALIDASI dari revert (mencegah loop)
+        if self._validating:
+            return
+
+        text = text.upper()
+
+        if not text:
+            setattr(self, previous_attr_name, "")
+            return
+
+        if any(text in k for k in valid_list):
+            setattr(self, previous_attr_name, text)
+            return
+
+        # === INVALID ===
+        self.blink_red(widget)
+        self.shake_widget(widget)
+
+        saran = self.fuzzy_matches(text, valid_list)
+        saran_text = "<br>".join(saran) if saran else "(Tidak ada saran)"
+
+        # Tandai bahwa popup baru saja muncul
+        self._just_shown_error = True
+
+        show_modern_error(
+            self,
+            "Data Tidak Valid",
+            f"Tidak ada kecocokan untuk '<b>{text}</b>'.<br><br>"
+            f"<b>Kemungkinan yang mirip:</b><br>{saran_text}"
+        )
+
+        # Reset flag setelah event loop berjalan
+        QTimer.singleShot(50, lambda: setattr(self, "_just_shown_error", False))
+
+        # --- REVERT TANPA MEMICU VALIDASI ---
+        self._validating = True
+        self._skip_validation = True
+
+        prev_val = getattr(self, previous_attr_name, "")
+
+        widget.blockSignals(True)
+        widget.setText(prev_val)
+        widget.blockSignals(False)
+
+        self._validating = False
+        self._skip_validation = False
 
     def toggle_password(self, field):
         if field.echoMode() == QLineEdit.EchoMode.Password:
@@ -24590,15 +26295,49 @@ class RegisterWindow(QMainWindow):
         else:
             field.setEchoMode(QLineEdit.EchoMode.Password)
 
+    def clear_kecamatan_desa(self):
+        """Kosongkan kecamatan & desa saat kabupaten berubah."""
+        self.kecamatan.blockSignals(True)
+        self.desa.blockSignals(True)
+        self.kecamatan.clear()
+        self.desa.clear()
+        self.kecamatan.blockSignals(False)
+        self.desa.blockSignals(False)
+
+    def clear_desa(self):
+        """Kosongkan desa saat kecamatan berubah."""
+        self.desa.blockSignals(True)
+        self.desa.clear()
+        self.desa.blockSignals(False)
+
+    def update_kecamatan(self):
+        kabupaten = self.kabupaten.text().strip()
+        if kabupaten:
+            kec_list = get_kecamatan(kabupaten)
+            distinct_kec = sorted(set(kec_list))
+            self.kec_list = [k.upper() for k in distinct_kec]
+            model = QStringListModel(distinct_kec)
+            self.kec_completer.setModel(model)
+        else:
+            self.kec_completer.setModel(QStringListModel([]))
+
+        # 🔹 Perbarui variabel internal supaya dashboard tahu nilai terakhir
+        self._kecamatan = self.kecamatan.text().strip()
+
+
     def update_desa(self):
         kecamatan = self.kecamatan.text().strip()
-        self.desa.clear()
         if kecamatan:
             desa_list = get_desa(kecamatan)
-            self.desa.addItem("-- Pilih Desa --")
-            self.desa.addItems(desa_list)
+            distinct_desa = sorted(set(desa_list))
+            self.desa_list = [d.upper() for d in distinct_desa]
+            model = QStringListModel(distinct_desa)
+            self.desa_completer.setModel(model)
         else:
-            self.desa.addItem("-- Pilih Desa --")
+            self.desa_completer.setModel(QStringListModel([]))
+
+        # 🔹 Tambahkan baris ini (penting!)
+        self._desa = self.desa.text().strip()
 
     # ===================================================
     # 🔹 Captcha generator
@@ -24648,18 +26387,21 @@ class RegisterWindow(QMainWindow):
     # =========================================================
     # 🔐 Buat Akun + Aktivasi OTP (UX modern, anti-hang)
     # =========================================================
-    def create_account(self):
+    @with_safe_db
+    def create_account(self, *args, **kwargs):
+        conn = kwargs.get("conn")
+        cur = conn.cursor()
         nama = self.nama.text().strip()
         email = self.email.text().strip()
+        kabupaten = self.kabupaten.text().strip()
         kecamatan = self.kecamatan.text().strip()
-        desa = self.desa.currentText().strip()
+        desa = self.desa.text().strip()
         pw = self.password.text().strip()
         pw2 = self.password2.text().strip()
         captcha = self.captcha_input.text().strip()
 
-        import re
         # 🔹 Validasi dasar
-        if not all([nama, email, kecamatan, desa, pw, pw2, captcha]):
+        if not all([nama, email, kabupaten, kecamatan, desa, pw, pw2, captcha]):
             show_modern_warning(self, "Error", "Semua kolom harus diisi!")
             return
         if "@" not in email or "." not in email:
@@ -24680,46 +26422,62 @@ class RegisterWindow(QMainWindow):
             self.refresh_captcha_image()
             return
         
+        # ================================
+        # 🔹 Validasi apakah desa/kelurahan valid
+        # ================================
+        if "KOTA" in kabupaten.upper():
+            unit_desa_title = "Kelurahan"
+            unit_desa_lower = "kelurahan"
+        else:
+            unit_desa_title = "Desa"
+            unit_desa_lower = "desa"
+
+        # Pastikan self.desa_list sudah berisi daftar desa utk kecamatan tsb
+        if desa.upper() not in [d.upper() for d in self.desa_list]:
+            show_modern_error(
+                self,
+                f"Nama {unit_desa_title} Salah",
+                f"Nama {unit_desa_title} '<b>{desa.title()}</b>' tidak ditemukan "
+                f"di Kecamatan '<b>{kecamatan.title()}</b>'."
+            )
+            return
+        
         # 🔒 Hash password + salt (email)
         salted_input = (pw + email).encode("utf-8")
         hashed_pw = hashlib.sha256(salted_input).hexdigest()
 
-        # Simpan akun baru ke DB
-        from db_manager import get_connection
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nama TEXT,
-                email TEXT,
-                kecamatan TEXT,
-                desa TEXT,
-                password TEXT,
-                otp_secret TEXT
-            )
-        """)
+        # 🧩 Simpan akun baru ke DB (AMAN karena conn disuntik dari decorator)
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nama TEXT,
+                    email TEXT,
+                    kabupaten TEXT,
+                    kecamatan TEXT,
+                    desa TEXT,
+                    password TEXT,
+                    otp_secret TEXT
+                )
+            """)
 
-        otp_secret = pyotp.random_base32()
-        cur.execute("DELETE FROM users")
-        cur.execute(
-            "INSERT INTO users (nama, email, kecamatan, desa, password, otp_secret) VALUES (?, ?, ?, ?, ?, ?)",
-            (nama, email, kecamatan, desa, hashed_pw, otp_secret)
-        )
-        conn.commit()
+            otp_secret = pyotp.random_base32()
+            cur.execute("DELETE FROM users")
+            cur.execute(
+                "INSERT INTO users (nama, email, kabupaten, kecamatan, desa, password, otp_secret) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (nama, email, kabupaten, kecamatan, desa, hashed_pw, otp_secret)
+            )
+            conn.commit()
+        except Exception as e:
+            show_modern_error(self, "Error Database", f"Gagal menyimpan akun:\n{e}")
+            return
 
         # 🔹 Generate QR untuk OTP
-        totp_uri = pyotp.TOTP(otp_secret).provisioning_uri(
-            name=email,
-            issuer_name="NexVo"
-        )
-
+        totp_uri = pyotp.TOTP(otp_secret).provisioning_uri(name=email, issuer_name="NexVo")
         qr = qrcode.make(totp_uri)
         buf = BytesIO(); qr.save(buf, format="PNG")
         pix = QPixmap(); pix.loadFromData(buf.getvalue())
 
-        # === Dialog QR ===
-        # 🌫️ Tambahkan overlay semi-blur di belakang dialog
         overlay = QWidget(self)
         overlay.setGeometry(self.rect())
         overlay.setStyleSheet("background-color: rgba(255, 255, 255, 180);")
@@ -24731,7 +26489,6 @@ class RegisterWindow(QMainWindow):
         blur.setBlurRadius(18)
         self.setGraphicsEffect(blur)
 
-        # === Dialog QR Asli ===
         qr_dialog = QDialog(self)
         qr_dialog.setWindowTitle("Aktivasi OTP")
         qr_dialog.setFixedSize(460, 600)
@@ -24778,7 +26535,6 @@ class RegisterWindow(QMainWindow):
         btn.setFixedSize(240, 46)
         vbox.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Klik tombol → lanjut verifikasi, lalu hilangkan overlay
         def lanjut_verifikasi():
             qr_dialog.accept()
             overlay.hide()
@@ -24786,12 +26542,7 @@ class RegisterWindow(QMainWindow):
             QTimer.singleShot(300, lambda: self._verify_otp_flow(otp_secret))
         btn.clicked.connect(lanjut_verifikasi)
 
-        # Kalau dialog ditutup manual (Alt+F4 / ESC) → overlay tetap dibersihkan
-        def bersihkan_overlay():
-            overlay.hide()
-            overlay.deleteLater()
-
-        qr_dialog.finished.connect(bersihkan_overlay)
+        qr_dialog.finished.connect(lambda: (overlay.hide(), overlay.deleteLater()))
         qr_dialog.exec()
 
     # =========================================================
@@ -25018,7 +26769,7 @@ if __name__ == "__main__":
 
     try:
         close_connection()
-        print("[INFO] Koneksi database ditutup dengan aman.")
+        #print("[INFO] Koneksi database ditutup dengan aman.")
     except Exception as e:
         print(f"[WARN] Gagal menutup koneksi database: {e}")
 
