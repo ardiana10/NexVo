@@ -4538,6 +4538,14 @@ class DetailInformasiPemilihDialog(QDialog):
 class LoginWindow(QMainWindow):
     def __init__(self, conn=None):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.conn = conn
         self.setWindowTitle("Login Akun")
         self.setWindowIcon(app_icon())
@@ -5378,6 +5386,14 @@ class LoginWindow(QMainWindow):
 class ResetPasswordDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
 
         # ============================================================
@@ -5977,6 +5993,15 @@ class MainWindow(QMainWindow):
     """Halaman utama sederhana sementara (dengan ikon di title bar bawaan)."""
     def __init__(self, nama, kabupaten, kecamatan, desa, db_name, tahapan):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
+
         self.setWindowIcon(app_icon())
 
         self._nama = nama
@@ -7456,13 +7481,38 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.showMaximized)
 
     def changeEvent(self, event):
-        """Pastikan label nama tetap di tengah saat jendela maximize / restore."""
-        from PyQt6.QtCore import QEvent, QTimer
+        """Pastikan label nama tetap di tengah dan batasi ukuran restore."""
+        from PyQt6.QtCore import QEvent, QTimer, Qt
+
         if event.type() == QEvent.Type.WindowStateChange:
+
+            # ================================
+            # 1. JAGA LABEL ANDA (sudah ada)
+            # ================================
             QTimer.singleShot(120, lambda: self.user_label.adjustSize())
             QTimer.singleShot(140, lambda: self.user_label.repaint())
             QTimer.singleShot(160, lambda: self.center_user_label(force_recalibrate=True))
+
+            # ================================
+            # 2. BATASI UKURAN RESTORE
+            # ================================
+            # Jika window keluar dari MAXIMIZE → NORMAL mode
+            if self.windowState() == Qt.WindowState.WindowNoState:
+
+                screen = self.screen().availableGeometry()
+                min_w = int(screen.width() * 0.70)   # 50% layar
+                min_h = int(screen.height() * 0.70)
+
+                # Jika ukuran restore terlalu kecil → paksa besarkan
+                QTimer.singleShot(50, lambda: self._apply_restore_limit(min_w, min_h))
+
         super().changeEvent(event)
+
+
+    def _apply_restore_limit(self, min_w, min_h):
+        """Paksa ukuran minimum ketika keluar dari maximize."""
+        if self.width() < min_w or self.height() < min_h:
+            self.resize(min_w, min_h)
 
     def style_button(self, btn, width=70, height=28, bg="#2d2d30", fg="white", bold=False):
         btn.setFixedSize(width, height)
@@ -15547,6 +15597,14 @@ class UnggahRegulerWindow(QWidget):
     """Jendela Unggah Webgrid TPS Reguler (editable table 500 baris)."""
     def __init__(self, main_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setPalette(QApplication.instance().palette())
         self.setWindowIcon(app_icon())
         self.main_window = main_window
@@ -16271,7 +16329,14 @@ class UnggahRegulerWindow(QWidget):
 class SesuaiWindow(QMainWindow):
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Sesuai")
@@ -16531,7 +16596,14 @@ class SesuaiWindow(QMainWindow):
 class RekapWindow(QMainWindow):
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Aktif")
@@ -16793,7 +16865,14 @@ class BaruWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru")
@@ -17055,7 +17134,14 @@ class PemulaWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru (non-DP4)")
@@ -17316,7 +17402,14 @@ class PemulaKode8(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Baru (DP4)")
@@ -17577,7 +17670,14 @@ class UbahWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Pemilih")
@@ -17838,7 +17938,14 @@ class SaringWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih TMS per TPS."""
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih TMS")
@@ -18072,7 +18179,14 @@ class KtpWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih KTPel per TPS."""
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih KTPel")
@@ -18303,7 +18417,14 @@ class DifabelWindow(QMainWindow):
     """Jendela maximize untuk rekap pemilih Disabilitas per TPS."""
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Pemilih Disabilitas")
@@ -18534,7 +18655,14 @@ class UbahKelaminWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()  # tidak pakai parent Qt
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
 
+        self.setMinimumSize(min_w, min_h)
         self.parent_window = parent_window  # simpan referensi manual
         self.setWindowIcon(app_icon())
         self.setWindowTitle("Rekap Perubahan Data Jenis Kelamin")
@@ -18797,6 +18925,14 @@ class UbahTPSWindow(QMainWindow):
 
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
 
@@ -19073,6 +19209,14 @@ class BeritaAcara(QMainWindow):
     """Jendela Berita Acara lengkap sesuai template resmi (2 halaman, dengan logo, input, navigasi, dan viewer)."""
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
@@ -20951,6 +21095,14 @@ class LampAdpp(QMainWindow):
     """Tampilan langsung Model A – Daftar Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
@@ -22693,6 +22845,14 @@ class LampArpp(QMainWindow):
     """Tampilan langsung Model A – Rekap Perubahan Pemilih (PDF muncul otomatis)."""
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
@@ -23416,6 +23576,14 @@ class LampRekapPps(QMainWindow):
     """Tampilan langsung Model A – Rekap Pemilih Aktif PPS (portrait, A4, Arial 12, lengkap fungsi simpan & print)."""
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
@@ -23974,6 +24142,14 @@ class LapCoklit(QMainWindow):
     """Tampilan langsung Model Laporan Hasil Coklit."""
     def __init__(self, parent_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.parent_window = parent_window
         self.desa = getattr(parent_window, "_desa", "").upper()
@@ -25050,6 +25226,14 @@ class Data_Pantarlih(QMainWindow):
     """Jendela pengisian data pantarlih per TPS — full SQLCipher native, cepat, dan stabil."""
     def __init__(self, lapcoklit_window):
         super().__init__()
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self.setWindowIcon(app_icon())
         self.lapcoklit = lapcoklit_window
         self.setWindowTitle("Data Pantarlih")
@@ -25855,6 +26039,14 @@ class CopyEventFilter(QObject):
 class RegisterWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # ============================================
+        # 🚫 Batasi ukuran minimum window (TIDAK BISA ditarik jadi kecil)
+        # ============================================
+        screen = self.screen().availableGeometry()
+        min_w = int(screen.width() * 0.70)   # 70% layar
+        min_h = int(screen.height() * 0.70)
+
+        self.setMinimumSize(min_w, min_h)
         self._validating = False
         self._skip_validation = False
         self._just_shown_error = False
@@ -26694,6 +26886,7 @@ if __name__ == "__main__":
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
     from db_manager import bootstrap, close_connection, DB_PATH
     from app_utils import app_icon  # hanya app_icon, karena apply_global_palette sudah ada di NexVo.py
+    from idle_watcher import GlobalIdleWatcher
 
     # ============================================================
     # 🧩 Single Instance Lock (tanpa dialog, otomatis fokus jendela lama)
@@ -26729,6 +26922,8 @@ if __name__ == "__main__":
     # 🔹 Buat QApplication lebih dulu
     # ============================================================
     app = QApplication(sys.argv)
+    # IDLE WATCHER GLOBAL: berlaku untuk seluruh aplikasi
+    idle = GlobalIdleWatcher(app)
     app.setStyle(QStyleFactory.create("Fusion"))
     apply_global_palette(app)
     app.setApplicationName("NexVo")
