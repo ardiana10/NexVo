@@ -28,27 +28,131 @@ KEY_PATH = KEY_DIR / "nexvo.key"
 NEXVO_DIR.mkdir(parents=True, exist_ok=True)
 KEY_DIR.mkdir(parents=True, exist_ok=True)
 
+# =========================================================
+# 🛡️ DPAPI WRAPPER (Windows only untuk lindungi file kunci)
+# =========================================================
+if os.name == "nt":
+    import ctypes
+    import ctypes.wintypes as wintypes
+
+    class _DATA_BLOB(ctypes.Structure):
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_byte)),
+        ]
+
+    def _dpapi_protect(data: bytes) -> bytes:
+        """Lindungi data dengan Windows DPAPI (terikat ke user saat ini)."""
+        if not data:
+            return b""
+        crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        buf = ctypes.create_string_buffer(data, len(data))
+        in_blob = _DATA_BLOB()
+        in_blob.cbData = len(data)
+        in_blob.pbData = ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte))
+        out_blob = _DATA_BLOB()
+
+        if not crypt32.CryptProtectData(
+            ctypes.byref(in_blob),
+            None,
+            None,
+            None,
+            None,
+            0,
+            ctypes.byref(out_blob),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        try:
+            return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        finally:
+            kernel32.LocalFree(out_blob.pbData)
+
+    def _dpapi_unprotect(data: bytes) -> bytes:
+        """Buka proteksi DPAPI dan kembalikan bytes mentah."""
+        if not data:
+            return b""
+        crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        buf = ctypes.create_string_buffer(data, len(data))
+        in_blob = _DATA_BLOB()
+        in_blob.cbData = len(data)
+        in_blob.pbData = ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte))
+        out_blob = _DATA_BLOB()
+
+        if not crypt32.CryptUnprotectData(
+            ctypes.byref(in_blob),
+            None,
+            None,
+            None,
+            None,
+            0,
+            ctypes.byref(out_blob),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        try:
+            return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        finally:
+            kernel32.LocalFree(out_blob.pbData)
+else:
+    # Di OS non-Windows, fallback: tidak ada proteksi tambahan.
+    def _dpapi_protect(data: bytes) -> bytes:
+        return data
+
+    def _dpapi_unprotect(data: bytes) -> bytes:
+        return data
 
 # =========================================================
 # 🔑 MUAT ATAU BUAT KUNCI ENKRIPSI
 # =========================================================
 def load_or_create_key():
-    """Buat atau baca kunci biner 32-byte (raw)."""
+    """
+    Buat atau baca kunci biner 32-byte (raw) untuk SQLCipher.
+    • Disimpan di KEY_PATH.
+    • Di Windows: isi file dilindungi dengan DPAPI (terikat ke user).
+    • Kompatibel dengan format lama yang masih menyimpan 32 byte mentah.
+    """
+    # Jika file belum ada → buat kunci baru lalu bungkus dengan DPAPI bila tersedia.
     if not KEY_PATH.exists():
         key = os.urandom(32)
-        KEY_PATH.write_bytes(key)
+        protected = _dpapi_protect(key)
+        KEY_PATH.write_bytes(protected)
         try:
             os.chmod(KEY_PATH, 0o600)
         except Exception:
             pass
         return key
-    data = KEY_PATH.read_bytes()
-    if len(data) != 32:
-        key = os.urandom(32)
-        KEY_PATH.write_bytes(key)
-        return key
-    return data
 
+    data = KEY_PATH.read_bytes()
+
+    # Kompatibilitas lama: jika tepat 32 byte → anggap plaintext lama, upgrade ke DPAPI.
+    if len(data) == 32:
+        key = data
+        try:
+            protected = _dpapi_protect(key)
+            KEY_PATH.write_bytes(protected)
+        except Exception as e:
+            print(f"[WARN] Gagal meng-upgrade nexvo.key ke DPAPI: {e}")
+        return key
+
+    # Selain itu anggap sebagai blob DPAPI
+    try:
+        key = _dpapi_unprotect(data)
+    except Exception as e:
+        QMessageBox.critical(
+            None,
+            "Kesalahan Kunci Database",
+            "File kunci nexvo.key tidak dapat dibuka.\n"
+            "Kemungkinan file rusak atau berasal dari komputer lain.\n\n"
+            f"Detail: {e}"
+        )
+        raise
+
+    if len(key) != 32:
+        raise ValueError("Kunci hasil DPAPI bukan 32 byte.")
+    return key
 
 # =========================================================
 # 🧱 INISIALISASI SCHEMA UTAMA

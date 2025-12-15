@@ -7,6 +7,7 @@ Berisi helper yang kompatibel untuk mode VSCode (dev) dan mode build (PyInstalle
 import os
 import sys
 from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QSize
 
 def resource_path(relative_path: str) -> str:
     """
@@ -21,9 +22,20 @@ def resource_path(relative_path: str) -> str:
 
 
 def app_icon() -> QIcon:
-    """
-    Mengembalikan QIcon global aplikasi (iconKPU.ico).
-    Aman dipakai di semua window (MainWindow, LoginWindow, dsb).
-    """
     icon_path = resource_path("icons/iconKPU.ico")
-    return QIcon(icon_path)
+
+    # 🔎 Biar ketahuan kalau path salah (sering kejadian saat dev/build)
+    if not os.path.exists(icon_path):
+        print(f"[WARN] Icon file tidak ditemukan: {icon_path}")
+        return QIcon()
+
+    ico = QIcon(icon_path)
+
+    # ✅ Force-load ukuran umum (mencegah taskbar kotak pada first show)
+    for s in (16, 20, 24, 32, 40, 48, 64, 128, 256):
+        _ = ico.pixmap(QSize(s, s))
+
+    if ico.isNull():
+        print(f"[WARN] QIcon kosong walau file ada: {icon_path}")
+
+    return ico

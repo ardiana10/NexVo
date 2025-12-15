@@ -29,6 +29,7 @@ import zipfile
 import shutil
 import json
 import time
+import secrets
 import gc
 import weakref
 from Crypto.Cipher import AES
@@ -41,6 +42,8 @@ from typing import Optional, List, Any
 from io import BytesIO
 import pyotp, qrcode
 #import datetime  # jika ada kode yang memakai gaya: datetime.date.today()
+
+from about_dialog import show_about_dialog
 
 # =========================
 # Database / SQLCipher
@@ -66,8 +69,8 @@ from app_utils import app_icon
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData, QObject, 
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QStringListModel
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData, QObject, qInstallMessageHandler,
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QStringListModel, QtMsgType
 )
 
 from PyQt6.QtGui import (
@@ -412,7 +415,7 @@ def show_modern_info(parent, title, text):
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
     msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ ganti NonModal → ApplicationModal
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
     _apply_modern_style(msg, accent="#ff6600")
 
     _fade_in_dialog(msg)
@@ -429,7 +432,7 @@ def show_modern_warning(parent, title, text):
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
     msg.setWindowModality(Qt.WindowModality.ApplicationModal)
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
     _apply_modern_style(msg, accent="#ff6600")
 
     _fade_in_dialog(msg)
@@ -446,7 +449,7 @@ def show_modern_error(parent, title, text):
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
 
     msg.setWindowModality(Qt.WindowModality.ApplicationModal)
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
     _apply_modern_style(msg, accent="#ff6600")
 
     _fade_in_dialog(msg)
@@ -461,7 +464,7 @@ def show_modern_question(parent, title, text):
     msg.setDefaultButton(QMessageBox.StandardButton.No)
 
     msg.setWindowModality(Qt.WindowModality.ApplicationModal)  # ✅ modal sinkron
-    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
     _apply_modern_style(msg, accent="#ff6600")
 
     # 🔹 Ganti teks tombol ke Bahasa Indonesia
@@ -697,8 +700,8 @@ class ModernMessage(QDialog):
 class ModernInputDialog(QDialog):
     def __init__(self, title, prompt, parent=None, is_password=False):
         super().__init__(parent)
+
         self.setWindowTitle(title)
-        self.setFixedSize(360, 200)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -730,9 +733,11 @@ class ModernInputDialog(QDialog):
             }
         """)
 
+        # ========= LAYOUT UTAMA =========
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(30, 20, 30, 20)
+        layout.setSpacing(10)
 
         # === Pesan ===
         label = QLabel(prompt)
@@ -754,9 +759,14 @@ class ModernInputDialog(QDialog):
         btn_layout.addWidget(btn_cancel)
         layout.addLayout(btn_layout)
 
-        # === Event handler ===
+        # Event handler
         btn_ok.clicked.connect(self.accept)
         btn_cancel.clicked.connect(self.reject)
+        # Enter = OK, Esc = Batal
+        self.line_edit.returnPressed.connect(self.accept)
+
+        # ========= UKURAN ADAPTIF =========
+        self._apply_adaptive_size(parent)
 
         # === Efek fade in ===
         opacity_effect = QGraphicsOpacityEffect(self)
@@ -767,8 +777,48 @@ class ModernInputDialog(QDialog):
         self.fade_anim.setEndValue(1)
         self.fade_anim.start()
 
+        # Center setelah layout & size fix
         QTimer.singleShot(0, self.center_on_screen)
 
+    # --------------------------------------
+    #  Hitung ukuran dialog adaptif
+    # --------------------------------------
+    def _apply_adaptive_size(self, parent):
+        """Set lebar/tinggi dialog adaptif terhadap layar/parent."""
+        # Cari area referensi (parent kalau ada, kalau tidak pakai screen)
+        avail_w = avail_h = 0
+        if parent is not None:
+            geo = parent.frameGeometry()
+            avail_w, avail_h = geo.width(), geo.height()
+        else:
+            scr = QApplication.primaryScreen()
+            if scr:
+                geo = scr.availableGeometry()
+                avail_w, avail_h = geo.width(), geo.height()
+
+        if avail_w <= 0 or avail_h <= 0:
+            # fallback default
+            avail_w, avail_h = 1280, 720
+
+        # Lebar target ~30% layar, dengan batas min/max
+        target_w = int(avail_w * 0.30)
+        min_w, max_w = 340, 520
+        dlg_w = max(min_w, min(target_w, max_w))
+
+        # Set dulu lebar fixed, biarkan layout hitung tinggi
+        self.setFixedWidth(dlg_w)
+        self.adjustSize()  # tinggi mengikuti isi label + input + tombol
+
+        # Batas tinggi (maks 50% tinggi layar)
+        min_h = 180
+        max_h = int(avail_h * 0.5)
+        dlg_h = max(min_h, min(self.height(), max_h))
+
+        self.setFixedSize(dlg_w, dlg_h)
+
+    # --------------------------------------
+    #  Gambar background rounded putih
+    # --------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -778,9 +828,19 @@ class ModernInputDialog(QDialog):
         painter.setPen(QPen(QColor(180, 180, 180, 200)))  # Border abu lembut
         painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 12, 12)
 
+    # --------------------------------------
+    #  Center di parent (kalau ada) atau di screen
+    # --------------------------------------
     def center_on_screen(self):
-        screen = QApplication.primaryScreen().geometry()
-        self.move(screen.center() - self.rect().center())
+        parent = self.parentWidget()
+        if parent is not None:
+            geo = parent.frameGeometry()
+            self.move(geo.center() - self.rect().center())
+        else:
+            scr = QApplication.primaryScreen()
+            if scr:
+                geo = scr.availableGeometry()
+                self.move(geo.center() - self.rect().center())
 
     def getText(self):
         """Kembalikan teks input jika OK ditekan."""
@@ -4189,7 +4249,7 @@ class DetailInformasiPemilihDialog(QDialog):
                 tbl = mw._active_table()
 
                 if not dpid or not tbl:
-                    QMessageBox.warning(self, "Error", "DPID atau tabel aktif tidak valid.")
+                    QMessageBox.warning(self, "Error", "Pemilih Baru tidak bisa di TMS kan.")
                     return
 
                 conn = get_connection()
@@ -4433,7 +4493,7 @@ class DetailInformasiPemilihDialog(QDialog):
 
             dpid = self.get_value("DPID")
             if not dpid:
-                raise Exception("DPID tidak ditemukan")
+                raise Exception("Tidak bisa ubah data Pemilih Baru")
 
             set_clauses = []
             values = []
@@ -4598,7 +4658,7 @@ class LoginWindow(QMainWindow):
 
         # 1. Jika kosong → default: PROVINSI JAWA BARAT
         if not nama_kab:
-            wilayah_final = "PROVINSI JAWA BARAT"
+            wilayah_final = ""
 
         else:
             nama_up = nama_kab.upper()
@@ -5717,8 +5777,8 @@ class HoverDelegate(QStyledItemDelegate):
         # 🌟 Modifikasi font untuk hover agar tetap elegan
         font = opt.font
         if index.row() == self.hovered_row and index.column() != 0:
-            font.setBold(True)
-            font.setPointSize(font.pointSize() - 2)
+            font.setBold(False)
+            font.setPointSize(font.pointSize())
         painter.setFont(font)
 
         # 🔹 Gambar teks dan isi sel seperti biasa
@@ -5732,13 +5792,26 @@ class CustomTable(QTableWidget):
 #### =================== Fungsi BackUp dan Restore ===================
 BACKUP_DIR = Path("C:/NexVo/BackUp")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_MAGIC = b"NVBAK1"
+
+# Ekstensi baru khas NexVo
+BACKUP_EXT = ".nxv"
+
+# Filter dialog: tetap bisa baca .bakx lama juga
+BACKUP_FILE_FILTER = "Backup NexVo (*.nxv *.bakx)"
+
+def generate_backup_code(length: int = 24, group: int = 4) -> str:
+    import secrets
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    raw = "".join(secrets.choice(alphabet) for _ in range(length))
+    return "-".join(raw[i:i + group] for i in range(0, len(raw), group))
+
 
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.bakx) termasuk database, key, OTP secret, dan file JSON pengaturan kolom."""
+    """Backup lengkap NexVo (.nxv) termasuk database, key, OTP secret, dan file JSON pengaturan kolom)."""
     ensure_dirs()
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    from db_manager import get_connection, load_or_create_key as db_load_key
 
-    from db_manager import get_connection
     conn = get_connection()
     cur = conn.cursor()
 
@@ -5759,7 +5832,7 @@ def backup_nexvo(parent=None):
         return
     otp_secret = row[0]
 
-    # === Verifikasi OTP ===
+    # === Verifikasi OTP (wajib sebelum backup) ===
     import pyotp
     code, ok = ModernInputDialog(
         "Verifikasi OTP",
@@ -5774,28 +5847,45 @@ def backup_nexvo(parent=None):
         show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
         return
 
+    # === Generate KODE BACKUP acak (pengganti password manual) ===
+    backup_code = generate_backup_code()
+    backup_pwd = backup_code.strip()  # ini yang dipakai untuk PBKDF2
+
     # === Path file JSON yang ikut dibackup ===
-    from pathlib import Path
-    appdata_path = Path(APPDATA) / "NexVo"
+    settings_dir = Path(APPDATA) / "NexVo" / "ColumnSettings"
     json_files = {
-        "column_widths_datapantarlih.json": appdata_path / "column_widths_datapantarlih.json",
-        "column_widths_unggahreguler.json": appdata_path / "column_widths_unggahreguler.json",
-        "NexVo/column_widths.json": appdata_path / "NexVo" / "column_widths.json",
+        "ColumnSettings/column_widths_datapantarlih.json": settings_dir / "column_widths_datapantarlih.json",
+        "ColumnSettings/column_widths_unggahreguler.json": settings_dir / "column_widths_unggahreguler.json",
+        "ColumnSettings/column_widths.json": settings_dir / "column_widths.json",
     }
 
     # === Kompres seluruh file penting ke buffer ZIP ===
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 🔹 Database dan Key
+        # 🔹 Database
         if DB_PATH.exists():
             zf.write(DB_PATH, "nexvo.db")
         else:
             print("[BACKUP WARNING] Database tidak ditemukan:", DB_PATH)
 
+        # 🔹 Key file saat ini — ikut untuk kompatibilitas
         if KEY_PATH.exists():
-            zf.write(KEY_PATH, "nexvo.key")
+            try:
+                zf.write(KEY_PATH, "nexvo.key")
+            except Exception as e:
+                print("[BACKUP WARNING] Gagal menambahkan nexvo.key:", e)
         else:
             print("[BACKUP WARNING] File key tidak ditemukan:", KEY_PATH)
+
+        # 🔹 Raw key 32 byte
+        try:
+            raw_key = db_load_key()
+            if isinstance(raw_key, str):
+                raw_key = raw_key.encode("utf-8")
+            zf.writestr("dbkey.bin", raw_key)
+            print("[BACKUP] Termasuk dbkey.bin (kunci SQLCipher mentah 32 byte).")
+        except Exception as e:
+            print("[BACKUP WARNING] Gagal menambahkan dbkey.bin:", e)
 
         # 🔹 File JSON pengaturan kolom
         for name, path in json_files.items():
@@ -5808,67 +5898,176 @@ def backup_nexvo(parent=None):
             except Exception as e:
                 print(f"[BACKUP WARNING] Gagal menambahkan {path}: {e}")
 
-        # 🔹 Metadata
+        # 🔹 Metadata OTP & informasi backup
         zf.writestr("otp.secret", otp_secret)
         zf.writestr("meta.txt", f"Backup dibuat: {datetime.now()}")
 
     data = buf.getvalue()
 
-    # === Enkripsi AES-GCM ===
+    # === Enkripsi AES-GCM dengan kode backup (via PBKDF2) ===
     salt = os.urandom(16)
-    key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
+    key = PBKDF2(backup_pwd, salt, dkLen=32, count=200_000)
     iv = os.urandom(12)
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    secret_bytes = otp_secret.encode()
-    secret_len = len(secret_bytes).to_bytes(2, "big")
-    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.bakx"
+    # 🔸 PAKAI SATU TIMESTAMP UNTUK BACKUP & FILE KODE
+    now = datetime.now()
+    ts = now.strftime("%d%m%Y %H%M")
+
+    backup_name = f"NexVo_BackUp {ts}{BACKUP_EXT}"
     backup_path = BACKUP_DIR / backup_name
 
     with open(backup_path, "wb") as f:
-        f.write(secret_len + secret_bytes + salt + iv + tag + ciphertext)
+        f.write(BACKUP_MAGIC)
+        f.write(salt)
+        f.write(iv)
+        f.write(tag)
+        f.write(ciphertext)
 
-    show_modern_info(parent, "Backup Selesai", f"File backup tersimpan di:\n{backup_path}")
+    # === Salin kode ke clipboard ===
+    clipboard = QApplication.clipboard()
+    clipboard.setText(backup_code)
 
+    # === SIMPAN KODE KE FILE .TXT (WAJIB) ===
+    # User hanya boleh memilih folder. Jika batal → backup juga dibatalkan.
+    folder = QFileDialog.getExistingDirectory(
+        parent,
+        "Pilih Folder untuk menyimpan Kode Backup",
+        str(BACKUP_DIR),
+    )
+
+    saved_txt_ok = False
+
+    if folder:
+        folder_path = Path(folder)
+        txt_name = f"restore_nexvo {ts}.txt"
+        save_path = folder_path / txt_name
+
+        try:
+            with open(save_path, "w", encoding="utf-8") as tf:
+                tf.write("Kode Backup NexVo (jangan bagikan ke siapa pun):\n")
+                tf.write(backup_code + "\n")
+            saved_txt_ok = True
+        except Exception as e:
+            print("[BACKUP WARNING] Gagal menyimpan kode backup ke file:", e)
+            saved_txt_ok = False
+
+    # Kalau file TXT tidak berhasil disimpan → HAPUS file backup & batalkan
+    if not saved_txt_ok:
+        try:
+            if backup_path.exists():
+                backup_path.unlink()
+                print("[BACKUP] Backup dibatalkan")
+        except Exception as e:
+            print("[BACKUP WARNING] Gagal menghapus file backup saat pembatalan:", e)
+
+        show_modern_warning(
+            parent,
+            "Backup Dibatalkan",
+            (
+                "Backup dibatalkan"
+            ),
+        )
+        return
+
+    # Info final ke user (hanya jika TXT berhasil disimpan)
+    msg = (
+        f"File backup tersimpan di:\n{backup_path}\n\n"
+        f"KODE BACKUP:\n{backup_code}\n\n"
+        "Kode ini sudah disimpan sebagai file:\n"
+        f"restore_nexvo {ts}.txt di folder yang Anda pilih.\n\n"
+        "Simpan kode ini di tempat yang sangat aman.\n"
+        "TANPA kode ini, file backup TIDAK bisa dipulihkan."
+    )
+    show_modern_info(parent, "Backup Selesai", msg)
 
 def restore_nexvo(parent=None):
-    """Pulihkan seluruh data NexVo dari file .bakx (termasuk database, key, OTP, dan file JSON pengaturan kolom)."""
+    """Pulihkan seluruh data NexVo dari file .bakx.
+
+    Mendukung dua format:
+    • Format BARU (direkomendasikan):
+        Header = BACKUP_MAGIC + salt(16) + iv(12) + tag(16) + ciphertext
+        Ciphertext = ZIP yang berisi nexvo.db, dbkey.bin, otp.secret, file JSON, dst.
+        Kunci AES-GCM = PBKDF2(password_backup, salt, 200k iter, 32 byte).
+    • Format LAMA (kompatibilitas):
+        Header = len(otp_secret)(2 byte) + otp_secret + salt + iv + tag + ciphertext
+        Ciphertext = ZIP lama berisi nexvo.db, nexvo.key, otp.secret, file JSON.
+        Kunci AES-GCM = PBKDF2(otp_secret, salt, 200k iter, 32 byte).
+    """
     ensure_dirs()
 
     bakx_path = QFileDialog.getOpenFileName(
         parent,
         "Pilih File Backup NexVo",
         "C:/NexVo/BackUp",
-        "Backup NexVo (*.bakx)"
+        BACKUP_FILE_FILTER
     )[0]
     if not bakx_path:
         return
 
+    is_new_format = False
+
+    # === Dekripsi file backup ===
     try:
         with open(bakx_path, "rb") as f:
             blob = f.read()
 
-        # === Header dekripsi ===
-        secret_len = int.from_bytes(blob[:2], "big")
-        otp_secret = blob[2:2 + secret_len].decode()
-        salt = blob[2 + secret_len:18 + secret_len]
-        iv = blob[18 + secret_len:30 + secret_len]
-        tag = blob[30 + secret_len:46 + secret_len]
-        ciphertext = blob[46 + secret_len:]
+        # Deteksi format baru vs lama
+        if blob.startswith(BACKUP_MAGIC):
+            is_new_format = True
 
-        key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
-        cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
-        data = cipher.decrypt_and_verify(ciphertext, tag)
+            # Format baru: magic + salt + iv + tag + ciphertext
+            offset = len(BACKUP_MAGIC)
+            salt = blob[offset:offset + 16]
+            iv = blob[offset + 16:offset + 28]
+            tag = blob[offset + 28:offset + 44]
+            ciphertext = blob[offset + 44:]
+
+            # Minta password backup
+            backup_pwd, ok_pwd = ModernInputDialog(
+                "Kode Backup",
+                (
+                    "File backup ini dilindungi dengan kode backup.\n"
+                    "Masukkan Kode Backup yang diberikan saat membuat backup:"
+                ),
+                parent,
+                is_password=True,  # tetap disembunyikan di layar
+            ).getText()
+            
+            if not ok_pwd or not backup_pwd.strip():
+                show_modern_warning(parent, "Dibatalkan", "Restore dibatalkan — password backup tidak diisi.")
+                return
+            backup_pwd = backup_pwd.strip()
+
+            key = PBKDF2(backup_pwd, salt, dkLen=32, count=200_000)
+            cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+            data = cipher.decrypt_and_verify(ciphertext, tag)
+        else:
+            # Format lama: tetap dukung agar backup lama masih bisa dipakai
+            secret_len = int.from_bytes(blob[:2], "big")
+            otp_secret = blob[2:2 + secret_len].decode()
+            salt = blob[2 + secret_len:18 + secret_len]
+            iv = blob[18 + secret_len:30 + secret_len]
+            tag = blob[30 + secret_len:46 + secret_len]
+            ciphertext = blob[46 + secret_len:]
+
+            key = PBKDF2(otp_secret, salt, dkLen=32, count=200_000)
+            cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+            data = cipher.decrypt_and_verify(ciphertext, tag)
 
     except Exception as e:
-        show_modern_error(parent, "Gagal Dekripsi",
-                          f"Backup rusak atau kode OTP salah.\n\n{e}")
+        show_modern_error(
+            parent,
+            "Gagal Dekripsi",
+            "Backup rusak atau password/format tidak cocok.\n\n"
+            f"{e}",
+        )
         print("[RESTORE ERROR]", e)
         return
 
+    # === Ekstrak hasil ZIP ke folder sementara ===
     try:
-        # === Ekstrak hasil ZIP ===
         temp_dir = Path(APPDATA) / "NexVoTempRestore"
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -5878,17 +6077,12 @@ def restore_nexvo(parent=None):
             zf.extractall(temp_dir)
 
         restored_db = temp_dir / "nexvo.db"
-        restored_key = temp_dir / "nexvo.key"
-        restored_otp = (temp_dir / "otp.secret").read_text().strip()
+        restored_key_file = temp_dir / "nexvo.key"   # format lama
+        restored_dbkey_bin = temp_dir / "dbkey.bin"  # format baru
+        otp_file = temp_dir / "otp.secret"
+        restored_otp = otp_file.read_text().strip() if otp_file.exists() else None
 
-        # === JSON yang akan direstore ===
-        json_restore_map = {
-            temp_dir / "column_widths_datapantarlih.json": Path(APPDATA) / "NexVo" / "column_widths_datapantarlih.json",
-            temp_dir / "column_widths_unggahreguler.json": Path(APPDATA) / "NexVo" / "column_widths_unggahreguler.json",
-            temp_dir / "NexVo" / "column_widths.json": Path(APPDATA) / "NexVo" / "NexVo" / "column_widths.json",
-        }
-
-        # === Tutup koneksi database ===
+        # === Tutup koneksi database aktif (kalau ada) ===
         try:
             from db_manager import close_connection
             close_connection()
@@ -5904,40 +6098,72 @@ def restore_nexvo(parent=None):
             except Exception as e:
                 print(f"[RESTORE WARNING] Tidak dapat hapus {target}: {e}")
 
-        # === Pindahkan database & key baru ===
+        # === Pindahkan database baru ===
         if restored_db.exists():
             shutil.move(str(restored_db), str(DB_PATH))
-        if restored_key.exists():
-            shutil.move(str(restored_key), str(KEY_PATH))
+        else:
+            raise FileNotFoundError("File nexvo.db tidak ditemukan di backup.")
+
+        # === Bangun ulang file KEY_PATH berdasarkan format backup ===
+        if is_new_format:
+            # Format baru: ambil raw key dari dbkey.bin dan tulis langsung sebagai 32 byte.
+            if restored_dbkey_bin.exists():
+                key_bytes = restored_dbkey_bin.read_bytes()
+                KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+                KEY_PATH.write_bytes(key_bytes)
+                print("[RESTORE] KEY_PATH dibuat ulang dari dbkey.bin.")
+            else:
+                raise FileNotFoundError("dbkey.bin tidak ditemukan di backup format baru.")
+        else:
+            # Format lama: pakai file nexvo.key apa adanya (32 byte mentah).
+            if restored_key_file.exists():
+                KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(restored_key_file), str(KEY_PATH))
+                print("[RESTORE] KEY_PATH dipulihkan dari nexvo.key (format lama).")
+            else:
+                raise FileNotFoundError("nexvo.key tidak ditemukan di backup format lama.")
 
         # === Restore file JSON (tidak hentikan proses jika error) ===
+        settings_dest = Path(APPDATA) / "NexVo" / "ColumnSettings"
+        json_restore_map = {
+            temp_dir / "ColumnSettings" / "column_widths_datapantarlih.json": settings_dest / "column_widths_datapantarlih.json",
+            temp_dir / "ColumnSettings" / "column_widths_unggahreguler.json": settings_dest / "column_widths_unggahreguler.json",
+            temp_dir / "ColumnSettings" / "column_widths.json": settings_dest / "column_widths.json",
+        }
+
         for src, dest in json_restore_map.items():
             try:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 if src.exists():
                     shutil.move(str(src), str(dest))
-                    #print(f"[RESTORE] File JSON dipulihkan: {dest.name}")
+                    # print(f"[RESTORE] File JSON dipulihkan: {dest.name}")
                 else:
                     print(f"[RESTORE WARNING] File JSON tidak ditemukan di backup: {src.name}")
             except Exception as e:
                 print(f"[RESTORE WARNING] Gagal restore {src.name}: {e}")
 
-        # === Update OTP secret ===
-        from db_manager import get_connection
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET otp_secret = ?", (restored_otp,))
-        conn.commit()
+        # === Update OTP secret di tabel users (jika tersedia) ===
+        if restored_otp:
+            try:
+                from db_manager import get_connection
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("UPDATE users SET otp_secret = ?", (restored_otp,))
+                conn.commit()
+            except Exception as e:
+                print("[RESTORE WARNING] Gagal meng-update otp_secret di database:", e)
 
         shutil.rmtree(temp_dir, ignore_errors=True)
         show_modern_info(parent, "Restore Berhasil", "Semua data NexVo berhasil dipulihkan.")
-        print(f"[RESTORE] Restore Berhasil, Semua data NexVo berhasil dipulihkan.")
+        print("[RESTORE] Restore Berhasil, semua data NexVo berhasil dipulihkan.")
+
+        # Kembali ke layar login
         win = LoginWindow()
         win.show()
         parent.close()
 
     except Exception as e:
-        show_modern_error(parent, "Gagal Restore", f"Kesalahan saat ekstraksi:\n\n{e}")
+        show_modern_error(parent, "Gagal Restore", f"Kesalahan saat ekstraksi/restore data:\n\n{e}")
         print("[RESTORE EXTRACT ERROR]", e)
 
 class CustomWatermarkedTable(QTableWidget):
@@ -6208,7 +6434,9 @@ class MainWindow(QMainWindow):
         action_backup.triggered.connect(lambda: backup_nexvo(self))
         help_menu.addAction(action_backup)
 
-        help_menu.addAction(QAction(" About", self))
+        action_about = QAction(" Tentang Aplikasi", self)
+        action_about.triggered.connect(lambda: show_about_dialog(self))
+        help_menu.addAction(action_about)
 
         # === Toolbar ===
         self.toolbar = QToolBar("Toolbar")
@@ -6618,7 +6846,7 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             QTableView::item:focus { outline: none; }
-            QTableWidget::item:hover { background-color: rgba(255, 247, 194, 100); }  /* hover serasi */
+            QTableWidget::item:hover { background-color: rgba(255, 247, 194, 120); }  /* hover serasi */
         """)
 
         # === Kolom lebar default ===
@@ -9111,16 +9339,14 @@ class MainWindow(QMainWindow):
         self.header_checkbox.raise_()
         self.header_checkbox.show()
 
-
     def toggle_all_rows_checkboxes(self, state):
         """Centang / hapus centang semua baris YANG TAMPIL (halaman aktif)."""
-        # Pastikan tipe enum
+
         try:
             state = Qt.CheckState(state)
         except Exception:
             return
 
-        # 🟠 KUNCI: anggap PartiallyChecked sebagai Checked (Select All)
         if state == Qt.CheckState.PartiallyChecked:
             state = Qt.CheckState.Checked
 
@@ -9131,19 +9357,38 @@ class MainWindow(QMainWindow):
 
         # Hindari loop sinyal
         self.table.blockSignals(True)
-        for r in range(self.table.rowCount()):    # hanya baris yang tampil (halaman aktif)
+
+        total_cols = self.table.columnCount()
+        total_rows = self.table.rowCount()
+
+        for r in range(total_rows):
+            # ====== SET CHECKBOX ======
             it = self.table.item(r, 0)
             if it is None:
                 it = QTableWidgetItem()
-                it.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                 self.table.setItem(r, 0, it)
+
             it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+
+            # ====== SINKRONKAN WARNA (seperti on_item_changed) ======
+            for c in range(total_cols):
+                cell = self.table.item(r, c)
+                if not cell:
+                    cell = QTableWidgetItem("")
+                    self.table.setItem(r, c, cell)
+
+                # Sama persis seperti on_item_changed
+                if checked:
+                    cell.setBackground(Qt.GlobalColor.lightGray)
+                else:
+                    cell.setBackground(Qt.GlobalColor.transparent)
+
         self.table.blockSignals(False)
 
         self.table.viewport().update()
         self.update_statusbar()
         QTimer.singleShot(0, self.sync_header_checkbox_state)
-
 
     def sync_header_checkbox_state(self):
         """Selaraskan status header dengan baris yang sedang terlihat."""
@@ -10028,7 +10273,7 @@ class MainWindow(QMainWindow):
                                 f"Berhasil resolve <b>{len(batch_data)}</b> pemilih.")
 
         except Exception as e:
-            show_modern_error(self, "Error", f"Gagal memproses batch:\n{e}")
+            pass
 
         finally:
             self._clear_row_selection(rows)
@@ -13234,17 +13479,16 @@ class MainWindow(QMainWindow):
             show_modern_warning(self, "Error", f"Gagal mengurutkan kolom LastUpdate:\n{e}")
 
     def connect_header_events(self):
-        """Pastikan koneksi klik header aktif setelah tabel diperbarui."""
         header = self.table.horizontalHeader()
         try:
-            header.sectionClicked.disconnect()
-        except Exception:
+            header.sectionClicked.disconnect(self.header_clicked)
+        except TypeError:
+            # belum pernah terhubung → abaikan
             pass
         header.sectionClicked.connect(self.header_clicked)
 
     def load_theme(self):
         return "light"
-
 
     # ============================================================
     # 🔹 Overlay Blur / Gelap — khas NexVo
@@ -14365,7 +14609,7 @@ class MainWindow(QMainWindow):
     def _get_column_config_path(self):
         """Dapatkan path file config lebar kolom user (lokasi: AppData/NexVo/column_widths.json)."""
         appdata = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-        config_dir = os.path.join(appdata, "NexVo")
+        config_dir = os.path.join(appdata, "ColumnSettings")
         os.makedirs(config_dir, exist_ok=True)
         return os.path.join(config_dir, "column_widths.json")
 
@@ -14504,7 +14748,7 @@ class MainWindow(QMainWindow):
     def _install_safe_shutdown_hooks(self):
         """Pasang hook aman agar database dan koneksi tertutup dengan benar saat keluar."""
         import atexit, signal
-        from db_manager import close_connection
+        from PyQt6.QtWidgets import QApplication
 
         # Pastikan flag & pointer ada
         if not hasattr(self, "_in_batch_mode"):
@@ -14512,20 +14756,18 @@ class MainWindow(QMainWindow):
         self._shared_conn = getattr(self, "_shared_conn", None)
         self._shared_cur  = getattr(self, "_shared_cur", None)
 
+        # ====== Cegah pemasangan hook berkali-kali ======
+        if getattr(self, "_shutdown_hooks_installed", False):
+            print("[HOOK] Safe shutdown hooks sudah aktif, skip.")
+            return
+        self._shutdown_hooks_installed = True
+
         # === Qt aboutToQuit ===
         app = QApplication.instance()
         if app:
-            try:
-                app.aboutToQuit.disconnect()
-            except Exception:
-                pass
             app.aboutToQuit.connect(lambda: self._shutdown("aboutToQuit"))
 
         # === Atexit fallback ===
-        try:
-            atexit.unregister(lambda: self._shutdown("atexit"))
-        except Exception:
-            pass
         atexit.register(lambda: self._shutdown("atexit"))
 
         # === Signal OS (Windows hanya SIGTERM yang efektif) ===
@@ -14533,6 +14775,7 @@ class MainWindow(QMainWindow):
             signal.signal(signal.SIGINT,  lambda s, f: self._shutdown("SIGINT"))
             signal.signal(signal.SIGTERM, lambda s, f: self._shutdown("SIGTERM"))
         except Exception:
+            # Tidak apa-apa kalau OS/lingkungan tidak mendukung
             pass
 
         print("[HOOK] Safe shutdown hooks NexVo aktif ✅")
@@ -14552,23 +14795,15 @@ class MainWindow(QMainWindow):
             if app:
                 app.quit()
 
-
     def closeEvent(self, event):
-        """Pastikan semua perubahan batch disimpan dan koneksi ditutup bersih."""
+        """Saat jendela utama ditutup: flush dulu, urusan tutup DB diserahkan ke _shutdown()."""
         try:
-            # 🟢 Commit semua transaksi batch (jika masih terbuka)
-            self._flush_db("closeEvent")
-
-            # 🔒 Tutup koneksi database global (dari db_manager)
-            close_connection()
-
+            if hasattr(self, "_flush_db"):
+                self._flush_db("closeEvent")
         except Exception as e:
-            print(f"[WARN] closeEvent: {e}")
+            print(f"[WARN] closeEvent: gagal flush DB: {e}")
 
-        # 🧹 Lanjutkan proses penutupan jendela normal
         super().closeEvent(event)
-
-
 
     def _flush_db(self, where=""):
         """
@@ -14623,7 +14858,8 @@ class MainWindow(QMainWindow):
             return
         self._did_shutdown = True
 
-        print(f"[INFO] Shutdown dipanggil dari {source or '(tidak diketahui)'}")
+        src = source or "(tidak diketahui)"
+        print(f"[INFO] Shutdown dipanggil dari {src}")
 
         # 1️⃣ Pastikan semua transaksi tersimpan
         try:
@@ -14631,7 +14867,7 @@ class MainWindow(QMainWindow):
                 self._flush_db(source or "_shutdown")
             print("[INFO] Transaksi terakhir tersimpan.")
         except Exception as e:
-            print(f"[WARN] _flush_db({source}) gagal: {e}")
+            print(f"[WARN] _flush_db({src}) gagal: {e}")
 
         # 2️⃣ Tutup koneksi SQLCipher utama
         try:
@@ -14655,7 +14891,6 @@ class MainWindow(QMainWindow):
 
         # 4️⃣ Konfirmasi shutdown selesai
         print("[INFO] Shutdown selesai (SQLCipher mode tunggal aktif). ✅\n")
-
 
     def _init_db_pragmas(self):
         """
@@ -16198,7 +16433,8 @@ class UnggahRegulerWindow(QWidget):
     # ===========================================================
     def _settings_path(self):
         """Path file JSON untuk menyimpan ukuran kolom Unggah Reguler."""
-        base_dir = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "NexVo")
+        appdata = os.getenv("APPDATA") or os.path.expanduser("~")
+        base_dir = os.path.join(appdata, "NexVo", "ColumnSettings")
         os.makedirs(base_dir, exist_ok=True)
         return os.path.join(base_dir, "column_widths_unggahreguler.json")
 
@@ -25575,7 +25811,8 @@ class Data_Pantarlih(QMainWindow):
     # ===========================================================
     def _settings_path(self):
         """Path file JSON untuk menyimpan ukuran kolom Data Pantarlih."""
-        base_dir = os.path.join(os.getenv("APPDATA") or os.path.expanduser("~"), "NexVo")
+        appdata = os.getenv("APPDATA") or os.path.expanduser("~")
+        base_dir = os.path.join(appdata, "NexVo", "ColumnSettings")
         os.makedirs(base_dir, exist_ok=True)
         return os.path.join(base_dir, "column_widths_datapantarlih.json")
 
@@ -26879,61 +27116,40 @@ class RegisterWindow(QMainWindow):
 
         dlg.exec()
         return code_holder["val"]
+
+def qt_message_handler(mode, context, message):
+    """
+    Filter pesan internal Qt yang ganggu, misalnya:
+    'QObject::disconnect: wildcard call disconnects from destroyed signal of PieChartItem::unnamed'
+    """
+    # 🔕 Buang pesan PieChartItem yang ganggu itu
+    if "PieChartItem::unnamed" in message:
+        return
+
+    # Sisanya tetap dicetak normal (kalau mau bisa dibedain per level)
+    if mode == QtMsgType.QtDebugMsg:
+        print(message)
+    elif mode == QtMsgType.QtWarningMsg:
+        print(f"[QtWarning] {message}")
+    elif mode == QtMsgType.QtCriticalMsg:
+        print(f"[QtCritical] {message}")
+    elif mode == QtMsgType.QtFatalMsg:
+        print(f"[QtFatal] {message}")
+    else:
+        print(message)
     
 if __name__ == "__main__":
     import os, sys, ctypes
     from PyQt6.QtWidgets import QApplication, QStyleFactory
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
-    from db_manager import bootstrap, close_connection, DB_PATH
-    from app_utils import app_icon  # hanya app_icon, karena apply_global_palette sudah ada di NexVo.py
+
+    from db_manager import bootstrap, close_connection
+    from app_utils import app_icon
     from idle_watcher import GlobalIdleWatcher
 
-    # ============================================================
-    # 🧩 Single Instance Lock (tanpa dialog, otomatis fokus jendela lama)
-    # ============================================================
     APP_ID = "com.kpu.nexvo"
-    socket = QLocalSocket()
-    socket.connectToServer(APP_ID)
-    if socket.waitForConnected(100):
-        # Jika sudah ada instance lain, kirim sinyal "ACTIVATE"
-        try:
-            socket.write(b"ACTIVATE")
-            socket.flush()
-            socket.waitForBytesWritten(100)
-        except Exception:
-            pass
-        sys.exit(0)
-    else:
-        server = QLocalServer()
-        server.listen(APP_ID)
 
-        # Tangani sinyal dari instance kedua → fokuskan jendela lama
-        def handle_new_connection():
-            sock = server.nextPendingConnection()
-            if sock and sock.waitForReadyRead(100):
-                msg = sock.readAll().data().decode().strip()
-                if msg == "ACTIVATE" and hasattr(globals(), "win"):
-                    win.raise_()
-                    win.activateWindow()
-            sock.disconnectFromServer()
-        server.newConnection.connect(handle_new_connection)
-
-    # ============================================================
-    # 🔹 Buat QApplication lebih dulu
-    # ============================================================
-    app = QApplication(sys.argv)
-    # IDLE WATCHER GLOBAL: berlaku untuk seluruh aplikasi
-    idle = GlobalIdleWatcher(app)
-    app.setStyle(QStyleFactory.create("Fusion"))
-    apply_global_palette(app)
-    app.setApplicationName("NexVo")
-
-    # ============================================================
-    # 🔹 Set ikon global aplikasi
-    # ============================================================
-    app.setWindowIcon(app_icon())
-
-    # 🪟 FIX: Pastikan ikon taskbar muncul di Windows
+    # ✅ Windows: set AppUserModelID SEBELUM Qt membuat QApplication / window apapun
     if os.name == "nt":
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
@@ -26941,7 +27157,55 @@ if __name__ == "__main__":
             print(f"[WARN] Gagal set AppUserModelID: {e}")
 
     # ============================================================
-    # 🔹 Inisialisasi database terenkripsi
+    # 🧩 Single Instance Lock
+    # ============================================================
+    socket = QLocalSocket()
+    socket.connectToServer(APP_ID)
+    if socket.waitForConnected(100):
+        try:
+            socket.write(b"ACTIVATE")
+            socket.flush()
+            socket.waitForBytesWritten(100)
+        except Exception:
+            pass
+        sys.exit(0)
+
+    server = QLocalServer()
+    server.listen(APP_ID)
+
+    def handle_new_connection():
+        sock = server.nextPendingConnection()
+        if sock and sock.waitForReadyRead(100):
+            msg = bytes(sock.readAll()).decode(errors="ignore").strip()
+            if msg == "ACTIVATE" and "win" in globals():
+                w = globals()["win"]
+                w.showNormal()
+                w.raise_()
+                w.activateWindow()
+        sock.disconnectFromServer()
+
+    server.newConnection.connect(handle_new_connection)
+
+    # ============================================================
+    # 🔹 Buat QApplication
+    # ============================================================
+    app = QApplication(sys.argv)
+    app.setApplicationName("NexVo")
+    app.setStyle(QStyleFactory.create("Fusion"))
+
+    apply_global_palette(app)
+
+    # ✅ Set ikon global aplikasi (taskbar & window yang belum punya icon)
+    ico = app_icon()
+    if ico.isNull():
+        print("[WARN] app_icon() menghasilkan icon kosong.")
+    app.setWindowIcon(ico)
+
+    # IDLE WATCHER GLOBAL
+    idle = GlobalIdleWatcher(app)
+
+    # ============================================================
+    # 🔹 Init DB
     # ============================================================
     conn = bootstrap()
     if conn is None:
@@ -26951,20 +27215,18 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # ============================================================
-    # 🔹 Jalankan halaman login utama
+    # 🔹 Jalankan login
     # ============================================================
     win = LoginWindow(conn)
-    globals()["win"] = win  # agar bisa difokuskan dari sinyal ACTIVATE
+    win.setWindowIcon(ico)   # ✅ paksa icon di window ini juga (lebih stabil di beberapa kasus)
+    globals()["win"] = win
     win.show()
-
-    # ============================================================
-    # 🔹 Jalankan event loop Qt & tutup koneksi saat keluar
-    # ============================================================
+    win.setWindowIcon(ico)   # ulang setelah show (kadang ngaruh di Windows)
+    app.processEvents()      # paksa refresh event awal
     exit_code = app.exec()
 
     try:
         close_connection()
-        #print("[INFO] Koneksi database ditutup dengan aman.")
     except Exception as e:
         print(f"[WARN] Gagal menutup koneksi database: {e}")
 
