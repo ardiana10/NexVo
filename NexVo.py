@@ -29,7 +29,6 @@ import zipfile
 import shutil
 import json
 import time
-import secrets
 import gc
 import weakref
 from Crypto.Cipher import AES
@@ -69,8 +68,8 @@ from app_utils import app_icon
 # PyQt6
 # =========================
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData, QObject, qInstallMessageHandler,
-    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QStringListModel, QtMsgType
+    Qt, QPropertyAnimation, QEasingCurve, QTimer, QRegularExpression, QPointF, QRectF, QByteArray, QStandardPaths, QMimeData, QObject, 
+    QRect, QEvent, QMargins, QVariantAnimation, QAbstractAnimation, QPoint, QSize, QIODevice, QBuffer, QDate, pyqtSignal, QStringListModel
 )
 
 from PyQt6.QtGui import (
@@ -700,8 +699,8 @@ class ModernMessage(QDialog):
 class ModernInputDialog(QDialog):
     def __init__(self, title, prompt, parent=None, is_password=False):
         super().__init__(parent)
-
         self.setWindowTitle(title)
+        self.setFixedSize(360, 200)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -733,11 +732,9 @@ class ModernInputDialog(QDialog):
             }
         """)
 
-        # ========= LAYOUT UTAMA =========
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(30, 20, 30, 20)
-        layout.setSpacing(10)
 
         # === Pesan ===
         label = QLabel(prompt)
@@ -759,14 +756,9 @@ class ModernInputDialog(QDialog):
         btn_layout.addWidget(btn_cancel)
         layout.addLayout(btn_layout)
 
-        # Event handler
+        # === Event handler ===
         btn_ok.clicked.connect(self.accept)
         btn_cancel.clicked.connect(self.reject)
-        # Enter = OK, Esc = Batal
-        self.line_edit.returnPressed.connect(self.accept)
-
-        # ========= UKURAN ADAPTIF =========
-        self._apply_adaptive_size(parent)
 
         # === Efek fade in ===
         opacity_effect = QGraphicsOpacityEffect(self)
@@ -777,48 +769,8 @@ class ModernInputDialog(QDialog):
         self.fade_anim.setEndValue(1)
         self.fade_anim.start()
 
-        # Center setelah layout & size fix
         QTimer.singleShot(0, self.center_on_screen)
 
-    # --------------------------------------
-    #  Hitung ukuran dialog adaptif
-    # --------------------------------------
-    def _apply_adaptive_size(self, parent):
-        """Set lebar/tinggi dialog adaptif terhadap layar/parent."""
-        # Cari area referensi (parent kalau ada, kalau tidak pakai screen)
-        avail_w = avail_h = 0
-        if parent is not None:
-            geo = parent.frameGeometry()
-            avail_w, avail_h = geo.width(), geo.height()
-        else:
-            scr = QApplication.primaryScreen()
-            if scr:
-                geo = scr.availableGeometry()
-                avail_w, avail_h = geo.width(), geo.height()
-
-        if avail_w <= 0 or avail_h <= 0:
-            # fallback default
-            avail_w, avail_h = 1280, 720
-
-        # Lebar target ~30% layar, dengan batas min/max
-        target_w = int(avail_w * 0.30)
-        min_w, max_w = 340, 520
-        dlg_w = max(min_w, min(target_w, max_w))
-
-        # Set dulu lebar fixed, biarkan layout hitung tinggi
-        self.setFixedWidth(dlg_w)
-        self.adjustSize()  # tinggi mengikuti isi label + input + tombol
-
-        # Batas tinggi (maks 50% tinggi layar)
-        min_h = 180
-        max_h = int(avail_h * 0.5)
-        dlg_h = max(min_h, min(self.height(), max_h))
-
-        self.setFixedSize(dlg_w, dlg_h)
-
-    # --------------------------------------
-    #  Gambar background rounded putih
-    # --------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -828,19 +780,9 @@ class ModernInputDialog(QDialog):
         painter.setPen(QPen(QColor(180, 180, 180, 200)))  # Border abu lembut
         painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 12, 12)
 
-    # --------------------------------------
-    #  Center di parent (kalau ada) atau di screen
-    # --------------------------------------
     def center_on_screen(self):
-        parent = self.parentWidget()
-        if parent is not None:
-            geo = parent.frameGeometry()
-            self.move(geo.center() - self.rect().center())
-        else:
-            scr = QApplication.primaryScreen()
-            if scr:
-                geo = scr.availableGeometry()
-                self.move(geo.center() - self.rect().center())
+        screen = QApplication.primaryScreen().geometry()
+        self.move(screen.center() - self.rect().center())
 
     def getText(self):
         """Kembalikan teks input jika OK ditekan."""
@@ -4249,7 +4191,7 @@ class DetailInformasiPemilihDialog(QDialog):
                 tbl = mw._active_table()
 
                 if not dpid or not tbl:
-                    QMessageBox.warning(self, "Error", "Pemilih Baru tidak bisa di TMS kan.")
+                    QMessageBox.warning(self, "Error", "DPID atau tabel aktif tidak valid.")
                     return
 
                 conn = get_connection()
@@ -4493,7 +4435,7 @@ class DetailInformasiPemilihDialog(QDialog):
 
             dpid = self.get_value("DPID")
             if not dpid:
-                raise Exception("Tidak bisa ubah data Pemilih Baru")
+                raise Exception("DPID tidak ditemukan")
 
             set_clauses = []
             values = []
@@ -4658,7 +4600,7 @@ class LoginWindow(QMainWindow):
 
         # 1. Jika kosong → default: PROVINSI JAWA BARAT
         if not nama_kab:
-            wilayah_final = ""
+            wilayah_final = "PROVINSI JAWA BARAT"
 
         else:
             nama_up = nama_kab.upper()
@@ -5794,24 +5736,19 @@ BACKUP_DIR = Path("C:/NexVo/BackUp")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_MAGIC = b"NVBAK1"
 
-# Ekstensi baru khas NexVo
-BACKUP_EXT = ".nxv"
-
-# Filter dialog: tetap bisa baca .bakx lama juga
-BACKUP_FILE_FILTER = "Backup NexVo (*.nxv *.bakx)"
-
-def generate_backup_code(length: int = 24, group: int = 4) -> str:
-    import secrets
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    raw = "".join(secrets.choice(alphabet) for _ in range(length))
-    return "-".join(raw[i:i + group] for i in range(0, len(raw), group))
-
-
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.nxv) termasuk database, key, OTP secret, dan file JSON pengaturan kolom)."""
-    ensure_dirs()
-    from db_manager import get_connection, load_or_create_key as db_load_key
+    """Backup lengkap NexVo (.bakx) termasuk database, key, OTP secret, dan file JSON pengaturan kolom).
 
+    Desain baru:
+    • Backup HANYA bisa dibuat setelah verifikasi OTP.
+    • Isi backup dienkripsi AES-GCM dengan password backup khusus (bukan OTP).
+    • Header file: BACKUP_MAGIC + salt + iv + tag + ciphertext.
+    • Di dalam ZIP: nexvo.db, (opsional) nexvo.key, dbkey.bin (raw key 32 byte), otp.secret, dan file JSON.
+    """
+    ensure_dirs()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    from db_manager import get_connection, load_or_create_key as db_load_key
     conn = get_connection()
     cur = conn.cursor()
 
@@ -5847,13 +5784,40 @@ def backup_nexvo(parent=None):
         show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
         return
 
-    # === Generate KODE BACKUP acak (pengganti password manual) ===
-    backup_code = generate_backup_code()
-    backup_pwd = backup_code.strip()  # ini yang dipakai untuk PBKDF2
+    # === Minta password backup (berbeda dengan OTP) ===
+    backup_pwd, ok_pwd = ModernInputDialog(
+        "Password Backup",
+        (
+            "Buat password untuk file backup (.bakx).\n"
+            "Password ini akan diminta lagi saat melakukan restore.\n\n"
+            "CATAT baik-baik password ini. Jika lupa, backup tidak bisa dipakai."
+        ),
+        parent,
+        is_password=True,
+    ).getText()
+    if not ok_pwd or not backup_pwd.strip():
+        show_modern_warning(parent, "Dibatalkan", "Backup dibatalkan — password backup tidak diisi.")
+        return
+
+    backup_pwd2, ok_pwd2 = ModernInputDialog(
+        "Konfirmasi Password Backup",
+        "Masukkan kembali password backup yang sama:",
+        parent,
+        is_password=True,
+    ).getText()
+    if not ok_pwd2:
+        show_modern_warning(parent, "Dibatalkan", "Backup dibatalkan — konfirmasi password dibatalkan.")
+        return
+    if backup_pwd.strip() != backup_pwd2.strip():
+        show_modern_error(parent, "Password Tidak Sama", "Password backup dan konfirmasinya tidak cocok.")
+        return
+    backup_pwd = backup_pwd.strip()
 
     # === Path file JSON yang ikut dibackup ===
-    settings_dir = Path(APPDATA) / "NexVo" / "ColumnSettings"
+    from pathlib import Path as _Path
+    settings_dir = _Path(APPDATA) / "NexVo" / "ColumnSettings"
     json_files = {
+        # simpan di dalam ZIP di folder ColumnSettings/...
         "ColumnSettings/column_widths_datapantarlih.json": settings_dir / "column_widths_datapantarlih.json",
         "ColumnSettings/column_widths_unggahreguler.json": settings_dir / "column_widths_unggahreguler.json",
         "ColumnSettings/column_widths.json": settings_dir / "column_widths.json",
@@ -5868,7 +5832,7 @@ def backup_nexvo(parent=None):
         else:
             print("[BACKUP WARNING] Database tidak ditemukan:", DB_PATH)
 
-        # 🔹 Key file saat ini — ikut untuk kompatibilitas
+        # 🔹 Key file saat ini — ikut saja untuk kompatibilitas (tidak dipakai di restore baru)
         if KEY_PATH.exists():
             try:
                 zf.write(KEY_PATH, "nexvo.key")
@@ -5877,7 +5841,7 @@ def backup_nexvo(parent=None):
         else:
             print("[BACKUP WARNING] File key tidak ditemukan:", KEY_PATH)
 
-        # 🔹 Raw key 32 byte
+        # 🔹 Raw key 32 byte (langsung dari db_manager.load_or_create_key)
         try:
             raw_key = db_load_key()
             if isinstance(raw_key, str):
@@ -5904,83 +5868,25 @@ def backup_nexvo(parent=None):
 
     data = buf.getvalue()
 
-    # === Enkripsi AES-GCM dengan kode backup (via PBKDF2) ===
+    # === Enkripsi AES-GCM dengan password backup ===
     salt = os.urandom(16)
     key = PBKDF2(backup_pwd, salt, dkLen=32, count=200_000)
     iv = os.urandom(12)
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    # 🔸 PAKAI SATU TIMESTAMP UNTUK BACKUP & FILE KODE
-    now = datetime.now()
-    ts = now.strftime("%d%m%Y %H%M")
-
-    backup_name = f"NexVo_BackUp {ts}{BACKUP_EXT}"
+    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.bakx"
     backup_path = BACKUP_DIR / backup_name
 
     with open(backup_path, "wb") as f:
+        # Format baru: magic + salt + iv + tag + ciphertext
         f.write(BACKUP_MAGIC)
         f.write(salt)
         f.write(iv)
         f.write(tag)
         f.write(ciphertext)
 
-    # === Salin kode ke clipboard ===
-    clipboard = QApplication.clipboard()
-    clipboard.setText(backup_code)
-
-    # === SIMPAN KODE KE FILE .TXT (WAJIB) ===
-    # User hanya boleh memilih folder. Jika batal → backup juga dibatalkan.
-    folder = QFileDialog.getExistingDirectory(
-        parent,
-        "Pilih Folder untuk menyimpan Kode Backup",
-        str(BACKUP_DIR),
-    )
-
-    saved_txt_ok = False
-
-    if folder:
-        folder_path = Path(folder)
-        txt_name = f"restore_nexvo {ts}.txt"
-        save_path = folder_path / txt_name
-
-        try:
-            with open(save_path, "w", encoding="utf-8") as tf:
-                tf.write("Kode Backup NexVo (jangan bagikan ke siapa pun):\n")
-                tf.write(backup_code + "\n")
-            saved_txt_ok = True
-        except Exception as e:
-            print("[BACKUP WARNING] Gagal menyimpan kode backup ke file:", e)
-            saved_txt_ok = False
-
-    # Kalau file TXT tidak berhasil disimpan → HAPUS file backup & batalkan
-    if not saved_txt_ok:
-        try:
-            if backup_path.exists():
-                backup_path.unlink()
-                print("[BACKUP] Backup dibatalkan")
-        except Exception as e:
-            print("[BACKUP WARNING] Gagal menghapus file backup saat pembatalan:", e)
-
-        show_modern_warning(
-            parent,
-            "Backup Dibatalkan",
-            (
-                "Backup dibatalkan"
-            ),
-        )
-        return
-
-    # Info final ke user (hanya jika TXT berhasil disimpan)
-    msg = (
-        f"File backup tersimpan di:\n{backup_path}\n\n"
-        f"KODE BACKUP:\n{backup_code}\n\n"
-        "Kode ini sudah disimpan sebagai file:\n"
-        f"restore_nexvo {ts}.txt di folder yang Anda pilih.\n\n"
-        "Simpan kode ini di tempat yang sangat aman.\n"
-        "TANPA kode ini, file backup TIDAK bisa dipulihkan."
-    )
-    show_modern_info(parent, "Backup Selesai", msg)
+    show_modern_info(parent, "Backup Selesai", f"File backup tersimpan di:\n{backup_path}")
 
 def restore_nexvo(parent=None):
     """Pulihkan seluruh data NexVo dari file .bakx.
@@ -6001,7 +5907,7 @@ def restore_nexvo(parent=None):
         parent,
         "Pilih File Backup NexVo",
         "C:/NexVo/BackUp",
-        BACKUP_FILE_FILTER
+        "Backup NexVo (*.bakx)"
     )[0]
     if not bakx_path:
         return
@@ -6026,15 +5932,14 @@ def restore_nexvo(parent=None):
 
             # Minta password backup
             backup_pwd, ok_pwd = ModernInputDialog(
-                "Kode Backup",
+                "Password Backup",
                 (
-                    "File backup ini dilindungi dengan kode backup.\n"
-                    "Masukkan Kode Backup yang diberikan saat membuat backup:"
+                    "File backup ini menggunakan password.\n"
+                    "Masukkan password backup untuk melanjutkan:"
                 ),
                 parent,
-                is_password=True,  # tetap disembunyikan di layar
+                is_password=True,
             ).getText()
-            
             if not ok_pwd or not backup_pwd.strip():
                 show_modern_warning(parent, "Dibatalkan", "Restore dibatalkan — password backup tidak diisi.")
                 return
@@ -10273,7 +10178,7 @@ class MainWindow(QMainWindow):
                                 f"Berhasil resolve <b>{len(batch_data)}</b> pemilih.")
 
         except Exception as e:
-            pass
+            show_modern_error(self, "Error", f"Gagal memproses batch:\n{e}")
 
         finally:
             self._clear_row_selection(rows)
@@ -13479,16 +13384,17 @@ class MainWindow(QMainWindow):
             show_modern_warning(self, "Error", f"Gagal mengurutkan kolom LastUpdate:\n{e}")
 
     def connect_header_events(self):
+        """Pastikan koneksi klik header aktif setelah tabel diperbarui."""
         header = self.table.horizontalHeader()
         try:
-            header.sectionClicked.disconnect(self.header_clicked)
-        except TypeError:
-            # belum pernah terhubung → abaikan
+            header.sectionClicked.disconnect()
+        except Exception:
             pass
         header.sectionClicked.connect(self.header_clicked)
 
     def load_theme(self):
         return "light"
+
 
     # ============================================================
     # 🔹 Overlay Blur / Gelap — khas NexVo
@@ -14748,7 +14654,7 @@ class MainWindow(QMainWindow):
     def _install_safe_shutdown_hooks(self):
         """Pasang hook aman agar database dan koneksi tertutup dengan benar saat keluar."""
         import atexit, signal
-        from PyQt6.QtWidgets import QApplication
+        from db_manager import close_connection
 
         # Pastikan flag & pointer ada
         if not hasattr(self, "_in_batch_mode"):
@@ -14756,18 +14662,20 @@ class MainWindow(QMainWindow):
         self._shared_conn = getattr(self, "_shared_conn", None)
         self._shared_cur  = getattr(self, "_shared_cur", None)
 
-        # ====== Cegah pemasangan hook berkali-kali ======
-        if getattr(self, "_shutdown_hooks_installed", False):
-            print("[HOOK] Safe shutdown hooks sudah aktif, skip.")
-            return
-        self._shutdown_hooks_installed = True
-
         # === Qt aboutToQuit ===
         app = QApplication.instance()
         if app:
+            try:
+                app.aboutToQuit.disconnect()
+            except Exception:
+                pass
             app.aboutToQuit.connect(lambda: self._shutdown("aboutToQuit"))
 
         # === Atexit fallback ===
+        try:
+            atexit.unregister(lambda: self._shutdown("atexit"))
+        except Exception:
+            pass
         atexit.register(lambda: self._shutdown("atexit"))
 
         # === Signal OS (Windows hanya SIGTERM yang efektif) ===
@@ -14775,7 +14683,6 @@ class MainWindow(QMainWindow):
             signal.signal(signal.SIGINT,  lambda s, f: self._shutdown("SIGINT"))
             signal.signal(signal.SIGTERM, lambda s, f: self._shutdown("SIGTERM"))
         except Exception:
-            # Tidak apa-apa kalau OS/lingkungan tidak mendukung
             pass
 
         print("[HOOK] Safe shutdown hooks NexVo aktif ✅")
@@ -14795,15 +14702,23 @@ class MainWindow(QMainWindow):
             if app:
                 app.quit()
 
-    def closeEvent(self, event):
-        """Saat jendela utama ditutup: flush dulu, urusan tutup DB diserahkan ke _shutdown()."""
-        try:
-            if hasattr(self, "_flush_db"):
-                self._flush_db("closeEvent")
-        except Exception as e:
-            print(f"[WARN] closeEvent: gagal flush DB: {e}")
 
+    def closeEvent(self, event):
+        """Pastikan semua perubahan batch disimpan dan koneksi ditutup bersih."""
+        try:
+            # 🟢 Commit semua transaksi batch (jika masih terbuka)
+            self._flush_db("closeEvent")
+
+            # 🔒 Tutup koneksi database global (dari db_manager)
+            close_connection()
+
+        except Exception as e:
+            print(f"[WARN] closeEvent: {e}")
+
+        # 🧹 Lanjutkan proses penutupan jendela normal
         super().closeEvent(event)
+
+
 
     def _flush_db(self, where=""):
         """
@@ -14858,8 +14773,7 @@ class MainWindow(QMainWindow):
             return
         self._did_shutdown = True
 
-        src = source or "(tidak diketahui)"
-        print(f"[INFO] Shutdown dipanggil dari {src}")
+        print(f"[INFO] Shutdown dipanggil dari {source or '(tidak diketahui)'}")
 
         # 1️⃣ Pastikan semua transaksi tersimpan
         try:
@@ -14867,7 +14781,7 @@ class MainWindow(QMainWindow):
                 self._flush_db(source or "_shutdown")
             print("[INFO] Transaksi terakhir tersimpan.")
         except Exception as e:
-            print(f"[WARN] _flush_db({src}) gagal: {e}")
+            print(f"[WARN] _flush_db({source}) gagal: {e}")
 
         # 2️⃣ Tutup koneksi SQLCipher utama
         try:
@@ -14891,6 +14805,7 @@ class MainWindow(QMainWindow):
 
         # 4️⃣ Konfirmasi shutdown selesai
         print("[INFO] Shutdown selesai (SQLCipher mode tunggal aktif). ✅\n")
+
 
     def _init_db_pragmas(self):
         """
@@ -15046,17 +14961,40 @@ class MainWindow(QMainWindow):
             # ================================================================
             # 🔹 0️⃣ Verifikasi: Pastikan tanggal BA sudah diisi
             # ================================================================
+            BULAN_ID = {
+                1: "Januari",
+                2: "Februari",
+                3: "Maret",
+                4: "April",
+                5: "Mei",
+                6: "Juni",
+                7: "Juli",
+                8: "Agustus",
+                9: "September",
+                10: "Oktober",
+                11: "November",
+                12: "Desember",
+            }
+
             def format_tanggal_indonesia(tanggal_str):
+                """
+                Konversi '2025-12-02' -> '2 Desember 2025'
+                Fokus Windows (tanpa locale)
+                """
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
+
                 try:
-                    try:
-                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                    except Exception:
-                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                     tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                    return tgl.strftime("%d %B %Y")
-                except Exception:
+
+                    hari = tgl.day            # tanpa leading zero
+                    bulan = BULAN_ID[tgl.month]
+                    tahun = tgl.year
+
+                    return f"{hari} {bulan} {tahun}"
+
+                except Exception as e:
+                    print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                     return str(tanggal_str)
 
             # ambil data adhoc terakhir
@@ -15141,17 +15079,40 @@ class MainWindow(QMainWindow):
             # ================================================================
             # 🔹 0️⃣ Verifikasi tanggal BA
             # ================================================================
+            BULAN_ID = {
+                1: "Januari",
+                2: "Februari",
+                3: "Maret",
+                4: "April",
+                5: "Mei",
+                6: "Juni",
+                7: "Juli",
+                8: "Agustus",
+                9: "September",
+                10: "Oktober",
+                11: "November",
+                12: "Desember",
+            }
+
             def format_tanggal_indonesia(tanggal_str):
+                """
+                Konversi '2025-12-02' -> '2 Desember 2025'
+                Fokus Windows (tanpa locale)
+                """
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
+
                 try:
-                    try:
-                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                    except Exception:
-                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                     tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                    return tgl.strftime("%d %B %Y")
-                except Exception:
+
+                    hari = tgl.day            # tanpa leading zero
+                    bulan = BULAN_ID[tgl.month]
+                    tahun = tgl.year
+
+                    return f"{hari} {bulan} {tahun}"
+
+                except Exception as e:
+                    print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                     return str(tanggal_str)
 
             data_ba = _DialogDataBA.load_last_badan_adhoc()
@@ -15240,19 +15201,40 @@ class MainWindow(QMainWindow):
             # ================================================================
             # 🔹 0️⃣ Validasi tanggal berita acara (BA)
             # ================================================================
+            BULAN_ID = {
+                1: "Januari",
+                2: "Februari",
+                3: "Maret",
+                4: "April",
+                5: "Mei",
+                6: "Juni",
+                7: "Juli",
+                8: "Agustus",
+                9: "September",
+                10: "Oktober",
+                11: "November",
+                12: "Desember",
+            }
+
             def format_tanggal_indonesia(tanggal_str):
+                """
+                Konversi '2025-12-02' -> '2 Desember 2025'
+                Fokus Windows (tanpa locale)
+                """
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
+
                 try:
-                    import locale
-                    from datetime import datetime
-                    try:
-                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                    except Exception:
-                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                     tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                    return tgl.strftime("%d %B %Y")
-                except Exception:
+
+                    hari = tgl.day            # tanpa leading zero
+                    bulan = BULAN_ID[tgl.month]
+                    tahun = tgl.year
+
+                    return f"{hari} {bulan} {tahun}"
+
+                except Exception as e:
+                    print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                     return str(tanggal_str)
 
             data_ba = _DialogDataBA.load_last_badan_adhoc()
@@ -19728,18 +19710,22 @@ class BeritaAcara(QMainWindow):
         # =============================
         # 🔹 Format hari & tanggal terbilang
         # =============================
-        try:
-            locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-        except:
-            try:
-                locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
-            except:
-                pass
+        # Mapping aman (Windows, konsisten)
+        HARI_ID = {
+            0: "Senin", 1: "Selasa", 2: "Rabu", 3: "Kamis",
+            4: "Jumat", 5: "Sabtu", 6: "Minggu"
+        }
+        BULAN_ID = {
+            1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
+            5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
+            9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+        }
 
         pydate = tanggal_qdate.toPyDate()
-        hari = pydate.strftime("%A").capitalize()              # contoh: jumat
-        bulan = pydate.strftime("%B").capitalize()             # contoh: september
-        tanggal_angka = pydate.day
+
+        hari = HARI_ID[pydate.weekday()]     # Senin..Minggu
+        bulan = BULAN_ID[pydate.month]       # Januari..Desember
+        tanggal_angka = pydate.day           # 2 (bukan 02)
         tahun_angka = pydate.year
 
         tanggal_terbilang = terbilang_bilangan(tanggal_angka).strip().title()
@@ -19881,7 +19867,7 @@ class BeritaAcara(QMainWindow):
         # === Blok lokasi dan tanggal dibuat dalam tabel dua kolom agar titik dua sejajar ===
         data_ttd = [
             ["Dibuat di", f": {self.desa.title()}"],
-            ["Pada Tanggal", f": {pydate.strftime('%d %B %Y')}"]
+            ["Pada Tanggal", f": {tanggal_angka} {bulan} {tahun_angka}"]  # ✅ tanpa leading zero
         ]
 
         tbl_ttd = Table(data_ttd, colWidths=[80, 100])  # kolom 1 label, kolom 2 isi
@@ -21749,19 +21735,38 @@ class LampAdpp(QMainWindow):
     def generate_adpp_pdf(self, tps_filter=None):
         """Membuat PDF ADPP (KET ≠ 0) super cepat, dengan header dan footer 'Hal X dari Y'."""
         # ---------- Locale ----------
+        BULAN_ID = {
+            1: "Januari",
+            2: "Februari",
+            3: "Maret",
+            4: "April",
+            5: "Mei",
+            6: "Juni",
+            7: "Juli",
+            8: "Agustus",
+            9: "September",
+            10: "Oktober",
+            11: "November",
+            12: "Desember",
+        }
+
         def format_tanggal_indonesia(tanggal_str: str) -> str:
-            """Konversi '2025-10-20' menjadi '20 Oktober 2025' (Bahasa Indonesia)."""
+            """
+            Konversi '2025-12-02' -> '2 Desember 2025'
+            Fokus Windows (tanpa locale)
+            """
             if not tanggal_str or not isinstance(tanggal_str, str):
                 return "..................."
 
             try:
-                try:
-                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")  # Linux/macOS
-                except Exception:
-                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")  # Windows
-
                 tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                return tgl.strftime("%d %B %Y")
+
+                hari = tgl.day            # tanpa leading zero
+                bulan = BULAN_ID[tgl.month]
+                tahun = tgl.year
+
+                return f"{hari} {bulan} {tahun}"
+
             except Exception as e:
                 print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                 return str(tanggal_str)
@@ -22259,17 +22264,40 @@ class LampAdpp(QMainWindow):
     def _build_adpp_story(self, tps_filter=None):
         """Bangun elemen 'story' identik dengan generate_adpp_pdf(), tanpa viewer."""
         # ---------- Format tanggal ----------
+        BULAN_ID = {
+            1: "Januari",
+            2: "Februari",
+            3: "Maret",
+            4: "April",
+            5: "Mei",
+            6: "Juni",
+            7: "Juli",
+            8: "Agustus",
+            9: "September",
+            10: "Oktober",
+            11: "November",
+            12: "Desember",
+        }
+
         def format_tanggal_indonesia(tanggal_str: str) -> str:
+            """
+            Konversi '2025-12-02' -> '2 Desember 2025'
+            Fokus Windows (tanpa locale)
+            """
             if not tanggal_str or not isinstance(tanggal_str, str):
                 return "..................."
+
             try:
-                try:
-                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                except Exception:
-                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                 tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                return tgl.strftime("%d %B %Y")
-            except Exception:
+
+                hari = tgl.day            # tanpa leading zero
+                bulan = BULAN_ID[tgl.month]
+                tahun = tgl.year
+
+                return f"{hari} {bulan} {tahun}"
+
+            except Exception as e:
+                print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                 return str(tanggal_str)
 
         # ---------- Ambil data badan adhoc ----------
@@ -22677,17 +22705,40 @@ class LampAdpp(QMainWindow):
             # ======================================================
             # 2️⃣ Ambil data badan adhoc
             # ======================================================
+            BULAN_ID = {
+                1: "Januari",
+                2: "Februari",
+                3: "Maret",
+                4: "April",
+                5: "Mei",
+                6: "Juni",
+                7: "Juli",
+                8: "Agustus",
+                9: "September",
+                10: "Oktober",
+                11: "November",
+                12: "Desember",
+            }
+
             def format_tanggal_indonesia(tanggal_str):
+                """
+                Konversi '2025-12-02' -> '2 Desember 2025'
+                Fokus Windows (tanpa locale)
+                """
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
+
                 try:
-                    try:
-                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                    except Exception:
-                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                     tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                    return tgl.strftime("%d %B %Y")
-                except Exception:
+
+                    hari = tgl.day            # tanpa leading zero
+                    bulan = BULAN_ID[tgl.month]
+                    tahun = tgl.year
+
+                    return f"{hari} {bulan} {tahun}"
+
+                except Exception as e:
+                    print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                     return str(tanggal_str)
 
             data_ba = _DialogDataBA.load_last_badan_adhoc()
@@ -23301,19 +23352,38 @@ class LampArpp(QMainWindow):
     # ===========================================================
     def generate_arpp_pdf(self, tps_filter=None):
         """Bangun PDF ARPP dari data yang sudah dihasilkan di MainWindow.generate_arpp()."""
+        BULAN_ID = {
+            1: "Januari",
+            2: "Februari",
+            3: "Maret",
+            4: "April",
+            5: "Mei",
+            6: "Juni",
+            7: "Juli",
+            8: "Agustus",
+            9: "September",
+            10: "Oktober",
+            11: "November",
+            12: "Desember",
+        }
+
         def format_tanggal_indonesia(tanggal_str: str) -> str:
-            """Konversi '2025-10-20' menjadi '20 Oktober 2025' (Bahasa Indonesia)."""
+            """
+            Konversi '2025-12-02' -> '2 Desember 2025'
+            Fokus Windows (tanpa locale)
+            """
             if not tanggal_str or not isinstance(tanggal_str, str):
                 return "..................."
 
             try:
-                try:
-                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")  # Linux/macOS
-                except Exception:
-                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")  # Windows
-
                 tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                return tgl.strftime("%d %B %Y")
+
+                hari = tgl.day            # tanpa leading zero
+                bulan = BULAN_ID[tgl.month]
+                tahun = tgl.year
+
+                return f"{hari} {bulan} {tahun}"
+
             except Exception as e:
                 print(f"[Warning] format_tanggal_indonesia gagal: {e}")
                 return str(tanggal_str)
@@ -24134,18 +24204,41 @@ class LampRekapPps(QMainWindow):
             anggota1 = data_ba.get("anggota_satu", "............................") if data_ba else "............................"
             anggota2 = data_ba.get("anggota_dua", "............................") if data_ba else "............................"
 
+            BULAN_ID = {
+                1: "Januari",
+                2: "Februari",
+                3: "Maret",
+                4: "April",
+                5: "Mei",
+                6: "Juni",
+                7: "Juli",
+                8: "Agustus",
+                9: "September",
+                10: "Oktober",
+                11: "November",
+                12: "Desember",
+            }
+
             def format_tanggal_indonesia(tanggal_str):
+                """
+                Konversi '2025-12-02' -> '2 Desember 2025'
+                Fokus Windows (tanpa locale)
+                """
                 if not tanggal_str or not isinstance(tanggal_str, str):
                     return "..................."
+
                 try:
-                    try:
-                        locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                    except Exception:
-                        locale.setlocale(locale.LC_TIME, "Indonesian_indonesia.1252")
                     tgl = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                    return tgl.strftime("%d %B %Y")
-                except Exception:
-                    return tanggal_str
+
+                    hari = tgl.day            # tanpa leading zero
+                    bulan = BULAN_ID[tgl.month]
+                    tahun = tgl.year
+
+                    return f"{hari} {bulan} {tahun}"
+
+                except Exception as e:
+                    print(f"[Warning] format_tanggal_indonesia gagal: {e}")
+                    return str(tanggal_str)
 
             tanggal_formatted = format_tanggal_indonesia(tanggal_ba)
 
@@ -24880,24 +24973,22 @@ class LapCoklit(QMainWindow):
                 )
 
                 # Pastikan locale Indonesia aktif
-                try:
-                    locale.setlocale(locale.LC_TIME, "id_ID.utf8")
-                except Exception:
-                    # fallback jika Windows (pakai versi lokal)
-                    locale.setlocale(locale.LC_TIME, "Indonesian_indonesia")
+                BULAN_ID = {
+                    1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
+                    5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
+                    9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+                }
 
-                # Ubah format tanggal
                 tgl_str = "-"
                 try:
                     if tanggal_laporan and "/" in tanggal_laporan:
                         tgl_obj = datetime.strptime(tanggal_laporan, "%d/%m/%Y")
-                        tgl_str = tgl_obj.strftime("%d %B %Y")  # contoh: 12 Oktober 2025
+                        tgl_str = f"{tgl_obj.day} {BULAN_ID[tgl_obj.month]} {tgl_obj.year}"
                     else:
                         tgl_str = tanggal_laporan or "-"
                 except Exception:
                     tgl_str = "-"
 
-                # Buat teks gabungan: Desa + tanggal format panjang
                 lokasi_tanggal = f"{self.desa.capitalize()}, {tgl_str}"
 
                 ttd_tbl = Table([
@@ -26126,8 +26217,16 @@ class Data_Pantarlih(QMainWindow):
                 self._msgbox("Validasi", f"TPS {tps_label}: Nomor HP hanya boleh angka.", "warn").exec()
                 return
 
-            if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", tanggal):
-                self._msgbox("Validasi", f"TPS {tps_label}: Tanggal harus format dd/mm/yyyy.", "warn").exec()
+            # Terima: 2/12/2025, 02/12/2025, 13/12/2025, 22/12/2025
+            if not re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", tanggal):
+                self._msgbox("Validasi", f"TPS {tps_label}: Tanggal harus format d/m/yyyy.", "warn").exec()
+                return
+
+            # Validasi tanggal real (misal 31/02/2025 ditolak)
+            try:
+                datetime.strptime(tanggal, "%d/%m/%Y")
+            except ValueError:
+                self._msgbox("Validasi", f"TPS {tps_label}: Tanggal tidak valid.", "warn").exec()
                 return
 
             # === Validasi angka lembar bukti & stiker ===
@@ -27116,27 +27215,6 @@ class RegisterWindow(QMainWindow):
 
         dlg.exec()
         return code_holder["val"]
-
-def qt_message_handler(mode, context, message):
-    """
-    Filter pesan internal Qt yang ganggu, misalnya:
-    'QObject::disconnect: wildcard call disconnects from destroyed signal of PieChartItem::unnamed'
-    """
-    # 🔕 Buang pesan PieChartItem yang ganggu itu
-    if "PieChartItem::unnamed" in message:
-        return
-
-    # Sisanya tetap dicetak normal (kalau mau bisa dibedain per level)
-    if mode == QtMsgType.QtDebugMsg:
-        print(message)
-    elif mode == QtMsgType.QtWarningMsg:
-        print(f"[QtWarning] {message}")
-    elif mode == QtMsgType.QtCriticalMsg:
-        print(f"[QtCritical] {message}")
-    elif mode == QtMsgType.QtFatalMsg:
-        print(f"[QtFatal] {message}")
-    else:
-        print(message)
     
 if __name__ == "__main__":
     import os, sys, ctypes
