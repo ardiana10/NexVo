@@ -5737,7 +5737,7 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_MAGIC = b"NVBAK1"
 
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.bakx) termasuk database, key, OTP secret, dan file JSON pengaturan kolom).
+    """Backup lengkap NexVo (.nxv) termasuk database, key, OTP secret, dan file JSON pengaturan kolom).
 
     Desain baru:
     • Backup HANYA bisa dibuat setelah verifikasi OTP.
@@ -5788,7 +5788,7 @@ def backup_nexvo(parent=None):
     backup_pwd, ok_pwd = ModernInputDialog(
         "Password Backup",
         (
-            "Buat password untuk file backup (.bakx).\n"
+            "Buat password untuk file backup (.nxv).\n"
             "Password ini akan diminta lagi saat melakukan restore.\n\n"
             "CATAT baik-baik password ini. Jika lupa, backup tidak bisa dipakai."
         ),
@@ -5875,7 +5875,7 @@ def backup_nexvo(parent=None):
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.bakx"
+    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.nxv"
     backup_path = BACKUP_DIR / backup_name
 
     with open(backup_path, "wb") as f:
@@ -5889,7 +5889,7 @@ def backup_nexvo(parent=None):
     show_modern_info(parent, "Backup Selesai", f"File backup tersimpan di:\n{backup_path}")
 
 def restore_nexvo(parent=None):
-    """Pulihkan seluruh data NexVo dari file .bakx.
+    """Pulihkan seluruh data NexVo dari file .nxv.
 
     Mendukung dua format:
     • Format BARU (direkomendasikan):
@@ -5907,7 +5907,7 @@ def restore_nexvo(parent=None):
         parent,
         "Pilih File Backup NexVo",
         "C:/NexVo/BackUp",
-        "Backup NexVo (*.bakx)"
+        "Backup NexVo (*.nxv)"
     )[0]
     if not bakx_path:
         return
