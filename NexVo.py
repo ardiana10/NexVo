@@ -4600,7 +4600,7 @@ class LoginWindow(QMainWindow):
 
         # 1. Jika kosong → default: PROVINSI JAWA BARAT
         if not nama_kab:
-            wilayah_final = "PROVINSI JAWA BARAT"
+            wilayah_final = ""
 
         else:
             nama_up = nama_kab.upper()
@@ -10777,7 +10777,7 @@ class MainWindow(QMainWindow):
     def cek_potensi_dibawah_umur(self):
         """🔍 Pemeriksaan Potensi Dibawah Umur di seluruh data (full DB, super-kilat & hasil identik)."""
         ##### Ubah jadi tanggal Pemilu #####
-        target_date = datetime(2029, 6, 26)
+        target_date = datetime(2029, 2, 14)  # 14 Februari 2029
 
         try:
             tahap = getattr(self, "_tahapan", "").strip().upper()
@@ -16159,8 +16159,9 @@ class UnggahRegulerWindow(QWidget):
                     dd, mm, yyyy = map(int, tgl.split("|"))
                     lahir = datetime(yyyy, mm, dd)
 
-                    # Hitung umur per 26 Juni 2029
-                    umur = (datetime(2029, 6, 26) - lahir).days / 365.25
+                    # Hitung umur per 14 Februari 2029
+                    ##### Ubah jadi tanggal Pemilu #####
+                    umur = (datetime(2029, 2, 14) - lahir).days / 365.25
 
                     if umur < 0 or umur < 5:
                         err.append("Tanggal Lahir Invalid")
@@ -26477,7 +26478,7 @@ class RegisterWindow(QMainWindow):
 
         # 1. Jika kosong → default: PROVINSI JAWA BARAT
         if not nama_kab:
-            wilayah_final = "PROVINSI JAWA BARAT"
+            wilayah_final = ""
 
         else:
             nama_up = nama_kab.upper()
