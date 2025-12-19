@@ -5736,19 +5736,24 @@ BACKUP_DIR = Path("C:/NexVo/BackUp")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_MAGIC = b"NVBAK1"
 
+# Ekstensi baru khas NexVo
+BACKUP_EXT = ".nxv"
+
+# Filter dialog: tetap bisa baca
+BACKUP_FILE_FILTER = "Backup NexVo (*.nxv)"
+
+def generate_backup_code(length: int = 24, group: int = 4) -> str:
+    import secrets
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    raw = "".join(secrets.choice(alphabet) for _ in range(length))
+    return "-".join(raw[i:i + group] for i in range(0, len(raw), group))
+
+
 def backup_nexvo(parent=None):
-    """Backup lengkap NexVo (.nxv) termasuk database, key, OTP secret, dan file JSON pengaturan kolom).
-
-    Desain baru:
-    • Backup HANYA bisa dibuat setelah verifikasi OTP.
-    • Isi backup dienkripsi AES-GCM dengan password backup khusus (bukan OTP).
-    • Header file: BACKUP_MAGIC + salt + iv + tag + ciphertext.
-    • Di dalam ZIP: nexvo.db, (opsional) nexvo.key, dbkey.bin (raw key 32 byte), otp.secret, dan file JSON.
-    """
+    """Backup lengkap NexVo (.nxv) termasuk database, key, OTP secret, dan file JSON pengaturan kolom)."""
     ensure_dirs()
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
     from db_manager import get_connection, load_or_create_key as db_load_key
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -5784,40 +5789,13 @@ def backup_nexvo(parent=None):
         show_modern_error(parent, "OTP Salah", "Kode OTP tidak valid atau kedaluwarsa.")
         return
 
-    # === Minta password backup (berbeda dengan OTP) ===
-    backup_pwd, ok_pwd = ModernInputDialog(
-        "Password Backup",
-        (
-            "Buat password untuk file backup (.nxv).\n"
-            "Password ini akan diminta lagi saat melakukan restore.\n\n"
-            "CATAT baik-baik password ini. Jika lupa, backup tidak bisa dipakai."
-        ),
-        parent,
-        is_password=True,
-    ).getText()
-    if not ok_pwd or not backup_pwd.strip():
-        show_modern_warning(parent, "Dibatalkan", "Backup dibatalkan — password backup tidak diisi.")
-        return
-
-    backup_pwd2, ok_pwd2 = ModernInputDialog(
-        "Konfirmasi Password Backup",
-        "Masukkan kembali password backup yang sama:",
-        parent,
-        is_password=True,
-    ).getText()
-    if not ok_pwd2:
-        show_modern_warning(parent, "Dibatalkan", "Backup dibatalkan — konfirmasi password dibatalkan.")
-        return
-    if backup_pwd.strip() != backup_pwd2.strip():
-        show_modern_error(parent, "Password Tidak Sama", "Password backup dan konfirmasinya tidak cocok.")
-        return
-    backup_pwd = backup_pwd.strip()
+    # === Generate KODE BACKUP acak (pengganti password manual) ===
+    backup_code = generate_backup_code()
+    backup_pwd = backup_code.strip()  # ini yang dipakai untuk PBKDF2
 
     # === Path file JSON yang ikut dibackup ===
-    from pathlib import Path as _Path
-    settings_dir = _Path(APPDATA) / "NexVo" / "ColumnSettings"
+    settings_dir = Path(APPDATA) / "NexVo" / "ColumnSettings"
     json_files = {
-        # simpan di dalam ZIP di folder ColumnSettings/...
         "ColumnSettings/column_widths_datapantarlih.json": settings_dir / "column_widths_datapantarlih.json",
         "ColumnSettings/column_widths_unggahreguler.json": settings_dir / "column_widths_unggahreguler.json",
         "ColumnSettings/column_widths.json": settings_dir / "column_widths.json",
@@ -5832,7 +5810,7 @@ def backup_nexvo(parent=None):
         else:
             print("[BACKUP WARNING] Database tidak ditemukan:", DB_PATH)
 
-        # 🔹 Key file saat ini — ikut saja untuk kompatibilitas (tidak dipakai di restore baru)
+        # 🔹 Key file saat ini — ikut untuk kompatibilitas
         if KEY_PATH.exists():
             try:
                 zf.write(KEY_PATH, "nexvo.key")
@@ -5841,7 +5819,7 @@ def backup_nexvo(parent=None):
         else:
             print("[BACKUP WARNING] File key tidak ditemukan:", KEY_PATH)
 
-        # 🔹 Raw key 32 byte (langsung dari db_manager.load_or_create_key)
+        # 🔹 Raw key 32 byte
         try:
             raw_key = db_load_key()
             if isinstance(raw_key, str):
@@ -5868,25 +5846,83 @@ def backup_nexvo(parent=None):
 
     data = buf.getvalue()
 
-    # === Enkripsi AES-GCM dengan password backup ===
+    # === Enkripsi AES-GCM dengan kode backup (via PBKDF2) ===
     salt = os.urandom(16)
     key = PBKDF2(backup_pwd, salt, dkLen=32, count=200_000)
     iv = os.urandom(12)
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     ciphertext, tag = cipher.encrypt_and_digest(data)
 
-    backup_name = f"NexVo_BackUp {datetime.now().strftime('%d%m%Y %H%M')}.nxv"
+    # 🔸 PAKAI SATU TIMESTAMP UNTUK BACKUP & FILE KODE
+    now = datetime.now()
+    ts = now.strftime("%d%m%Y %H%M")
+
+    backup_name = f"NexVo_BackUp {ts}{BACKUP_EXT}"
     backup_path = BACKUP_DIR / backup_name
 
     with open(backup_path, "wb") as f:
-        # Format baru: magic + salt + iv + tag + ciphertext
         f.write(BACKUP_MAGIC)
         f.write(salt)
         f.write(iv)
         f.write(tag)
         f.write(ciphertext)
 
-    show_modern_info(parent, "Backup Selesai", f"File backup tersimpan di:\n{backup_path}")
+    # === Salin kode ke clipboard ===
+    clipboard = QApplication.clipboard()
+    clipboard.setText(backup_code)
+
+    # === SIMPAN KODE KE FILE .TXT (WAJIB) ===
+    # User hanya boleh memilih folder. Jika batal → backup juga dibatalkan.
+    folder = QFileDialog.getExistingDirectory(
+        parent,
+        "Pilih Folder untuk menyimpan Kode Backup",
+        str(BACKUP_DIR),
+    )
+
+    saved_txt_ok = False
+
+    if folder:
+        folder_path = Path(folder)
+        txt_name = f"restore_nexvo {ts}.txt"
+        save_path = folder_path / txt_name
+
+        try:
+            with open(save_path, "w", encoding="utf-8") as tf:
+                tf.write("Kode Backup NexVo (jangan bagikan ke siapa pun):\n")
+                tf.write(backup_code + "\n")
+            saved_txt_ok = True
+        except Exception as e:
+            print("[BACKUP WARNING] Gagal menyimpan kode backup ke file:", e)
+            saved_txt_ok = False
+
+    # Kalau file TXT tidak berhasil disimpan → HAPUS file backup & batalkan
+    if not saved_txt_ok:
+        try:
+            if backup_path.exists():
+                backup_path.unlink()
+                print("[BACKUP] Backup dibatalkan")
+        except Exception as e:
+            print("[BACKUP WARNING] Gagal menghapus file backup saat pembatalan:", e)
+
+        show_modern_warning(
+            parent,
+            "Backup Dibatalkan",
+            (
+                "Backup dibatalkan"
+            ),
+        )
+        return
+
+    # Info final ke user (hanya jika TXT berhasil disimpan)
+    msg = (
+        f"File backup tersimpan di:\n{backup_path}\n\n"
+        f"KODE BACKUP:\n{backup_code}\n\n"
+        "Kode ini sudah disimpan sebagai file:\n"
+        f"restore_nexvo {ts}.txt di folder yang Anda pilih.\n\n"
+        "Simpan kode ini di tempat yang sangat aman.\n"
+        "TANPA kode ini, file backup TIDAK bisa dipulihkan."
+    )
+    show_modern_info(parent, "Backup Selesai", msg)
 
 def restore_nexvo(parent=None):
     """Pulihkan seluruh data NexVo dari file .nxv.
@@ -5903,20 +5939,20 @@ def restore_nexvo(parent=None):
     """
     ensure_dirs()
 
-    bakx_path = QFileDialog.getOpenFileName(
+    nxv_path = QFileDialog.getOpenFileName(
         parent,
         "Pilih File Backup NexVo",
         "C:/NexVo/BackUp",
-        "Backup NexVo (*.nxv)"
+        BACKUP_FILE_FILTER
     )[0]
-    if not bakx_path:
+    if not nxv_path:
         return
 
     is_new_format = False
 
     # === Dekripsi file backup ===
     try:
-        with open(bakx_path, "rb") as f:
+        with open(nxv_path, "rb") as f:
             blob = f.read()
 
         # Deteksi format baru vs lama
@@ -5932,14 +5968,15 @@ def restore_nexvo(parent=None):
 
             # Minta password backup
             backup_pwd, ok_pwd = ModernInputDialog(
-                "Password Backup",
+                "Kode Backup",
                 (
-                    "File backup ini menggunakan password.\n"
-                    "Masukkan password backup untuk melanjutkan:"
+                    "File backup ini dilindungi dengan kode backup.\n"
+                    "Masukkan Kode Backup yang diberikan saat membuat backup:"
                 ),
                 parent,
-                is_password=True,
+                is_password=True,  # tetap disembunyikan di layar
             ).getText()
+            
             if not ok_pwd or not backup_pwd.strip():
                 show_modern_warning(parent, "Dibatalkan", "Restore dibatalkan — password backup tidak diisi.")
                 return
