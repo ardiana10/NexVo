@@ -8184,7 +8184,46 @@ class MainWindow(QMainWindow):
             self.filter_dock.hide()
 
         # === Status bar khusus dashboard ===
-        self.statusBar().showMessage("💞 Pemilih Berdaulat Negara Kuat")
+        tanggal_pemilu = "14 Februari 2029"   # sesuai permintaan
+
+        from PyQt6.QtWidgets import QLabel, QSizePolicy
+        from PyQt6.QtCore import Qt, QTimer
+
+        # 0) Pastikan label kanan (tanggal) ADA dulu
+        if not hasattr(self, "_lbl_tanggal_pemilu") or self._lbl_tanggal_pemilu is None:
+            self._lbl_tanggal_pemilu = QLabel(self.statusBar())
+            self._lbl_tanggal_pemilu.setObjectName("lbl_tanggal_pemilu")
+            self._lbl_tanggal_pemilu.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            self._lbl_tanggal_pemilu.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+            self._lbl_tanggal_pemilu.setStyleSheet("""
+                QLabel {
+                    padding-right: 12px;
+                    font-weight: 600;
+                    font-size: 9pt;
+                }
+            """)
+            self.statusBar().addPermanentWidget(self._lbl_tanggal_pemilu)
+
+        # set text boleh sekarang (karena label sudah pasti ada)
+        self._lbl_tanggal_pemilu.setText(f"🗓️ {tanggal_pemilu}")
+
+        def _apply_dashboard_statusbar():
+            # jaga-jaga kalau sudah pindah page
+            if not hasattr(self, "stack") or self.stack.currentWidget() != self.dashboard_page:
+                return
+
+            sb = self.statusBar()
+            sb.clearMessage()  # bersihkan dulu biar tidak ada bekas frame
+            sb.showMessage("💞 Pemilih Berdaulat Negara Kuat")
+
+            # pastikan label kanan tampil
+            if hasattr(self, "_lbl_tanggal_pemilu") and self._lbl_tanggal_pemilu:
+                self._lbl_tanggal_pemilu.show()
+
+            # paksa repaint sekali (anti “bertumpuk”)
+            sb.repaint()
+
+        QTimer.singleShot(0, _apply_dashboard_statusbar)
 
         class _DashboardStatusFilter(QObject):
             """Filter yang menjaga agar status bar selalu menampilkan pesan dashboard
@@ -8197,7 +8236,7 @@ class MainWindow(QMainWindow):
             def eventFilter(self, obj, event):
                 parent = self._parent_ref()
                 if not self._active or parent is None:
-                    return False  # jika sudah nonaktif atau parent dihapus
+                    return False
 
                 try:
                     # === Kembalikan pesan jika menu dihover/leave ===
@@ -8208,22 +8247,23 @@ class MainWindow(QMainWindow):
                         QEvent.Type.Leave,
                     ):
                         parent.statusBar().showMessage("💞 Pemilih Berdaulat Negara Kuat")
+                        if hasattr(parent, "_lbl_tanggal_pemilu") and parent._lbl_tanggal_pemilu:
+                            parent._lbl_tanggal_pemilu.show()
                         return True
 
                     # === Deteksi jika halaman aktif bukan dashboard lagi ===
                     if hasattr(parent, "stack") and parent.stack.currentWidget() != parent.dashboard_page:
-                        # halaman sudah berganti → nonaktifkan otomatis
                         self._active = False
                         parent.statusBar().clearMessage()
+                        if hasattr(parent, "_lbl_tanggal_pemilu") and parent._lbl_tanggal_pemilu:
+                            parent._lbl_tanggal_pemilu.hide()
                         parent.menuBar().removeEventFilter(self)
                         return False
 
                 except RuntimeError:
-                    # Jika parent atau menuBar sudah dihapus (C++ object gone)
                     return False
 
                 return False
-
 
         # === Nonaktifkan filter lama (jika masih terpasang)
         if hasattr(self, "_dashboard_status_filter") and self._dashboard_status_filter:
@@ -8237,6 +8277,7 @@ class MainWindow(QMainWindow):
         self.menuBar().installEventFilter(self._dashboard_status_filter)
 
         # === Animasi masuk dashboard ===
+        self._is_on_dashboard = True
         self._stack_fade_to(self.dashboard_page, duration=600)
 
     def _build_dashboard_widget(self) -> QWidget:
@@ -9015,20 +9056,31 @@ class MainWindow(QMainWindow):
         self._fade_anim = anim
 
     def remove_dashboard_filter(self):
-        """Matikan filter status bar khusus dashboard."""
+        """Matikan filter status bar khusus dashboard + bersihkan elemen dashboard."""
         if hasattr(self, "_dashboard_status_filter") and self._dashboard_status_filter:
             try:
                 self.menuBar().removeEventFilter(self._dashboard_status_filter)
-                self._dashboard_status_filter = None
             except Exception:
                 pass
+            self._dashboard_status_filter = None
+
+        # ✅ hilangkan pesan dashboard
+        try:
+            if self.statusBar():
+                self.statusBar().clearMessage()
+        except Exception:
+            pass
+
+        # ✅ sembunyikan label kanan (tanggal pemilu) agar tidak ikut di page lain
+        if hasattr(self, "_lbl_tanggal_pemilu") and self._lbl_tanggal_pemilu:
+            self._lbl_tanggal_pemilu.hide()
         
     def show_data_page(self):
         """Kembali ke halaman utama Data."""
         from PyQt6.QtWidgets import QToolBar
 
         self.remove_dashboard_filter()
-        self.statusBar().clearMessage()
+        #self.statusBar().clearMessage()
         self._is_on_dashboard = False
 
         # Tampilkan lagi toolbar & status bar
